@@ -15,6 +15,7 @@ use crate::agent::{AgentBinary, Origin};
 use crate::grid::{TerminalGrid, TerminalGridSnapshot};
 use crate::hooks::{HookEvent, HookNotification, HookSignal};
 use crate::launch::{LaunchError, LaunchSpec, ResolvedCommand, Resume};
+use crate::notification::{NotificationCenter, NotificationChange, NotificationEvent};
 use crate::pty::{PtyError, PtySession, PtySize};
 use crate::session::{
     fleet_order, RestartDecision, Session, SessionId, SessionPhase, SessionStatus,
@@ -31,6 +32,7 @@ pub const MAX_SCROLLBACK_BYTES: usize = 512 * 1024;
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum RegistryEvent {
     SessionUpdated { session: Session },
+    Notification { event: NotificationEvent },
     Output { id: SessionId, data: String },
     SessionRemoved { id: SessionId },
 }
@@ -74,6 +76,7 @@ struct State {
     focused: Option<SessionId>,
     entries: BTreeMap<SessionId, Entry>,
     archives: Vec<ArchivedSession>,
+    notifications: NotificationCenter,
     subscribers: Vec<Sender<RegistryEvent>>,
 }
 
@@ -102,6 +105,7 @@ impl SessionRegistry {
                     focused: None,
                     entries: BTreeMap::new(),
                     archives: Vec::new(),
+                    notifications: NotificationCenter::default(),
                     subscribers: Vec::new(),
                 }),
             }),
@@ -391,10 +395,21 @@ impl SessionRegistry {
             entry.stop_requested = true;
             let Some(pty) = entry.pty.clone() else {
                 if entry.session.phase == SessionPhase::Backoff {
+                    let previous_status = entry.session.status;
+                    let previous_state_since = entry.session.state_since;
                     entry.generation = entry.generation.saturating_add(1);
-                    entry.session.mark_resurrectable_at(None, SystemTime::now());
+                    let now = SystemTime::now();
+                    entry.session.mark_resurrectable_at(None, now);
+                    let session = entry.session.clone();
+                    let notification = state.notifications.observe(
+                        &session,
+                        previous_status,
+                        previous_state_since,
+                        now,
+                    );
                     drop(state);
-                    self.emit_session(id);
+                    self.emit(RegistryEvent::SessionUpdated { session });
+                    self.emit_notification_change(notification);
                     return Ok(());
                 }
                 return Err(RegistryError::Missing(id.clone()));
@@ -456,11 +471,13 @@ impl SessionRegistry {
         };
         let Some(id) = id else { return false };
 
-        {
+        let (session, notification) = {
             let mut state = self.inner.state.lock().expect("registry poisoned");
             let Some(entry) = state.entries.get_mut(&id) else {
                 return false;
             };
+            let previous_status = entry.session.status;
+            let previous_state_since = entry.session.state_since;
             if let Some(resume_id) = event.session_id {
                 entry.session.resume_id = Some(resume_id);
             }
@@ -479,8 +496,17 @@ impl SessionRegistry {
                     HookNotification::Other => {}
                 },
             }
-        }
-        self.emit_session(&id);
+            let session = entry.session.clone();
+            let notification = state.notifications.observe(
+                &session,
+                previous_status,
+                previous_state_since,
+                SystemTime::now(),
+            );
+            (session, notification)
+        };
+        self.emit(RegistryEvent::SessionUpdated { session });
+        self.emit_notification_change(notification);
         true
     }
 
@@ -634,6 +660,12 @@ impl SessionRegistry {
         }
     }
 
+    fn emit_notification_change(&self, change: Option<NotificationChange>) {
+        if let Some(event) = change.and_then(NotificationChange::into_event) {
+            self.emit(RegistryEvent::Notification { event });
+        }
+    }
+
     fn emit(&self, event: RegistryEvent) {
         let mut state = self.inner.state.lock().expect("registry poisoned");
         state
@@ -655,7 +687,7 @@ impl SessionRegistry {
     }
 
     fn mark_process_exit(&self, id: &SessionId, generation: u64, exit_code: Option<u32>) {
-        let restart = {
+        let (restart, session, notification) = {
             let mut state = self.inner.state.lock().expect("registry poisoned");
             let Some(entry) = state.entries.get_mut(id) else {
                 return;
@@ -663,10 +695,12 @@ impl SessionRegistry {
             if entry.generation != generation {
                 return;
             }
+            let previous_status = entry.session.status;
+            let previous_state_since = entry.session.state_since;
             entry.pty = None;
             entry.generation = entry.generation.saturating_add(1);
             let now = SystemTime::now();
-            if entry.stop_requested {
+            let restart = if entry.stop_requested {
                 entry.stop_requested = false;
                 entry.session.mark_resurrectable_at(exit_code, now);
                 None
@@ -675,9 +709,16 @@ impl SessionRegistry {
                     RestartDecision::Backoff(delay) => Some((entry.generation, delay)),
                     RestartDecision::Failed => None,
                 }
-            }
+            };
+            let session = entry.session.clone();
+            let notification =
+                state
+                    .notifications
+                    .observe(&session, previous_status, previous_state_since, now);
+            (restart, session, notification)
         };
-        self.emit_session(id);
+        self.emit(RegistryEvent::SessionUpdated { session });
+        self.emit_notification_change(notification);
         if let Some((generation, delay)) = restart {
             self.schedule_restart(id.clone(), generation, delay);
         }
@@ -794,7 +835,7 @@ impl SessionRegistry {
 }
 
 fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u8]) {
-    let (send_output, session) = {
+    let (send_output, session, notification) = {
         let mut state = inner.state.lock().expect("registry poisoned");
         let focused = state.focused.as_ref() == Some(id);
         let Some(entry) = state.entries.get_mut(id) else {
@@ -808,10 +849,21 @@ fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u
         if let Some(line) = entry.scrollback.last_line() {
             entry.session.set_last_line(&line);
         }
+        let previous_status = entry.session.status;
+        let previous_state_since = entry.session.state_since;
         if entry.session.status == SessionStatus::Starting {
             entry.session.set_status(SessionStatus::Idle);
         }
-        (focused || entry.session.pinned, entry.session.clone())
+        let session = entry.session.clone();
+        let notification = (previous_status != session.status).then(|| {
+            state.notifications.observe(
+                &session,
+                previous_status,
+                previous_state_since,
+                SystemTime::now(),
+            )
+        });
+        (focused || session.pinned, session, notification.flatten())
     };
     if send_output {
         emit_inner(
@@ -823,6 +875,9 @@ fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u
         );
     }
     emit_inner(inner, RegistryEvent::SessionUpdated { session });
+    if let Some(event) = notification.and_then(NotificationChange::into_event) {
+        emit_inner(inner, RegistryEvent::Notification { event });
+    }
 }
 
 fn emit_inner(inner: &Arc<Inner>, event: RegistryEvent) {
@@ -1129,6 +1184,76 @@ mod tests {
             signal: HookSignal::Stop,
         }));
         assert_eq!(registry.snapshot()[0].status, SessionStatus::Idle);
+    }
+
+    #[test]
+    fn attention_notifications_dedupe_and_retract_on_progress() {
+        let registry = SessionRegistry::new();
+        let cwd = Path::new(".").to_path_buf();
+        let spec = spec_for(Agent::Claude, &cwd);
+        let id = SessionId::new(1);
+        let mut session = Session::new(id.clone(), &spec);
+        session.status = SessionStatus::Idle;
+        session.state_since = std::time::SystemTime::UNIX_EPOCH;
+        registry
+            .inner
+            .state
+            .lock()
+            .expect("registry poisoned")
+            .entries
+            .insert(
+                id.clone(),
+                Entry {
+                    session,
+                    command: ResolvedCommand {
+                        program: PathBuf::from("test-agent"),
+                        args: Vec::new(),
+                        cwd: cwd.clone(),
+                    },
+                    spec,
+                    pty: None,
+                    scrollback: RingBuffer::default(),
+                    grid: TerminalGrid::default(),
+                    generation: 1,
+                    stop_requested: false,
+                },
+            );
+        let events = registry.subscribe();
+        let attention = HookEvent {
+            agent: Agent::Claude,
+            session_id: Some("native-1".into()),
+            cwd: Some(cwd.clone()),
+            signal: HookSignal::Notification {
+                notification: HookNotification::PermissionPrompt,
+            },
+        };
+
+        assert!(registry.apply_hook(attention.clone()));
+        let first: Vec<_> = events.try_iter().collect();
+        assert!(first.iter().any(|event| matches!(
+            event,
+            RegistryEvent::Notification {
+                event: NotificationEvent::Raised { notification }
+            } if notification.dedup_key.contains("session=s0001")
+        )));
+
+        assert!(registry.apply_hook(attention));
+        assert!(!events
+            .try_iter()
+            .any(|event| matches!(event, RegistryEvent::Notification { .. })));
+
+        assert!(registry.apply_hook(HookEvent {
+            agent: Agent::Claude,
+            session_id: Some("native-1".into()),
+            cwd: Some(cwd),
+            signal: HookSignal::PreToolUse,
+        }));
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            RegistryEvent::Notification {
+                event: NotificationEvent::Retracted { .. }
+            }
+        )));
     }
 
     #[test]

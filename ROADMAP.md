@@ -57,13 +57,6 @@ Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher contin
 
 ### P1
 
-- [ ] R-16 · P1 — Notification lifecycle: dedupe, auto-retract, grace periods
-  Why: a stale "needs input" marker is worse than none, and per-event toasts across 20 sessions are unusable.
-  Evidence: PagerDuty `dedup_key` + auto-resolve; Slack per-channel batching; Docker `start_period`; notification fatigue named as the failure mode of the obvious fix.
-  Touches: notification subsystem, `session.rs`
-  Acceptance: each attention event carries a dedup key, self-retracts when the agent proceeds, is grouped by repo, and is suppressed during a per-state grace window (startup, known-long tool calls).
-  Complexity: M
-
 - [ ] R-17 · P1 — Concurrency admission control and per-session budgets
   Why: nothing today stops the fleet exceeding RAM or plan quota; this is the failure every vendor monetizes and no OSS tool guards.
   Evidence: measured 509 MB/session; amirlehmam/wmux#139 (crash loop → 251 processes, 3.3 GB); HN 47221592 (parallel agents exhaust Max limits "in under an hour"); Devin caps its $20 tier at 10 concurrent sessions.

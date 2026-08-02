@@ -41,6 +41,7 @@ const state = {
   terminal: null,
   fitAddon: null,
   previewTimer: null,
+  attentionToasts: new Map(),
 };
 
 const $ = (id) => document.getElementById(id);
@@ -68,6 +69,28 @@ function showToast(message, tone = "error") {
     toast.classList.remove("toast-visible");
     setTimeout(() => toast.remove(), 240);
   }, 4200);
+}
+
+function showAttentionToast(notification) {
+  if (state.attentionToasts.has(notification.dedup_key)) return;
+  const session = state.sessions.find((item) => item.id === notification.session_id);
+  const meta = STATUS_META[notification.status] ?? STATUS_META["needs-you"];
+  const toast = document.createElement("button");
+  toast.type = "button";
+  toast.className = "toast toast-attention toast-visible";
+  toast.textContent = `${session?.name ?? notification.session_id} · ${meta.label} · ${folderLabel(notification.group_key)}`;
+  toast.title = "Focus session";
+  toast.addEventListener("click", () => void focusSession(notification.session_id));
+  $("toast-region").append(toast);
+  state.attentionToasts.set(notification.dedup_key, { toast, sessionId: notification.session_id });
+}
+
+function retractAttentionToast(dedupKey) {
+  const entry = state.attentionToasts.get(dedupKey);
+  if (!entry) return;
+  state.attentionToasts.delete(dedupKey);
+  entry.toast.classList.remove("toast-visible");
+  setTimeout(() => entry.toast.remove(), 240);
 }
 
 function systemTimeMs(value) {
@@ -186,6 +209,9 @@ function updateSession(session) {
 
 function removeSession(id) {
   state.sessions = state.sessions.filter((session) => session.id !== id);
+  for (const [key, entry] of state.attentionToasts) {
+    if (entry.sessionId === id) retractAttentionToast(key);
+  }
   if (state.focused === id) {
     state.focused = null;
     resetTerminal("Session exited");
@@ -492,6 +518,10 @@ async function handleDaemonEvent(event) {
       break;
     case "session-removed":
       removeSession(event.id);
+      break;
+    case "notification":
+      if (event.event?.kind === "raised") showAttentionToast(event.event.notification);
+      if (event.event?.kind === "retracted") retractAttentionToast(event.event.dedup_key);
       break;
     case "output":
       if (event.id === state.focused && state.terminal) state.terminal.write(event.data);
