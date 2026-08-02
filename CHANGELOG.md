@@ -28,6 +28,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   grid with cursor motion, scrolling, alternate-screen restore and split UTF-8 coverage. Only the
   focused session (and future pinned panes) receives live output events; background sessions keep
   parsed state without creating more xterm instances.
+- R-14 restore actions now reattach live rows with bounded replay, revive stopped rows through
+  Claude/Codex native resume ids, or archive layout/cwd/command metadata. A debounced daemon worker
+  persists the versioned JSON store without automatically restarting recovered agents.
 - Claude/Codex hook payloads now share one parser, including session/thread id aliases and
   permission/idle notification normalization for approval and awaiting-input states.
 - The fleet now has a needs-input filter and per-row reply controls that send bracketed paste

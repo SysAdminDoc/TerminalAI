@@ -17,6 +17,7 @@ pub mod launch;
 pub mod pty;
 pub mod registry;
 pub mod session;
+pub mod store;
 pub mod transcript;
 
 pub use agent::{Agent, AgentBinary, ResolveError};
@@ -33,6 +34,10 @@ pub use registry::{RegistryError, RegistryEvent, SessionRegistry};
 pub use session::{
     RestartDecision, Session, SessionHealth, SessionId, SessionPhase, SessionStatus, MAX_RESTARTS,
     RESTART_BACKOFF_BASE, RESTART_BACKOFF_MAX,
+};
+pub use store::{
+    ArchivedSession, SessionStoreError, SessionStoreSnapshot, StoredSession,
+    SESSION_STORE_SCHEMA_VERSION,
 };
 pub use transcript::{
     PricingTable, TokenRates, TranscriptAccumulator, TranscriptError, UsageTotals,

@@ -233,6 +233,13 @@ impl Session {
         self.status_since = now;
     }
 
+    /// Start an operator-requested native revive and clear automatic restart
+    /// accounting. The resume id remains intact for the new process.
+    pub fn begin_manual_revive_at(&mut self, now: SystemTime) {
+        self.restarts = 0;
+        self.begin_restart_at(now);
+    }
+
     /// Stop without automatically restarting. The row remains available for a
     /// future explicit revive operation.
     pub fn mark_resurrectable_at(&mut self, exit_code: Option<u32>, now: SystemTime) {

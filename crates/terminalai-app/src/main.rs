@@ -160,6 +160,33 @@ fn scrollback(id: SessionId, state: State<'_, AppState>) -> Result<String, Strin
 }
 
 #[tauri::command]
+fn reattach_session(id: SessionId, state: State<'_, AppState>) -> Result<String, String> {
+    match daemon_response(&state.client, Request::Reattach { id })? {
+        Response::Reattached { data } => Ok(data),
+        Response::Error { message } => Err(message),
+        other => Err(format!("unexpected reattach response: {other:?}")),
+    }
+}
+
+#[tauri::command]
+fn revive_session(id: SessionId, state: State<'_, AppState>) -> Result<SessionId, String> {
+    match daemon_response(&state.client, Request::Revive { id })? {
+        Response::Revived { id } => Ok(id),
+        Response::Error { message } => Err(message),
+        other => Err(format!("unexpected revive response: {other:?}")),
+    }
+}
+
+#[tauri::command]
+fn archive_session(id: SessionId, state: State<'_, AppState>) -> Result<SessionId, String> {
+    match daemon_response(&state.client, Request::Archive { id })? {
+        Response::Archived { id } => Ok(id),
+        Response::Error { message } => Err(message),
+        other => Err(format!("unexpected archive response: {other:?}")),
+    }
+}
+
+#[tauri::command]
 fn list_presets(state: State<'_, AppState>) -> Result<Vec<Preset>, String> {
     state.presets.list()
 }
@@ -264,6 +291,9 @@ fn run_app() -> Result<(), String> {
             mark_read,
             toggle_pin,
             scrollback,
+            reattach_session,
+            revive_session,
+            archive_session,
             list_presets,
             save_preset,
             delete_preset,

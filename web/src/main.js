@@ -157,12 +157,21 @@ function renderRow(session) {
   const model = session.model || "default";
   const effort = session.effort || "—";
   const pinLabel = session.pinned ? "Unpin" : "Pin";
+  const revive = session.status === "exited" && session.resume_id
+    ? `<button type="button" data-action="revive" class="row-action" title="Revive with native resume">↻</button>`
+    : "";
+  const archive = session.status === "exited"
+    ? `<button type="button" data-action="archive" class="row-action" title="Archive stopped session">▣</button>`
+    : "";
+  const stop = session.status === "exited"
+    ? ""
+    : `<button type="button" data-action="kill" class="row-action row-action-danger" title="Stop session">×</button>`;
   const reply = isAttention(session) ? `<div class="row-reply"><input data-reply type="text" maxlength="500" placeholder="Reply without opening terminal" aria-label="Reply to ${escapeHtml(session.name)}" /><button type="button" data-action="reply" class="row-reply-send" title="Send reply">↵</button></div>` : "";
   return `<article class="fleet-row${active}${unread}" data-id="${escapeHtml(session.id)}" role="listitem" tabindex="0" aria-label="${escapeHtml(`${session.name}, ${meta.label}`)}">
     <div class="row-identity"><span class="status-glyph tone-${meta.tone}" title="${meta.label}">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name">${escapeHtml(session.name)}${session.unread ? '<span class="unread-dot" title="Unread attention"></span>' : ""}</div><div class="row-folder">${escapeHtml(folderLabel(session.cwd))}<span class="row-status-label">${meta.label}</span></div></div></div>
     <div class="row-model"><span class="agent-badge agent-${session.agent}">${agentLabel}</span><span class="model-name">${escapeHtml(model)}</span><span class="effort-chip">${escapeHtml(effort)}</span></div>
     <div class="row-dwell"><span>${dwell(session.status_since)}</span><small>${escapeHtml(session.last_line || "No output yet")}</small></div>
-    <div class="row-actions"><button type="button" data-action="pin" class="row-action ${session.pinned ? "row-action-active" : ""}" title="${pinLabel}">${session.pinned ? "◆" : "◇"}</button><button type="button" data-action="focus" class="row-action" title="Focus terminal">↗</button><button type="button" data-action="kill" class="row-action row-action-danger" title="Stop session">×</button></div>
+    <div class="row-actions"><button type="button" data-action="pin" class="row-action ${session.pinned ? "row-action-active" : ""}" title="${pinLabel}">${session.pinned ? "◆" : "◇"}</button><button type="button" data-action="focus" class="row-action" title="Focus terminal">↗</button>${revive}${archive}${stop}</div>
     ${reply}
   </article>`;
 }
@@ -213,7 +222,10 @@ async function loadSnapshot() {
     state.focused = snapshot.focused ?? null;
     renderRows();
     updateTerminalHeader();
-    if (state.focused) await hydrateTerminal(state.focused);
+    if (state.focused) {
+      const replay = await reattachForFocus(state.focused);
+      await hydrateTerminal(state.focused, replay);
+    }
   } catch (error) {
     showToast(`Could not read daemon snapshot: ${error}`);
   }
@@ -221,20 +233,27 @@ async function loadSnapshot() {
 
 async function focusSession(id) {
   try {
-    await invoke("focus_session", { id });
+    const replay = await reattachForFocus(id);
     state.focused = id;
     renderRows();
-    await hydrateTerminal(id);
+    await hydrateTerminal(id, replay);
   } catch (error) {
     showToast(`Could not focus session: ${error}`);
   }
 }
 
-async function hydrateTerminal(id) {
+async function reattachForFocus(id) {
+  const session = state.sessions.find((item) => item.id === id);
+  if (session && session.status !== "exited") return invoke("reattach_session", { id });
+  await invoke("focus_session", { id });
+  return null;
+}
+
+async function hydrateTerminal(id, replayData = null) {
   if (!state.terminal) return;
   state.terminal.reset();
   try {
-    const data = await invoke("scrollback", { id });
+    const data = replayData ?? (await invoke("scrollback", { id }));
     if (data) state.terminal.write(data);
     await invoke("mark_read", { id });
   } catch (error) {
@@ -261,6 +280,14 @@ async function rowAction(action, id, row = null) {
     if (action === "kill") {
       await invoke("kill_session", { id });
       showToast("Stop signal sent", "success");
+    }
+    if (action === "revive") {
+      await invoke("revive_session", { id });
+      showToast("Native session resume started", "success");
+    }
+    if (action === "archive") {
+      await invoke("archive_session", { id });
+      showToast("Stopped session archived", "success");
     }
   } catch (error) {
     showToast(String(error));

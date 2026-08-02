@@ -109,7 +109,7 @@ pub struct LaunchSpec {
 }
 
 /// A command ready to hand to the PTY layer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ResolvedCommand {
     pub program: PathBuf,
     pub args: Vec<String>,

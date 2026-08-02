@@ -11,14 +11,15 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
-use crate::agent::AgentBinary;
+use crate::agent::{AgentBinary, Origin};
 use crate::grid::{TerminalGrid, TerminalGridSnapshot};
 use crate::hooks::{HookEvent, HookNotification, HookSignal};
-use crate::launch::{LaunchError, LaunchSpec, ResolvedCommand};
+use crate::launch::{LaunchError, LaunchSpec, ResolvedCommand, Resume};
 use crate::pty::{PtyError, PtySession, PtySize};
 use crate::session::{
     fleet_order, RestartDecision, Session, SessionId, SessionPhase, SessionStatus,
 };
+use crate::store::{ArchivedSession, SessionStoreSnapshot, StoredSession};
 
 /// Maximum output retained per session in memory. The future daemon can spill
 /// older bytes to disk without changing the registry-facing API.
@@ -49,6 +50,12 @@ pub enum RegistryError {
         requested: &'static str,
         binary: &'static str,
     },
+    #[error("session is still running: {0}")]
+    StillRunning(SessionId),
+    #[error("session has no native resume id: {0}")]
+    NoResumeId(SessionId),
+    #[error("session is no longer running: {0}")]
+    NotRunning(SessionId),
 }
 
 struct Entry {
@@ -66,6 +73,7 @@ struct State {
     next_id: u64,
     focused: Option<SessionId>,
     entries: BTreeMap<SessionId, Entry>,
+    archives: Vec<ArchivedSession>,
     subscribers: Vec<Sender<RegistryEvent>>,
 }
 
@@ -93,9 +101,74 @@ impl SessionRegistry {
                     next_id: 1,
                     focused: None,
                     entries: BTreeMap::new(),
+                    archives: Vec::new(),
                     subscribers: Vec::new(),
                 }),
             }),
+        }
+    }
+
+    /// Rehydrate rows from the last durable snapshot without starting any
+    /// agent automatically. A daemon restart cannot steal a live ConPTY from
+    /// the old process, so persisted rows are offered as explicit revives.
+    pub fn from_store(snapshot: SessionStoreSnapshot) -> Self {
+        let registry = Self::new();
+        let mut state = registry.inner.state.lock().expect("registry poisoned");
+        let archives = snapshot.archives;
+        for archive in &archives {
+            state.next_id = state.next_id.max(next_sequence(&archive.id));
+        }
+        state.archives = archives;
+        for stored in snapshot.sessions {
+            let StoredSession {
+                mut session,
+                spec,
+                command,
+                scrollback: bytes,
+            } = stored;
+            let id = session.id.clone();
+            let exit_code = session.last_exit_code;
+            session.mark_resurrectable_at(exit_code, SystemTime::now());
+            let mut scrollback = RingBuffer::default();
+            scrollback.push(&bytes);
+            let mut grid = TerminalGrid::default();
+            grid.advance(&bytes);
+            state.next_id = state.next_id.max(next_sequence(&id));
+            state.entries.insert(
+                id,
+                Entry {
+                    session,
+                    spec,
+                    command,
+                    pty: None,
+                    scrollback,
+                    grid,
+                    generation: 1,
+                    stop_requested: false,
+                },
+            );
+        }
+        drop(state);
+        registry
+    }
+
+    /// Capture only serializable state; live PTY handles and parsed grids are
+    /// intentionally reconstructed on restore.
+    pub fn store_snapshot(&self) -> SessionStoreSnapshot {
+        let state = self.inner.state.lock().expect("registry poisoned");
+        SessionStoreSnapshot {
+            schema_version: crate::store::SESSION_STORE_SCHEMA_VERSION,
+            sessions: state
+                .entries
+                .values()
+                .map(|entry| StoredSession {
+                    session: entry.session.clone(),
+                    spec: entry.spec.clone(),
+                    command: entry.command.clone(),
+                    scrollback: entry.scrollback.to_vec(),
+                })
+                .collect(),
+            archives: state.archives.clone(),
         }
     }
 
@@ -190,6 +263,117 @@ impl SessionRegistry {
     pub fn write(&self, id: &SessionId, bytes: &[u8]) -> Result<(), RegistryError> {
         let pty = self.pty(id)?;
         pty.write(bytes).map_err(RegistryError::from)
+    }
+
+    /// Focus a live process and return the bounded raw tail for renderer
+    /// replay. The GUI uses this when it reconnects to the already-running
+    /// daemon after a window reload.
+    pub fn reattach(&self, id: &SessionId) -> Result<Vec<u8>, RegistryError> {
+        let pty = self.pty(id)?;
+        if pty.try_wait()?.is_some() {
+            return Err(RegistryError::NotRunning(id.clone()));
+        }
+        self.focus(Some(id.clone()))?;
+        self.scrollback(id)
+    }
+
+    /// Explicitly revive a non-running row through its native resume command.
+    /// Automatic restart never calls this path.
+    pub fn revive(&self, id: &SessionId) -> Result<SessionId, RegistryError> {
+        let (command, generation) = {
+            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let entry = state
+                .entries
+                .get_mut(id)
+                .ok_or_else(|| RegistryError::Missing(id.clone()))?;
+            if entry.pty.is_some() {
+                return Err(RegistryError::StillRunning(id.clone()));
+            }
+            let resume_id = entry
+                .session
+                .resume_id
+                .clone()
+                .ok_or_else(|| RegistryError::NoResumeId(id.clone()))?;
+            let mut spec = entry.spec.clone();
+            spec.resume = Resume::Session(resume_id);
+            spec.initial_prompt = None;
+            let binary = AgentBinary {
+                agent: spec.agent,
+                path: entry.command.program.clone(),
+                origin: Origin::Configured,
+            };
+            let command = spec.resolve(&binary)?;
+            entry.spec = spec;
+            entry.command = command.clone();
+            entry.stop_requested = false;
+            entry.generation = entry.generation.saturating_add(1);
+            let generation = entry.generation;
+            entry.session.begin_manual_revive_at(SystemTime::now());
+            (command, generation)
+        };
+        self.emit_session(id);
+
+        let pty = match self.spawn_pty(id, &command, generation) {
+            Ok(pty) => pty,
+            Err(error) => {
+                if let Ok(mut state) = self.inner.state.lock() {
+                    if let Some(entry) = state.entries.get_mut(id) {
+                        if entry.generation == generation {
+                            entry.session.mark_resurrectable_at(None, SystemTime::now());
+                        }
+                    }
+                }
+                self.emit_session(id);
+                return Err(error);
+            }
+        };
+
+        let accepted = {
+            let mut state = self.inner.state.lock().expect("registry poisoned");
+            match state.entries.get_mut(id) {
+                Some(entry)
+                    if entry.generation == generation
+                        && !entry.stop_requested
+                        && entry.pty.is_none() =>
+                {
+                    entry.session.mark_spawned_at(pty.pid(), SystemTime::now());
+                    entry.pty = Some(pty.clone());
+                    true
+                }
+                _ => false,
+            }
+        };
+        if !accepted {
+            let _ = pty.kill();
+            return Err(RegistryError::NotRunning(id.clone()));
+        }
+        self.emit_session(id);
+        self.spawn_monitor(id.clone(), pty, generation);
+        Ok(id.clone())
+    }
+
+    /// Remove a stopped row from the live fleet while preserving only the
+    /// layout, cwd and exact command in the durable archive.
+    pub fn archive(&self, id: &SessionId) -> Result<ArchivedSession, RegistryError> {
+        let archived = {
+            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let Some(entry) = state.entries.get(id) else {
+                return Err(RegistryError::Missing(id.clone()));
+            };
+            if entry.pty.is_some() {
+                return Err(RegistryError::StillRunning(id.clone()));
+            }
+            let entry = state.entries.remove(id).expect("entry checked above");
+            if state.focused.as_ref() == Some(id) {
+                state.focused = None;
+            }
+            let archived = ArchivedSession::from_session(&entry.session, &entry.command);
+            state.archives.retain(|item| item.id != *id);
+            state.archives.push(archived.clone());
+            archived
+        };
+        self.emit(RegistryEvent::SessionRemoved { id: id.clone() });
+        Ok(archived)
     }
 
     pub fn resize(&self, id: &SessionId, size: PtySize) -> Result<(), RegistryError> {
@@ -648,6 +832,13 @@ fn emit_inner(inner: &Arc<Inner>, event: RegistryEvent) {
         .retain(|subscriber| subscriber.send(event.clone()).is_ok());
 }
 
+fn next_sequence(id: &SessionId) -> u64 {
+    id.0.strip_prefix('s')
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0)
+        .saturating_add(1)
+}
+
 #[derive(Default)]
 struct RingBuffer {
     bytes: VecDeque<u8>,
@@ -749,6 +940,87 @@ mod tests {
         assert!(events
             .try_iter()
             .any(|event| matches!(event, RegistryEvent::Output { .. })));
+    }
+
+    #[test]
+    fn store_restore_keeps_rows_and_replay_bytes_without_starting_processes() {
+        let cwd = Path::new(".").to_path_buf();
+        let mut spec = spec_for(Agent::Claude, &cwd);
+        spec.resume = Resume::Session("native-1".into());
+        let mut session = Session::new(SessionId::new(7), &spec);
+        session.resume_id = Some("native-1".into());
+        let snapshot = SessionStoreSnapshot {
+            schema_version: crate::store::SESSION_STORE_SCHEMA_VERSION,
+            sessions: vec![StoredSession {
+                session,
+                spec,
+                command: ResolvedCommand {
+                    program: PathBuf::from("claude.exe"),
+                    args: vec!["--resume".into(), "native-1".into()],
+                    cwd,
+                },
+                scrollback: b"restored\r\n".to_vec(),
+            }],
+            archives: Vec::new(),
+        };
+
+        let registry = SessionRegistry::from_store(snapshot);
+        let session = &registry.snapshot()[0];
+        assert_eq!(session.id, SessionId::new(7));
+        assert_eq!(session.phase, SessionPhase::Resurrectable);
+        assert_eq!(session.status, SessionStatus::Exited);
+        assert!(session.pid.is_none());
+        assert_eq!(
+            registry.scrollback(&SessionId::new(7)).expect("scrollback"),
+            b"restored\r\n"
+        );
+        assert_eq!(
+            registry
+                .grid_snapshot(&SessionId::new(7))
+                .expect("grid")
+                .lines[0],
+            "restored"
+        );
+    }
+
+    #[test]
+    fn archive_removes_only_stopped_rows_and_records_the_layout() {
+        let registry = SessionRegistry::new();
+        let cwd = Path::new(".").to_path_buf();
+        let spec = spec_for(Agent::Claude, &cwd);
+        let id = SessionId::new(1);
+        let session = Session::new(id.clone(), &spec);
+        registry
+            .inner
+            .state
+            .lock()
+            .expect("registry poisoned")
+            .entries
+            .insert(
+                id.clone(),
+                Entry {
+                    session,
+                    command: ResolvedCommand {
+                        program: PathBuf::from("claude.exe"),
+                        args: vec!["--resume".into(), "native-1".into()],
+                        cwd: cwd.clone(),
+                    },
+                    spec,
+                    pty: None,
+                    scrollback: RingBuffer::default(),
+                    grid: TerminalGrid::default(),
+                    generation: 1,
+                    stop_requested: false,
+                },
+            );
+
+        let archive = registry.archive(&id).expect("archive");
+        assert_eq!(archive.id, id);
+        assert!(registry.snapshot().is_empty());
+        let stored = registry.store_snapshot();
+        assert!(stored.sessions.is_empty());
+        assert_eq!(stored.archives.len(), 1);
+        assert_eq!(stored.archives[0].command, "claude.exe --resume native-1");
     }
 
     #[test]

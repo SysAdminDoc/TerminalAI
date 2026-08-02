@@ -57,13 +57,6 @@ Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher contin
 
 ### P1
 
-- [ ] R-14 · P1 — Three-tier restore ladder
-  Why: no design can re-parent a live process, and pretending otherwise loses work; both target CLIs resume natively, which makes the middle tier unusually strong here.
-  Evidence: Zellij session resurrection (commands are never auto-run); tmux-resurrect program whitelist; VS Code `persistentSessionReviveProcess`.
-  Touches: daemon, session store
-  Acceptance: reattach (process alive, replay bounded scrollback) → revive (`claude --resume <id>` / `codex resume <id>`, offered as an explicit per-row action, never automatic) → archive (layout + cwd + command only); session state serializes to a human-readable file on a background thread.
-  Complexity: L
-
 - [ ] R-16 · P1 — Notification lifecycle: dedupe, auto-retract, grace periods
   Why: a stale "needs input" marker is worse than none, and per-event toasts across 20 sessions are unusable.
   Evidence: PagerDuty `dedup_key` + auto-resolve; Slack per-channel batching; Docker `start_period`; notification fatigue named as the failure mode of the obvious fix.

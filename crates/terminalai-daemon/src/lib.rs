@@ -6,6 +6,8 @@
 //! are sent only after an explicit `Subscribe` request, so broadcasts cannot be
 //! mistaken for RPC responses.
 
+mod persistence;
+
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -23,6 +25,8 @@ use terminalai_core::agent::{self, Agent, Origin};
 use terminalai_core::launch::LaunchSpec;
 use terminalai_core::pty::PtySize;
 use terminalai_core::{HookEvent, RegistryEvent, Session, SessionId, SessionRegistry};
+
+use persistence::StoreWriter;
 
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const PIPE_NAME: &str = "terminalai.control.v1";
@@ -45,6 +49,8 @@ pub enum IpcError {
     PeerMismatch { expected: u32, actual: Option<u32> },
     #[error("invalid control message: {0}")]
     InvalidMessage(String),
+    #[error("session store could not be loaded: {0}")]
+    Store(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +105,15 @@ pub enum Request {
     Scrollback {
         id: SessionId,
     },
+    Reattach {
+        id: SessionId,
+    },
+    Revive {
+        id: SessionId,
+    },
+    Archive {
+        id: SessionId,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,6 +146,15 @@ pub enum Response {
     Scrollback {
         data: String,
     },
+    Reattached {
+        data: String,
+    },
+    Revived {
+        id: SessionId,
+    },
+    Archived {
+        id: SessionId,
+    },
     PinChanged {
         pinned: bool,
     },
@@ -150,14 +174,30 @@ enum WireMessage {
 pub struct DaemonServer {
     listener: LocalSocketListener,
     registry: SessionRegistry,
+    store_writer: Option<StoreWriter>,
 }
 
 impl DaemonServer {
     pub fn bind() -> Result<Self, IpcError> {
-        Self::bind_named(PIPE_NAME)
+        let (registry, store_writer) = match persistence::default_path() {
+            Some(path) => (
+                SessionRegistry::from_store(persistence::load(&path).map_err(IpcError::Store)?),
+                Some(StoreWriter::spawn(path)),
+            ),
+            None => (SessionRegistry::new(), None),
+        };
+        Self::bind_named_with_state(PIPE_NAME, registry, store_writer)
     }
 
     pub fn bind_named(name: &str) -> Result<Self, IpcError> {
+        Self::bind_named_with_state(name, SessionRegistry::new(), None)
+    }
+
+    fn bind_named_with_state(
+        name: &str,
+        registry: SessionRegistry,
+        store_writer: Option<StoreWriter>,
+    ) -> Result<Self, IpcError> {
         let name = socket_name(name)?;
         let mut options = ListenerOptions::new().name(name);
         #[cfg(windows)]
@@ -171,18 +211,20 @@ impl DaemonServer {
         let listener = options.create_sync()?;
         Ok(Self {
             listener,
-            registry: SessionRegistry::new(),
+            registry,
+            store_writer,
         })
     }
 
     pub fn with_registry(name: &str, registry: SessionRegistry) -> Result<Self, IpcError> {
-        let mut server = Self::bind_named(name)?;
-        server.registry = registry;
-        Ok(server)
+        Self::bind_named_with_state(name, registry, None)
     }
 
     /// Serve connections until the daemon process is terminated.
     pub fn serve(self) -> Result<(), IpcError> {
+        if let Some(writer) = self.store_writer.clone() {
+            bridge_store(self.registry.clone(), writer);
+        }
         for connection in self.listener.incoming() {
             match connection {
                 Ok(stream) => {
@@ -211,6 +253,22 @@ impl DaemonServer {
             .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "listener closed"))??;
         handle_connection(stream, self.registry.clone())
     }
+}
+
+fn bridge_store(registry: SessionRegistry, writer: StoreWriter) {
+    let events = registry.subscribe();
+    let _ = thread::Builder::new()
+        .name("terminalai-session-store-events".into())
+        .spawn(move || {
+            for event in events {
+                if matches!(
+                    event,
+                    RegistryEvent::SessionUpdated { .. } | RegistryEvent::SessionRemoved { .. }
+                ) {
+                    writer.update(registry.store_snapshot());
+                }
+            }
+        });
 }
 
 pub fn run() -> Result<(), IpcError> {
@@ -479,6 +537,26 @@ fn dispatch(request: Request, registry: &SessionRegistry) -> Response {
             Ok(data) => Response::Scrollback {
                 data: String::from_utf8_lossy(&data).into_owned(),
             },
+            Err(error) => Response::Error {
+                message: error.to_string(),
+            },
+        },
+        Request::Reattach { id } => match registry.reattach(&id) {
+            Ok(data) => Response::Reattached {
+                data: String::from_utf8_lossy(&data).into_owned(),
+            },
+            Err(error) => Response::Error {
+                message: error.to_string(),
+            },
+        },
+        Request::Revive { id } => match registry.revive(&id) {
+            Ok(id) => Response::Revived { id },
+            Err(error) => Response::Error {
+                message: error.to_string(),
+            },
+        },
+        Request::Archive { id } => match registry.archive(&id) {
+            Ok(archive) => Response::Archived { id: archive.id },
             Err(error) => Response::Error {
                 message: error.to_string(),
             },
