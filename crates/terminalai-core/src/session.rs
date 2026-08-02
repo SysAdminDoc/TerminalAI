@@ -2,7 +2,8 @@
 //!
 //! A [`Session`] is what one line of the fleet list renders. It is deliberately
 //! small and cheap to clone: the GUI re-renders the whole list on every status
-//! change, and there may be thirty of them.
+//! change, and there may be thirty tracked sessions even while only a bounded
+//! number of agent processes remain live.
 //!
 //! Status is *pushed* here by agent hooks and transcript tailing, never polled.
 //! Polling a pty every two seconds is what every other multiplexer does, and it
@@ -14,7 +15,9 @@ use std::time::{Duration, SystemTime};
 use crate::agent::Agent;
 use crate::launch::{Effort, LaunchSpec};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct SessionId(pub String);
 
 impl SessionId {
@@ -31,7 +34,9 @@ impl std::fmt::Display for SessionId {
 
 /// What the status dot shows. Ordering matters: the fleet list sorts by this
 /// descending, so anything wanting the user floats to the top.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum SessionStatus {
     /// Process gone.
@@ -129,7 +134,9 @@ impl Session {
     /// How long the session has held its current status — the number that tells
     /// you at a glance which agent is wedged.
     pub fn in_status_for(&self) -> Duration {
-        SystemTime::now().duration_since(self.status_since).unwrap_or_default()
+        SystemTime::now()
+            .duration_since(self.status_since)
+            .unwrap_or_default()
     }
 
     pub fn set_last_line(&mut self, line: &str) {
@@ -157,7 +164,11 @@ fn trim_for_row(s: &str, max: usize) -> String {
     let mut out = String::with_capacity(max.min(s.len()));
     let mut space = false;
     for ch in s.chars() {
-        let ch = if ch.is_whitespace() || ch.is_control() { ' ' } else { ch };
+        let ch = if ch.is_whitespace() || ch.is_control() {
+            ' '
+        } else {
+            ch
+        };
         if ch == ' ' {
             if space || out.is_empty() {
                 continue;
@@ -189,7 +200,7 @@ mod tests {
 
     #[test]
     fn attention_sorts_to_the_top() {
-        let mut v = vec![
+        let mut v = [
             session(SessionStatus::Idle),
             session(SessionStatus::NeedsYou),
             session(SessionStatus::Working),
@@ -206,7 +217,10 @@ mod tests {
         assert!(s.unread);
         let stamp = s.status_since;
         s.set_status(SessionStatus::NeedsYou);
-        assert_eq!(s.status_since, stamp, "a repeated status must not reset the timer");
+        assert_eq!(
+            s.status_since, stamp,
+            "a repeated status must not reset the timer"
+        );
     }
 
     #[test]

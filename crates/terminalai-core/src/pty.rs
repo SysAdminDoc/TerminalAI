@@ -3,8 +3,9 @@
 //! One [`PtySession`] owns one agent process. Output is pumped on a dedicated
 //! thread into a caller-supplied sink, so a background session costs a thread
 //! and a ring buffer — not a terminal renderer. That asymmetry is the whole
-//! reason TerminalAI can hold thirty sessions on screen: only the focused pane
-//! ever materialises a grid.
+//! reason TerminalAI can keep thirty *tracked* sessions on screen: only the
+//! focused pane ever materialises a grid, while live-agent count remains
+//! resource-bounded.
 
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -32,7 +33,7 @@ pub enum PtyError {
 
 /// A live agent process attached to a pseudo-console.
 pub struct PtySession {
-    master: Box<dyn MasterPty + Send>,
+    master: Mutex<Box<dyn MasterPty + Send>>,
     child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     running: Arc<AtomicBool>,
@@ -63,15 +64,19 @@ impl PtySession {
             .map_err(|e| PtyError::Open(e.to_string()))?;
 
         let mut builder = CommandBuilder::new(&cmd.program);
+        configure_environment(&mut builder);
         for a in &cmd.args {
             builder.arg(a);
         }
         builder.cwd(&cmd.cwd);
 
-        let child = pair.slave.spawn_command(builder).map_err(|e| PtyError::Spawn {
-            program: cmd.program.display().to_string(),
-            cause: e.to_string(),
-        })?;
+        let child = pair
+            .slave
+            .spawn_command(builder)
+            .map_err(|e| PtyError::Spawn {
+                program: cmd.program.display().to_string(),
+                cause: e.to_string(),
+            })?;
         // Dropping the slave is required on Windows: ConPTY will not report the
         // child's exit while any handle to the slave side is still open.
         drop(pair.slave);
@@ -118,7 +123,12 @@ impl PtySession {
             })
             .map_err(PtyError::Write)?;
 
-        Ok(Self { master: pair.master, child: Arc::new(Mutex::new(child)), writer, running })
+        Ok(Self {
+            master: Mutex::new(pair.master),
+            child: Arc::new(Mutex::new(child)),
+            writer,
+            running,
+        })
     }
 
     /// Send keystrokes to the agent.
@@ -126,7 +136,7 @@ impl PtySession {
         if !self.is_running() {
             return Err(PtyError::Gone);
         }
-        let mut w = self.writer.lock().expect("pty writer poisoned");
+        let mut w = self.writer.lock().map_err(|_| PtyError::Gone)?;
         w.write_all(bytes)?;
         w.flush()?;
         Ok(())
@@ -135,7 +145,11 @@ impl PtySession {
     /// Resize the console. Both CLIs redraw on SIGWINCH-equivalent, so this is
     /// what makes a pane usable after the user drags a splitter.
     pub fn resize(&self, size: PtySize) -> Result<(), PtyError> {
-        self.master.resize(size).map_err(|e| PtyError::Open(e.to_string()))
+        self.master
+            .lock()
+            .map_err(|_| PtyError::Gone)?
+            .resize(size)
+            .map_err(|e| PtyError::Open(e.to_string()))
     }
 
     pub fn is_running(&self) -> bool {
@@ -143,25 +157,29 @@ impl PtySession {
     }
 
     /// Exit status if the process has finished, `None` while it is still alive.
-    pub fn try_wait(&self) -> Option<u32> {
-        let mut c = self.child.lock().expect("pty child poisoned");
+    pub fn try_wait(&self) -> Result<Option<u32>, PtyError> {
+        let mut c = self.child.lock().map_err(|_| PtyError::Gone)?;
         match c.try_wait() {
-            Ok(Some(status)) => Some(status.exit_code()),
-            _ => None,
+            Ok(Some(status)) => Ok(Some(status.exit_code())),
+            Ok(None) => Ok(None),
+            Err(_) => Err(PtyError::Gone),
         }
     }
 
     /// Terminate the agent. Used when the user closes a session.
-    pub fn kill(&self) {
-        let mut c = self.child.lock().expect("pty child poisoned");
-        let _ = c.kill();
+    pub fn kill(&self) -> Result<(), PtyError> {
+        let mut c = self.child.lock().map_err(|_| PtyError::Gone)?;
+        c.kill().map_err(|_| PtyError::Gone)?;
         self.running.store(false, Ordering::SeqCst);
+        Ok(())
     }
 }
 
 impl std::fmt::Debug for PtySession {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PtySession").field("running", &self.is_running()).finish()
+        f.debug_struct("PtySession")
+            .field("running", &self.is_running())
+            .finish()
     }
 }
 
@@ -169,9 +187,112 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
 }
 
+/// `portable-pty` starts with the entire parent environment, including values
+/// it discovers in the Windows registry. Agents routinely read environment
+/// variables, so passing that through would turn TerminalAI into a credential
+/// fan-out mechanism. Keep the process environment intentionally small.
+fn configure_environment(builder: &mut CommandBuilder) {
+    builder.env_clear();
+    for key in safe_environment_keys() {
+        if let Some(value) = std::env::var_os(key) {
+            builder.env(key, value);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn safe_environment_keys() -> &'static [&'static str] {
+    &[
+        "PATH",
+        "SYSTEMROOT",
+        "TEMP",
+        "USERPROFILE",
+        "COMSPEC",
+        "PATHEXT",
+    ]
+}
+
+#[cfg(not(windows))]
+fn safe_environment_keys() -> &'static [&'static str] {
+    &["PATH", "HOME", "TMPDIR", "TERM", "LANG", "SHELL"]
+}
+
 /// A sensible default console size for a background session — big enough that
 /// the agent does not wrap its output into uselessness, small enough to keep
 /// the scrollback cheap.
 pub fn default_size() -> PtySize {
-    PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 }
+    PtySize {
+        rows: 40,
+        cols: 120,
+        pixel_width: 0,
+        pixel_height: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn environment_allowlist_has_no_secret_wildcards() {
+        assert!(!safe_environment_keys()
+            .iter()
+            .any(|key| key.contains("KEY")));
+        assert!(!safe_environment_keys()
+            .iter()
+            .any(|key| key.contains("TOKEN")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn child_does_not_receive_parent_sentinel() {
+        const SENTINEL: &str = "TERMINALAI_PTY_SENTINEL";
+        std::env::set_var(SENTINEL, "must-not-cross-process-boundary");
+        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        let cmd = ResolvedCommand {
+            program: PathBuf::from("cmd.exe"),
+            args: vec!["/c".into(), "set".into()],
+            cwd: std::env::current_dir().expect("test cwd"),
+        };
+        let session = PtySession::spawn(&cmd, default_size(), move |chunk| {
+            let _ = tx.send(chunk.to_vec());
+        })
+        .expect("spawn cmd for environment test");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut output = Vec::new();
+        while Instant::now() < deadline {
+            while let Ok(chunk) = rx.try_recv() {
+                output.extend_from_slice(&chunk);
+            }
+            if matches!(session.try_wait(), Ok(Some(_))) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let _ = session.kill();
+        std::env::remove_var(SENTINEL);
+        assert!(!String::from_utf8_lossy(&output).contains(SENTINEL));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn poisoned_writer_returns_gone_instead_of_panicking() {
+        let cmd = ResolvedCommand {
+            program: PathBuf::from("cmd.exe"),
+            args: vec!["/c".into(), "ping -n 5 127.0.0.1 > nul".into()],
+            cwd: std::env::current_dir().expect("test cwd"),
+        };
+        let session = PtySession::spawn(&cmd, default_size(), |_| {}).expect("spawn cmd");
+        let writer = session.writer.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = writer.lock().expect("fresh writer lock");
+            panic!("intentionally poison writer");
+        })
+        .join();
+        assert!(matches!(session.write(b"x"), Err(PtyError::Gone)));
+        let _ = session.kill();
+    }
 }

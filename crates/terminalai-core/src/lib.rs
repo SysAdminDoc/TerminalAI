@@ -12,9 +12,11 @@
 pub mod agent;
 pub mod launch;
 pub mod pty;
+pub mod registry;
 pub mod session;
 
 pub use agent::{Agent, AgentBinary, ResolveError};
 pub use launch::{Effort, LaunchError, LaunchSpec, Permission, ResolvedCommand, Resume, Sandbox};
 pub use pty::{PtySession, PtySize};
+pub use registry::{RegistryError, RegistryEvent, SessionRegistry};
 pub use session::{Session, SessionId, SessionStatus};

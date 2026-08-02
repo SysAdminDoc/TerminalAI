@@ -3,6 +3,27 @@
 All notable changes to TerminalAI are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- `terminalai-core::registry` — Rust-owned session lifetime, sorted fleet snapshots, pushed
+  output/status events, focus/read/pin controls, and bounded per-session scrollback.
+- Strict agent/binary matching before a process is spawned, preventing a launcher configuration
+  from accidentally starting the wrong CLI.
+
+### Fixed
+
+- The core now passes strict clippy; `Agent` uses a derived default and fleet tests use arrays
+  where allocation is unnecessary.
+- PTY children now receive an explicit safe environment allowlist instead of inherited API keys,
+  registry secrets and unrelated agent credentials.
+- Poisoned PTY locks return `PtyError::Gone` rather than panicking the host process.
+- Codex now emits its supported `max` reasoning effort and explicit `Plan` collaboration-mode
+  config override.
+- Documentation now distinguishes thirty tracked sessions from the much smaller live-process
+  budget measured on the development machine.
+
 ## [0.1.0] — 2026-08-02
 
 First working core. No GUI yet — everything below is exercised through `terminalai-probe`.

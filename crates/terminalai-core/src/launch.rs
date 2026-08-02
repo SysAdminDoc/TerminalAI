@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use crate::agent::{Agent, AgentBinary};
 
-/// Reasoning effort. Claude accepts all five; Codex accepts the first four.
+/// Reasoning effort. Both current CLIs accept all five levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Effort {
@@ -108,12 +108,6 @@ pub struct LaunchSpec {
     pub extra_args: Vec<String>,
 }
 
-impl Default for Agent {
-    fn default() -> Self {
-        Agent::Claude
-    }
-}
-
 /// A command ready to hand to the PTY layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedCommand {
@@ -149,7 +143,10 @@ pub enum LaunchError {
     #[error("working directory does not exist: {0}")]
     MissingCwd(PathBuf),
     #[error("{flag} is not supported by {agent}")]
-    Unsupported { flag: &'static str, agent: &'static str },
+    Unsupported {
+        flag: &'static str,
+        agent: &'static str,
+    },
     #[error("{0} cannot resume a specific session id from the command line; use Last or New")]
     ResumeUnsupported(&'static str),
 }
@@ -166,18 +163,31 @@ impl LaunchSpec {
             Agent::Claude => self.claude_args()?,
             Agent::Codex => self.codex_args()?,
         };
-        Ok(ResolvedCommand { program: binary.path.clone(), args, cwd: self.cwd.clone() })
+        Ok(ResolvedCommand {
+            program: binary.path.clone(),
+            args,
+            cwd: self.cwd.clone(),
+        })
     }
 
     fn claude_args(&self) -> Result<Vec<String>, LaunchError> {
         if self.sandbox.is_some() {
-            return Err(LaunchError::Unsupported { flag: "--sandbox", agent: "Claude Code" });
+            return Err(LaunchError::Unsupported {
+                flag: "--sandbox",
+                agent: "Claude Code",
+            });
         }
         if self.profile.is_some() {
-            return Err(LaunchError::Unsupported { flag: "--profile", agent: "Claude Code" });
+            return Err(LaunchError::Unsupported {
+                flag: "--profile",
+                agent: "Claude Code",
+            });
         }
         if self.web_search {
-            return Err(LaunchError::Unsupported { flag: "--search", agent: "Claude Code" });
+            return Err(LaunchError::Unsupported {
+                flag: "--search",
+                agent: "Claude Code",
+            });
         }
 
         let mut a = Vec::new();
@@ -237,14 +247,11 @@ impl LaunchSpec {
 
     fn codex_args(&self) -> Result<Vec<String>, LaunchError> {
         if self.max_budget_usd.is_some() {
-            return Err(LaunchError::Unsupported { flag: "--max-budget-usd", agent: "Codex" });
+            return Err(LaunchError::Unsupported {
+                flag: "--max-budget-usd",
+                agent: "Codex",
+            });
         }
-        if matches!(self.permission, Some(Permission::Plan)) {
-            // Codex has no plan mode; the honest equivalent is an explicit
-            // read-only sandbox, which the caller must choose deliberately.
-            return Err(LaunchError::Unsupported { flag: "plan mode", agent: "Codex" });
-        }
-
         let mut a = Vec::new();
         // Subcommands come first for the resume family.
         match &self.resume {
@@ -271,7 +278,11 @@ impl LaunchSpec {
             a.push("--config".into());
             a.push(format!("model_reasoning_effort=\"{}\"", e.as_str()));
         }
-        if let Some(p) = self.permission {
+        if self.permission == Some(Permission::Plan) {
+            // Codex exposes its collaboration mode as a TOML config override.
+            a.push("--config".into());
+            a.push("collaboration_mode.mode=\"Plan\"".into());
+        } else if let Some(p) = self.permission {
             a.push("--ask-for-approval".into());
             a.push(
                 match p {
@@ -318,16 +329,30 @@ fn format_usd(v: f64) -> String {
 /// Effort levels the launcher should offer for an agent.
 pub fn supported_efforts(agent: Agent) -> &'static [Effort] {
     match agent {
-        Agent::Claude => {
-            &[Effort::Low, Effort::Medium, Effort::High, Effort::XHigh, Effort::Max]
-        }
-        Agent::Codex => &[Effort::Low, Effort::Medium, Effort::High, Effort::XHigh],
+        Agent::Claude => &[
+            Effort::Low,
+            Effort::Medium,
+            Effort::High,
+            Effort::XHigh,
+            Effort::Max,
+        ],
+        Agent::Codex => &[
+            Effort::Low,
+            Effort::Medium,
+            Effort::High,
+            Effort::XHigh,
+            Effort::Max,
+        ],
     }
 }
 
 /// Convenience for callers that only have a path.
 pub fn spec_for(agent: Agent, cwd: &Path) -> LaunchSpec {
-    LaunchSpec { agent, cwd: cwd.to_path_buf(), ..Default::default() }
+    LaunchSpec {
+        agent,
+        cwd: cwd.to_path_buf(),
+        ..Default::default()
+    }
 }
 
 #[cfg(test)]
@@ -336,11 +361,19 @@ mod tests {
     use crate::agent::Origin;
 
     fn binary(agent: Agent) -> AgentBinary {
-        AgentBinary { agent, path: PathBuf::from("x"), origin: Origin::Configured }
+        AgentBinary {
+            agent,
+            path: PathBuf::from("x"),
+            origin: Origin::Configured,
+        }
     }
 
     fn spec(agent: Agent) -> LaunchSpec {
-        LaunchSpec { agent, cwd: std::env::temp_dir(), ..Default::default() }
+        LaunchSpec {
+            agent,
+            cwd: std::env::temp_dir(),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -381,36 +414,79 @@ mod tests {
         };
         let c = s.resolve(&binary(Agent::Codex)).unwrap();
         assert!(c.args.windows(2).any(|w| w
-            == ["--config".to_string(), "model_reasoning_effort=\"high\"".to_string()]));
-        assert!(c.args.contains(&"--cd".to_string()), "codex must be told its workspace root");
+            == [
+                "--config".to_string(),
+                "model_reasoning_effort=\"high\"".to_string()
+            ]));
+        assert!(
+            c.args.contains(&"--cd".to_string()),
+            "codex must be told its workspace root"
+        );
+    }
+
+    #[test]
+    fn codex_supports_max_effort() {
+        assert!(supported_efforts(Agent::Codex).contains(&Effort::Max));
+        let s = LaunchSpec {
+            effort: Some(Effort::Max),
+            ..spec(Agent::Codex)
+        };
+        let c = s.resolve(&binary(Agent::Codex)).unwrap();
+        assert!(c.args.windows(2).any(|w| {
+            w == [
+                "--config".to_string(),
+                "model_reasoning_effort=\"max\"".to_string(),
+            ]
+        }));
+    }
+
+    #[test]
+    fn codex_plan_mode_is_an_explicit_config_override() {
+        let s = LaunchSpec {
+            permission: Some(Permission::Plan),
+            ..spec(Agent::Codex)
+        };
+        let c = s.resolve(&binary(Agent::Codex)).unwrap();
+        assert!(c.args.windows(2).any(|w| {
+            w == [
+                "--config".to_string(),
+                "collaboration_mode.mode=\"Plan\"".to_string(),
+            ]
+        }));
     }
 
     #[test]
     fn codex_resume_is_a_subcommand_and_comes_first() {
-        let s = LaunchSpec { resume: Resume::Last, ..spec(Agent::Codex) };
+        let s = LaunchSpec {
+            resume: Resume::Last,
+            ..spec(Agent::Codex)
+        };
         let c = s.resolve(&binary(Agent::Codex)).unwrap();
         assert_eq!(&c.args[..2], ["resume", "--last"]);
     }
 
     #[test]
     fn claude_fork_keeps_the_original() {
-        let s = LaunchSpec { resume: Resume::Fork("abc-123".into()), ..spec(Agent::Claude) };
+        let s = LaunchSpec {
+            resume: Resume::Fork("abc-123".into()),
+            ..spec(Agent::Claude)
+        };
         let c = s.resolve(&binary(Agent::Claude)).unwrap();
         assert_eq!(c.args, ["--resume", "abc-123", "--fork-session"]);
     }
 
     #[test]
     fn unsupported_options_are_refused_not_dropped() {
-        let s = LaunchSpec { sandbox: Some(Sandbox::ReadOnly), ..spec(Agent::Claude) };
+        let s = LaunchSpec {
+            sandbox: Some(Sandbox::ReadOnly),
+            ..spec(Agent::Claude)
+        };
         assert!(matches!(
             s.resolve(&binary(Agent::Claude)),
-            Err(LaunchError::Unsupported { flag: "--sandbox", .. })
-        ));
-
-        let s = LaunchSpec { permission: Some(Permission::Plan), ..spec(Agent::Codex) };
-        assert!(matches!(
-            s.resolve(&binary(Agent::Codex)),
-            Err(LaunchError::Unsupported { flag: "plan mode", .. })
+            Err(LaunchError::Unsupported {
+                flag: "--sandbox",
+                ..
+            })
         ));
     }
 
@@ -427,8 +503,14 @@ mod tests {
 
     #[test]
     fn missing_cwd_fails_before_spawn() {
-        let s = LaunchSpec { cwd: PathBuf::from("/nope/nope"), ..spec(Agent::Claude) };
-        assert!(matches!(s.resolve(&binary(Agent::Claude)), Err(LaunchError::MissingCwd(_))));
+        let s = LaunchSpec {
+            cwd: PathBuf::from("/nope/nope"),
+            ..spec(Agent::Claude)
+        };
+        assert!(matches!(
+            s.resolve(&binary(Agent::Claude)),
+            Err(LaunchError::MissingCwd(_))
+        ));
     }
 
     #[test]

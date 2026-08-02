@@ -12,9 +12,12 @@
 use std::path::{Path, PathBuf};
 
 /// Which coding agent a session runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Agent {
+    #[default]
     Claude,
     Codex,
 }
@@ -81,7 +84,11 @@ pub enum ResolveError {
 pub fn resolve(agent: Agent, configured: Option<&Path>) -> Result<AgentBinary, ResolveError> {
     if let Some(p) = configured {
         return if p.is_file() {
-            Ok(AgentBinary { agent, path: p.to_path_buf(), origin: Origin::Configured })
+            Ok(AgentBinary {
+                agent,
+                path: p.to_path_buf(),
+                origin: Origin::Configured,
+            })
         } else {
             Err(ResolveError::ConfiguredMissing {
                 agent: agent.command_name(),
@@ -91,13 +98,21 @@ pub fn resolve(agent: Agent, configured: Option<&Path>) -> Result<AgentBinary, R
     }
 
     if let Some(path) = npm_prefix().and_then(|prefix| in_npm_prefix(agent, &prefix)) {
-        return Ok(AgentBinary { agent, path, origin: Origin::NpmPrefix });
+        return Ok(AgentBinary {
+            agent,
+            path,
+            origin: Origin::NpmPrefix,
+        });
     }
 
     let exe = format!("{}{}", agent.command_name(), std::env::consts::EXE_SUFFIX);
     if let Ok(path) = which::which(&exe) {
         if is_native_executable(&path) {
-            return Ok(AgentBinary { agent, path, origin: Origin::Path });
+            return Ok(AgentBinary {
+                agent,
+                path,
+                origin: Origin::Path,
+            });
         }
     }
 
@@ -181,7 +196,10 @@ fn is_native_executable(path: &Path) -> bool {
         return true;
     }
     matches!(
-        path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(),
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
         Some("exe") | Some("com")
     )
 }
@@ -208,6 +226,9 @@ mod tests {
     fn platform_tables_agree() {
         // Both tables must resolve, or neither — a half-populated match arm
         // would silently fall through to the PATH branch.
-        assert_eq!(codex_platform_package().is_some(), codex_target_triple().is_some());
+        assert_eq!(
+            codex_platform_package().is_some(),
+            codex_target_triple().is_some()
+        );
     }
 }

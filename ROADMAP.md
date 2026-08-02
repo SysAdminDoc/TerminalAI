@@ -72,49 +72,12 @@ Single task tracker for this repo. Newest phase at the top; items are struck thr
 
 - Does `claude --resume <id>` restore enough context that hibernation is transparent to the user?
   Blocks R-06. Needs live validation.
-- How is Codex plan mode selected from the command line — `-c collaboration_mode.mode="Plan"`, a
-  profile, or interactive only? Determines whether R-04 is a one-line map or a documented limit.
 
 ## Research-Driven Additions
 
 Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher continues from R-34.
 
 ### P0
-
-- [ ] R-01 · P0 — Stop leaking the parent environment into every agent process
-  Why: `CommandBuilder` inherits the full parent env, so any `*_API_KEY` / `GITHUB_TOKEN` in TerminalAI's process reaches every spawned agent.
-  Evidence: portable-pty `cmdbuilder.rs::get_base_env` (reads `std::env::vars_os` plus a registry sweep); RESEARCH.md "Security".
-  Touches: `crates/terminalai-core/src/pty.rs`, `crates/terminalai-core/src/launch.rs`
-  Acceptance: `env_clear()` plus an explicit allowlist (`PATH`, `SYSTEMROOT`, `TEMP`, `USERPROFILE`, `COMSPEC`, `PATHEXT`); a test asserts a sentinel var set in the parent is absent from a spawned child's `set` output.
-  Complexity: S
-
-- [ ] R-02 · P0 — Remove every panic path from PTY supervision
-  Why: four `.expect()` calls on `Mutex` locks mean one poisoned lock aborts the process and takes all sessions with it.
-  Evidence: `crates/terminalai-core/src/pty.rs` — `"pty writer poisoned"`, `"pty master poisoned"`, `"pty child poisoned"` ×2.
-  Touches: `crates/terminalai-core/src/pty.rs`
-  Acceptance: all lock acquisitions return `PtyError::Gone` on poisoning; a test poisons the writer lock and asserts `write()` returns `Err` rather than panicking.
-  Complexity: S
-
-- [ ] R-03 · P0 — Allow `Effort::Max` for Codex
-  Why: `supported_efforts(Codex)` excludes it, but Codex accepts it.
-  Evidence: local Codex rollout 2026-08-02 records `"reasoning_effort":"max"` and `"effort":"max"`.
-  Touches: `crates/terminalai-core/src/launch.rs`
-  Acceptance: `supported_efforts(Agent::Codex)` includes `Max`; a test pins the emitted `model_reasoning_effort="max"`.
-  Complexity: S
-
-- [ ] R-04 · P0 — Stop refusing plan mode for Codex
-  Why: `codex_args()` returns `LaunchError::Unsupported { flag: "plan mode" }` on the false premise that Codex has none.
-  Evidence: local rollout records `collaboration_mode` with "Known mode names are Default and Plan"; see Open Questions for how it is selected.
-  Touches: `crates/terminalai-core/src/launch.rs`, `README.md`, `CLAUDE.md`
-  Acceptance: plan mode either maps to the correct Codex invocation, or the refusal message states the real reason with a source; the "Codex has no plan mode" claim is gone from all docs and doc comments.
-  Complexity: S
-
-- [ ] R-05 · P0 — Correct the density claim wherever it appears
-  Why: docs promise "thirty live sessions" on renderer grounds; the binding constraint is agent RSS, and the number is wrong by about an order of magnitude.
-  Evidence: measured 2026-08-02 — `claude.exe` 509 MB, `codex.exe` ~322 MB, ConPTY host ~3.7 MB → 30 live ≈ 12 GB. Superset engineer reports 2–3 parallel sessions for real work (HN 46425576).
-  Touches: `README.md`, `CLAUDE.md`, the module doc of `crates/terminalai-core/src/pty.rs`, `session.rs`
-  Acceptance: docs claim thirty *tracked* sessions and state the live-session ceiling with the measured figures.
-  Complexity: S
 
 - [ ] R-07 · P0 — Harden the hook/control transport before it ships
   Why: a bare loopback HTTP listener is reachable by any page the user visits, and DNS rebinding defeats `Origin` checks.

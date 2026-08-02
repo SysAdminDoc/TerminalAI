@@ -61,7 +61,12 @@ fn cmd_resolve() -> i32 {
     let mut failed = false;
     for a in [Agent::Claude, Agent::Codex] {
         match agent::resolve(a, None) {
-            Ok(b) => println!("{:<12} {:?}  {}", a.command_name(), b.origin, b.path.display()),
+            Ok(b) => println!(
+                "{:<12} {:?}  {}",
+                a.command_name(),
+                b.origin,
+                b.path.display()
+            ),
             Err(e) => {
                 eprintln!("{:<12} FAILED: {e}", a.command_name());
                 failed = true;
@@ -101,7 +106,11 @@ fn cmd_exec(args: &[String]) -> i32 {
     };
     let (out, exit) = drain(&session, rx, Duration::from_secs(30));
     print!("{}", String::from_utf8_lossy(&out));
-    println!("\n--- exit: {} ---", exit.map(|c| c.to_string()).unwrap_or_else(|| "killed".into()));
+    println!(
+        "\n--- exit: {} ---",
+        exit.map(|c| c.to_string())
+            .unwrap_or_else(|| "killed".into())
+    );
     if exit == Some(0) {
         0
     } else {
@@ -219,7 +228,11 @@ fn cmd_build(args: &[String], run: bool) -> i32 {
 
     let (out, exit) = drain(&session, rx, timeout);
     print!("{}", String::from_utf8_lossy(&out));
-    println!("\n--- exit: {} ---", exit.map(|c| c.to_string()).unwrap_or_else(|| "killed".into()));
+    println!(
+        "\n--- exit: {} ---",
+        exit.map(|c| c.to_string())
+            .unwrap_or_else(|| "killed".into())
+    );
     if exit == Some(0) {
         0
     } else {
@@ -250,7 +263,7 @@ fn drain(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
-        if let Some(code) = session.try_wait() {
+        if let Ok(Some(code)) = session.try_wait() {
             // Give conhost a moment to flush whatever the child wrote last.
             let settle = std::time::Instant::now() + Duration::from_millis(300);
             while std::time::Instant::now() < settle {
@@ -264,7 +277,7 @@ fn drain(
         }
         if std::time::Instant::now() >= deadline {
             eprintln!("--- timed out after {}s, killing ---", timeout.as_secs());
-            session.kill();
+            let _ = session.kill();
             break;
         }
     }
