@@ -46,23 +46,11 @@ Single task tracker for this repo. Newest phase at the top; completed items are 
       `thread/tokenUsage/updated` are the signals worth having. Keep behind a flag — see R-19.*
 - [ ] Session templates per repo, read from the repo itself
 
-## Open questions
-
-- Does `claude --resume <id>` restore enough context that hibernation is transparent to the user?
-  Blocks R-06. Needs live validation.
-
 ## Research-Driven Additions
 
 Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher continues from R-34.
 
 ### P1
-
-- [ ] R-06 · P1 — Session hibernation and rehydration
-  Why: the only lever that makes many tracked sessions affordable — most are idle, and idle sessions cost the same 509 MB as busy ones.
-  Evidence: measured RSS and ~250–500 ms cold start (2026-08-02); both CLIs support resume. Blocked on the first Open Question.
-  Touches: daemon, session store, `launch.rs`
-  Acceptance: an idle session past a threshold is parked (process exited, transcript and resume id retained, row shows hibernated) and rehydrates on focus via the resume path with scrollback replayed from disk.
-  Complexity: L
 
 ### P2
 
