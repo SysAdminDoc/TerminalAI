@@ -9,6 +9,7 @@ dist/
 .vite/
 src-tauri/target/
 src-tauri/gen/
+crates/terminalai-app/gen/
 
 # Editors
 .vscode/

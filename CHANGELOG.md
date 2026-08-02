@@ -9,6 +9,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 - `terminalai-core::registry` — Rust-owned session lifetime, sorted fleet snapshots, pushed
   output/status events, focus/read/pin controls, and bounded per-session scrollback.
+- `terminalai-app` — Tauri 2.11.5/WebView2 desktop shell with a Catppuccin Mocha fleet list,
+  28px status rows, launcher dialog, exact command preview, folder pickers and saved presets.
+- One canonical 120×40 xterm renderer that replays focused-session scrollback and only resizes on
+  the explicit terminal reset action.
 - Strict agent/binary matching before a process is spawned, preventing a launcher configuration
   from accidentally starting the wrong CLI.
 
@@ -26,6 +30,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - `terminalai-daemon` now owns the registry behind a versioned local-socket protocol with an
   explicit event subscription, peer-PID handshake, owner/SYSTEM Windows DACL and no client
   impersonation path.
+- Resume variants now use an explicit JSON `id` field, and the unsigned NSIS release lane builds
+  the Vite frontend and app bundle from the workspace root.
 
 ## [0.1.0] — 2026-08-02
 

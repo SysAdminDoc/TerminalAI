@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#1e1e2e" />
+    <title>TerminalAI</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand-lockup">
+          <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div>
+            <div class="brand-name">Terminal<span>AI</span></div>
+            <div class="brand-subtitle">fleet control plane</div>
+          </div>
+        </div>
+        <div class="fleet-summary" id="fleet-summary" aria-live="polite"></div>
+        <div class="top-actions">
+          <div class="preset-control"><select id="preset-select" aria-label="Saved launcher presets"><option value="">Presets</option></select><button class="button button-quiet" id="launch-preset-button" title="Launch selected preset">▶</button></div>
+          <button class="button button-quiet" id="refresh-button" title="Refresh fleet snapshot">↻ <span>Refresh</span></button>
+          <button class="button button-primary" id="new-session-button"><span class="button-plus">+</span> New session</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="fleet-panel" aria-label="Session fleet">
+          <div class="panel-toolbar">
+            <div class="toolbar-title"><span class="eyebrow">LIVE FLEET</span><span id="fleet-count">0 tracked</span></div>
+            <label class="filter-wrap" aria-label="Filter sessions"><span>⌕</span><input id="filter-input" type="search" placeholder="Filter fleet" /></label>
+          </div>
+          <div class="column-labels" aria-hidden="true"><span>STATUS / SESSION</span><span>MODEL · EFFORT</span><span>DWELL</span><span></span></div>
+          <div id="fleet-list" class="fleet-list" role="list" aria-label="Tracked sessions"></div>
+          <div id="empty-state" class="empty-state">
+            <div class="empty-orbit" aria-hidden="true"><span></span><span></span><span></span></div>
+            <h2>No sessions yet</h2>
+            <p>Launch a Claude Code or Codex session and its attention state will stay here.</p>
+            <button class="button button-secondary" id="empty-new-button">Launch your first session</button>
+          </div>
+        </section>
+
+        <section class="terminal-panel" aria-label="Focused terminal">
+          <div class="terminal-toolbar">
+            <div class="terminal-title"><span class="terminal-pulse" id="terminal-pulse"></span><span id="terminal-name">No focused session</span><span class="terminal-path" id="terminal-path"></span></div>
+            <div class="terminal-actions"><button class="icon-button" id="terminal-resize" title="Reset terminal to canonical 120 by 40 grid">▦</button><button class="icon-button" id="terminal-clear" title="Clear rendered terminal">⌫</button></div>
+          </div>
+          <div id="terminal-host" class="terminal-host"><div class="terminal-placeholder"><span>Focus a fleet row to attach the terminal</span><small>Only one xterm renderer is kept alive. Background sessions remain compact.</small></div></div>
+          <div class="terminal-statusbar"><span id="terminal-status">Waiting for a session</span><span class="terminal-grid">CANONICAL GRID&nbsp; 120 × 40</span></div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="launcher-dialog" class="launcher-dialog">
+      <form method="dialog" id="launcher-form" class="launcher-form">
+        <div class="dialog-heading"><div><span class="eyebrow">NEW CONTROLLED SESSION</span><h1>Launch an agent</h1></div><button class="dialog-close" value="cancel" aria-label="Close launcher">×</button></div>
+        <div class="launcher-grid">
+          <label class="field"><span>Agent</span><select id="agent-input"><option value="claude">Claude Code</option><option value="codex">Codex</option></select></label>
+          <label class="field"><span>Session label <em>optional</em></span><input id="name-input" placeholder="e.g. API rewrite" /></label>
+          <label class="field field-wide"><span>Project folder</span><div class="input-with-button"><input id="cwd-input" required placeholder="C:\\Users\\me\\repos\\project" /><button type="button" class="button button-quiet" id="pick-folder-button">Browse</button></div></label>
+          <label class="field"><span>Model <em>free text</em></span><input id="model-input" list="model-suggestions" placeholder="opus / gpt-5.1-codex" /><datalist id="model-suggestions"></datalist></label>
+          <label class="field"><span>Reasoning effort</span><select id="effort-input"><option value="low">Low</option><option value="medium">Medium</option><option value="high" selected>High</option><option value="xhigh">XHigh</option><option value="max">Max</option></select></label>
+          <label class="field"><span>Permission mode</span><select id="permission-input"><option value="ask">Ask before risky actions</option><option value="plan">Plan only</option><option value="accept-edits">Accept edits</option><option value="bypass">Bypass permissions</option></select></label>
+          <label class="field codex-only"><span>Sandbox</span><select id="sandbox-input"><option value="read-only">Read only</option><option value="workspace-write" selected>Workspace write</option><option value="danger-full-access">Danger full access</option></select></label>
+          <label class="field codex-only"><span>Config profile <em>optional</em></span><input id="profile-input" placeholder="work" /></label>
+          <label class="field"><span>Resume</span><select id="resume-input"><option value="new">New session</option><option value="last">Resume last</option><option value="session">Resume by id</option><option value="fork">Fork by id</option></select></label>
+          <label class="field resume-id-field"><span>Native session id</span><input id="resume-id-input" placeholder="session UUID" /></label>
+          <label class="field claude-only"><span>Spend cap <em>USD, optional</em></span><input id="budget-input" type="number" min="0" step="0.01" placeholder="No cap" /></label>
+          <label class="field codex-only check-field"><input id="search-input" type="checkbox" /><span>Enable web search</span></label>
+          <div class="field field-wide"><span>Extra writable folders</span><div class="input-with-button"><input id="extra-dirs-input" readonly placeholder="None selected" /><button type="button" class="button button-quiet" id="pick-extra-button">Add folders</button></div></div>
+          <label class="field field-wide"><span>Initial prompt <em>optional</em></span><textarea id="prompt-input" rows="3" placeholder="The first instruction sent to the agent"></textarea></label>
+        </div>
+        <div class="preview-card"><div class="preview-label"><span class="eyebrow">WHAT WILL RUN</span><span id="preview-state">Waiting for a valid folder</span></div><code id="preview-output">Choose a project folder to preview the exact command vector.</code></div>
+        <div class="dialog-actions"><div class="preset-save"><input id="preset-name-input" placeholder="Preset name" aria-label="Preset name" /><button type="button" class="button button-quiet" id="save-preset-button">Save preset</button></div><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="cancel-launch-button">Cancel</button><button type="submit" class="button button-primary" id="launch-button">Launch session</button></div></div>
+      </form>
+    </dialog>
+
+    <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

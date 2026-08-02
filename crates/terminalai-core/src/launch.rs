@@ -69,7 +69,7 @@ impl Sandbox {
 
 /// Whether this is a fresh session or picks up an old one.
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[serde(tag = "kind", content = "id", rename_all = "kebab-case")]
 pub enum Resume {
     #[default]
     New,
@@ -518,5 +518,20 @@ mod tests {
         assert_eq!(format_usd(5.0), "5");
         assert_eq!(format_usd(0.5), "0.5");
         assert_eq!(format_usd(12.25), "12.25");
+    }
+
+    #[test]
+    fn resume_json_uses_an_explicit_id_field_for_targeted_sessions() {
+        let session = serde_json::to_value(Resume::Session("abc-123".into())).unwrap();
+        let fork = serde_json::to_value(Resume::Fork("def-456".into())).unwrap();
+        assert_eq!(
+            session,
+            serde_json::json!({"kind": "session", "id": "abc-123"})
+        );
+        assert_eq!(fork, serde_json::json!({"kind": "fork", "id": "def-456"}));
+        assert_eq!(
+            serde_json::from_value::<Resume>(session).unwrap(),
+            Resume::Session("abc-123".into())
+        );
     }
 }

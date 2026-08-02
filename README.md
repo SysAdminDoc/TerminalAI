@@ -36,17 +36,21 @@ session.
 
 ## Status
 
-**v0.1.0 — core proven, GUI not built yet.**
+**v0.1.0 — core and desktop shell built.**
 
 Working today (`terminalai-probe`, headless):
 
 - Resolves the real `claude.exe` / `codex.exe` behind the npm shims
 - Builds the exact argument vector for any launcher combination, per agent
 - Spawns and drives either agent on a live ConPTY
-- 29 unit tests over the flag mapping, pty boundary, registry, daemon protocol and fleet-row model
+- Runs a Tauri 2.11.5/WebView2 shell with the Catppuccin fleet list, launcher, presets and one
+  reused xterm renderer
+- 33 unit tests over the flag mapping, pty boundary, registry, daemon protocol, presets and
+  fleet-row model
 
-Not built yet: the Tauri window, fleet list, hook bus and persistence. The named-pipe daemon and
-Rust-owned session registry are in place; see [ROADMAP.md](ROADMAP.md).
+Not built yet: hook registration, durable session restore and transcript-derived status/cost
+accounting. The named-pipe daemon keeps live sessions independent of the window; see
+[ROADMAP.md](ROADMAP.md).
 
 ## Requirements
 
@@ -61,7 +65,13 @@ Verified against Claude Code 2.1.170 and codex-cli 0.146.0 on Windows 11 26100.
 ```powershell
 cargo build --release
 cargo test
+
+# Build the unsigned Windows NSIS installer (from the repository root).
+cargo tauri build --ci --no-sign --bundles nsis -- --manifest-path Cargo.toml
 ```
+
+The Tauri build runs the Vite frontend build automatically. The installer is written to
+`target/release/bundle/nsis/` and is intentionally unsigned.
 
 ## Probe
 
@@ -113,7 +123,9 @@ silently getting an unsandboxed Claude session is the kind of thing that costs y
 crates/
   terminalai-core/    agent resolution, flag mapping, ConPTY supervision, fleet model
   terminalai-daemon/  named-pipe control plane and the only process that owns live sessions
+  terminalai-app/     Tauri shell, launcher commands, preset store and app icon
   terminalai-probe/   headless harness for everything that touches the machine
+web/                   Vite frontend, Catppuccin fleet surface and xterm renderer
 ```
 
 ## Licence

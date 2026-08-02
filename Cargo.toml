@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/terminalai-core",
     "crates/terminalai-daemon",
+    "crates/terminalai-app",
     "crates/terminalai-probe",
 ]
 

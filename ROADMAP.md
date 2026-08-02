@@ -1,18 +1,6 @@
 # TerminalAI Roadmap
 
-Single task tracker for this repo. Newest phase at the top; items are struck through when shipped.
-
-## v0.2.0 — the window
-
-- [ ] Tauri 2 shell: Rust core + WebView2 frontend, Catppuccin Mocha, dark by default
-- [ ] Launcher dialog — agent, model, effort, permission, sandbox, folder picker, extra dirs,
-      resume/fork, spend cap, initial prompt; live "what will run" preview from
-      `ResolvedCommand::preview()`
-- [ ] Presets — save a launcher configuration by name, launch it in one click
-- [ ] Fleet list — 28px rows: status dot, agent badge, model+effort, folder, dwell time, last line
-- [ ] Focused terminal pane via xterm.js, wired to `PtySession` read/write/resize
-      — *2026-08-02 research: resize must NOT follow the splitter. See R-11; PTY width is canonical and fixed at
-      spawn. Also a single reused instance, not one per session — see R-12.*
+Single task tracker for this repo. Newest phase at the top; completed items are removed.
 
 ## v0.3.0 — knowing what the fleet is doing
 
@@ -39,11 +27,6 @@ Single task tracker for this repo. Newest phase at the top; items are struck thr
 
 ## v0.4.0 — many sessions, one operator
 
-- [ ] Daemon: sessions survive closing the window; named-pipe IPC; reattach on relaunch
-      — *2026-08-02 research: REPRIORITIZED — this must land before v0.2, not after. VS Code moved node-pty out of
-      the renderer (microsoft/vscode#117265) only after pty crashes took down windows; every surveyed project that
-      started in-process paid to move later. The new `terminalai-core::registry` should move behind this boundary
-      rather than living in the Tauri backend. Harden the pipe per R-07.*
 - [ ] Scrollback to disk with a bounded in-memory ring per session
       — *2026-08-02 research: bound in BYTES, not lines (tmux#4859 — cost scales with width, so a line limit means
       3× the memory in a wide pane). Two-tier per Warp's block model: mutable grid for the live region, packed
@@ -77,15 +60,6 @@ Single task tracker for this repo. Newest phase at the top; items are struck thr
 
 Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher continues from R-34.
 
-### P0
-
-- [ ] R-23 · P0 — Pin Tauri ≥ 2.11.5 and enable CSP when the shell lands
-  Why: CVE-2026-42184 is a Windows-specific `is_local_url()` subdomain bypass letting remote pages invoke local-only IPC; Tauri's CSP is opt-in and absent unless configured.
-  Evidence: GHSA-7gmj-67g7-phm9 (CVSS 6.1, affects ≥2.0 ≤2.11.0); https://v2.tauri.app/security/csp/
-  Touches: `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`, `src-tauri/capabilities/`
-  Acceptance: dependency is `tauri = "2.11.5"` (never `"2"`), `app.security.csp` is set, and capabilities grant only the permissions actually used.
-  Complexity: S
-
 ### P1
 
 - [ ] R-08 · P1 — Blocked-state detection from Claude Code's `Notification` hook
@@ -108,13 +82,6 @@ Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher contin
   Touches: transcript tailer
   Acceptance: a fixture with repeated `requestId` records sums once; cost is derived from `usage` × a versioned price table, since cost is absent from the JSONL.
   Complexity: S
-
-- [ ] R-11 · P1 — Fix PTY width at spawn; never resize on layout change
-  Why: agent TUIs hard-wrap and multiplexers deliberately do not reflow, so resizing on a splitter drag forces a full redraw that corrupts the output being parsed for status.
-  Evidence: wezterm#14, wezterm#5016, xterm.js#1864, codex#18575; RESEARCH.md "Architecture".
-  Touches: `crates/terminalai-core/src/pty.rs`, focused-pane component
-  Acceptance: each session has a canonical width chosen at spawn; the focused pane scrolls or scales rather than renegotiating; `resize()` fires only on explicit user action.
-  Complexity: M
 
 - [ ] R-12 · P1 — One terminal renderer, Rust-side grids for the rest
   Why: Chromium caps live WebGL contexts at ~16 and silently drops the oldest, so N live xterm.js instances cannot work.

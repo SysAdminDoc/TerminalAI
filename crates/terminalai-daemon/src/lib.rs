@@ -62,6 +62,10 @@ pub enum Request {
         agent: Agent,
         configured_path: Option<PathBuf>,
     },
+    Preview {
+        spec: Box<LaunchSpec>,
+        configured_path: Option<PathBuf>,
+    },
     Launch {
         spec: Box<LaunchSpec>,
         configured_path: Option<PathBuf>,
@@ -111,6 +115,9 @@ pub enum Response {
         agent: Agent,
         path: PathBuf,
         origin: String,
+    },
+    Preview {
+        command: String,
     },
     Launched {
         id: SessionId,
@@ -373,6 +380,25 @@ fn dispatch(request: Request, registry: &SessionRegistry) -> Response {
                 message: error.to_string(),
             },
         },
+        Request::Preview {
+            spec,
+            configured_path,
+        } => {
+            let spec = *spec;
+            match agent::resolve(spec.agent, configured_path.as_deref()) {
+                Ok(binary) => match spec.resolve(&binary) {
+                    Ok(command) => Response::Preview {
+                        command: command.preview(),
+                    },
+                    Err(error) => Response::Error {
+                        message: error.to_string(),
+                    },
+                },
+                Err(error) => Response::Error {
+                    message: error.to_string(),
+                },
+            }
+        }
         Request::Launch {
             spec,
             configured_path,
