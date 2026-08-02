@@ -15,6 +15,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   the explicit terminal reset action.
 - Normalized Claude/Codex hook ingress through the authenticated daemon pipe, with non-blocking
   `terminalai-probe hook` delivery and separate approval/input attention states.
+- `terminalai_core::transcript::TranscriptAccumulator` — nested usage extraction, requestId
+  deduplication, and cost calculation through a caller-pinned pricing-table version.
 - Strict agent/binary matching before a process is spawned, preventing a launcher configuration
   from accidentally starting the wrong CLI.
 

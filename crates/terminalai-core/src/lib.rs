@@ -15,6 +15,7 @@ pub mod launch;
 pub mod pty;
 pub mod registry;
 pub mod session;
+pub mod transcript;
 
 pub use agent::{Agent, AgentBinary, ResolveError};
 pub use hooks::{HookEvent, HookNotification, HookSignal};
@@ -22,3 +23,6 @@ pub use launch::{Effort, LaunchError, LaunchSpec, Permission, ResolvedCommand, R
 pub use pty::{PtySession, PtySize};
 pub use registry::{RegistryError, RegistryEvent, SessionRegistry};
 pub use session::{Session, SessionId, SessionStatus};
+pub use transcript::{
+    PricingTable, TokenRates, TranscriptAccumulator, TranscriptError, UsageTotals,
+};

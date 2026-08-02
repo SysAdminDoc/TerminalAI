@@ -76,13 +76,6 @@ Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher contin
   Acceptance: a Codex session blocked on an approval renders needs-approval; `notify = ["<terminalai-exe>"]` works as a zero-config fallback when hooks are unavailable.
   Complexity: M
 
-- [ ] R-10 · P1 — Deduplicate token accounting on `requestId`
-  Why: consecutive transcript records share one `requestId` and repeat identical `usage`; naive summing double-counts spend.
-  Evidence: verified against live `~/.claude/projects/*/*.jsonl`, 2026-08-02.
-  Touches: transcript tailer
-  Acceptance: a fixture with repeated `requestId` records sums once; cost is derived from `usage` × a versioned price table, since cost is absent from the JSONL.
-  Complexity: S
-
 - [ ] R-12 · P1 — One terminal renderer, Rust-side grids for the rest
   Why: Chromium caps live WebGL contexts at ~16 and silently drops the oldest, so N live xterm.js instances cannot work.
   Evidence: xterm.js#4379 (open, no fix); xterm.js#791 (buffer memory); `@xterm/xterm` 6.0 removed `addon-canvas`.
