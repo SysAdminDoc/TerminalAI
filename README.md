@@ -43,9 +43,10 @@ Working today (`terminalai-probe`, headless):
 - Resolves the real `claude.exe` / `codex.exe` behind the npm shims
 - Builds the exact argument vector for any launcher combination, per agent
 - Spawns and drives either agent on a live ConPTY
-- 25 unit tests over the flag mapping, pty boundary, registry and fleet-row model
+- 29 unit tests over the flag mapping, pty boundary, registry, daemon protocol and fleet-row model
 
-Not built yet: the Tauri window, the fleet list, the hook bus, persistence. See [ROADMAP.md](ROADMAP.md).
+Not built yet: the Tauri window, fleet list, hook bus and persistence. The named-pipe daemon and
+Rust-owned session registry are in place; see [ROADMAP.md](ROADMAP.md).
 
 ## Requirements
 
@@ -111,6 +112,7 @@ silently getting an unsandboxed Claude session is the kind of thing that costs y
 ```
 crates/
   terminalai-core/    agent resolution, flag mapping, ConPTY supervision, fleet model
+  terminalai-daemon/  named-pipe control plane and the only process that owns live sessions
   terminalai-probe/   headless harness for everything that touches the machine
 ```
 

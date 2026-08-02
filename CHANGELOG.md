@@ -23,6 +23,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   config override.
 - Documentation now distinguishes thirty tracked sessions from the much smaller live-process
   budget measured on the development machine.
+- `terminalai-daemon` now owns the registry behind a versioned local-socket protocol with an
+  explicit event subscription, peer-PID handshake, owner/SYSTEM Windows DACL and no client
+  impersonation path.
 
 ## [0.1.0] — 2026-08-02
 

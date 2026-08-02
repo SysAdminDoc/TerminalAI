@@ -1,6 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["crates/terminalai-core", "crates/terminalai-probe"]
+members = [
+    "crates/terminalai-core",
+    "crates/terminalai-daemon",
+    "crates/terminalai-probe",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -19,6 +23,8 @@ thiserror = "2"
 anyhow = "1"
 dirs = "6"
 which = "7"
+interprocess = "2.4.3"
+widestring = "1"
 
 [profile.release]
 opt-level = "z"

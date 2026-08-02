@@ -79,13 +79,6 @@ Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher contin
 
 ### P0
 
-- [ ] R-07 · P0 — Harden the hook/control transport before it ships
-  Why: a bare loopback HTTP listener is reachable by any page the user visits, and DNS rebinding defeats `Origin` checks.
-  Evidence: CVE-2025-66414 (MCP TypeScript SDK); GitHub Security Lab "localhost dangers"; CyberCX on named-pipe squatting.
-  Touches: new `crates/terminalai-daemon`, the v0.3 hook-bus item
-  Acceptance: control plane is a named pipe created with `first_pipe_instance(true)` and a DACL limited to the current user SID + SYSTEM, peer PID checked via `GetNamedPipeClientProcessId`, and no use of `ImpersonateNamedPipeClient`. If an HTTP endpoint is retained for Claude's native `type: "http"` hooks, it binds `127.0.0.1` and enforces all three of a literal `Host` allowlist, a startup-generated bearer token carried in the hook's `headers`, and an `Origin` rejection.
-  Complexity: M
-
 - [ ] R-23 · P0 — Pin Tauri ≥ 2.11.5 and enable CSP when the shell lands
   Why: CVE-2026-42184 is a Windows-specific `is_local_url()` subdomain bypass letting remote pages invoke local-only IPC; Tauri's CSP is opt-in and absent unless configured.
   Evidence: GHSA-7gmj-67g7-phm9 (CVSS 6.1, affects ≥2.0 ≤2.11.0); https://v2.tauri.app/security/csp/
@@ -256,13 +249,6 @@ Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher contin
   Evidence: Zellij versions its session-info directory by release; RESEARCH.md "Architecture".
   Touches: session store
   Acceptance: the store carries a schema version, unknown-newer files are refused rather than misread, and migrations are tested against fixtures from the previous version.
-  Complexity: S
-
-- [ ] R-30 · P2 — Daemon/GUI version-skew handling
-  Why: a long-lived daemon plus a frequently rebuilt GUI guarantees mismatched pairs during development and upgrades.
-  Evidence: the daemon split makes this a new failure class; wmux#659 shows how an unversioned control protocol fails confusingly (broadcasts multiplexed onto the RPC socket, read as responses).
-  Touches: daemon protocol handshake
-  Acceptance: the handshake exchanges protocol versions, an incompatible GUI refuses to connect with an actionable message, and the daemon can be restarted without losing session records.
   Complexity: S
 
 ### P3

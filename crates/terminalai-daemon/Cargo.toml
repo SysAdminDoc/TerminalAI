@@ -1,0 +1,25 @@
+[package]
+name = "terminalai-daemon"
+description = "Named-pipe daemon and client for TerminalAI session supervision"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+name = "terminalai_daemon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "terminalai-daemon"
+path = "src/main.rs"
+
+[dependencies]
+terminalai-core.workspace = true
+interprocess.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+widestring.workspace = true
