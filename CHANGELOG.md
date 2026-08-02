@@ -24,6 +24,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   `--terminalai-managed` Claude JSON and Codex TOML entries; Claude handlers are asynchronous,
   Codex preserves unrelated `notify` commands, and the installed app hook path fails open when the
   daemon is unavailable.
+- `terminalai-core::grid::TerminalGrid` now parses each session's ANSI output into a bounded Rust
+  grid with cursor motion, scrolling, alternate-screen restore and split UTF-8 coverage. Only the
+  focused session (and future pinned panes) receives live output events; background sessions keep
+  parsed state without creating more xterm instances.
 - Claude/Codex hook payloads now share one parser, including session/thread id aliases and
   permission/idle notification normalization for approval and awaiting-input states.
 - The fleet now has a needs-input filter and per-row reply controls that send bracketed paste

@@ -10,6 +10,7 @@
 //! headlessly and the Tauri shell drives it from a command handler.
 
 pub mod agent;
+pub mod grid;
 pub mod hook_config;
 pub mod hooks;
 pub mod launch;
@@ -19,6 +20,7 @@ pub mod session;
 pub mod transcript;
 
 pub use agent::{Agent, AgentBinary, ResolveError};
+pub use grid::{TerminalGrid, TerminalGridSnapshot, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS};
 pub use hook_config::{
     command_for as hook_command, config_path as hook_config_path, install_at as install_hooks_at,
     preview as hook_config_preview, remove_at as remove_hooks_at, status_at as hook_status_at,

@@ -12,6 +12,7 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use crate::agent::AgentBinary;
+use crate::grid::{TerminalGrid, TerminalGridSnapshot};
 use crate::hooks::{HookEvent, HookNotification, HookSignal};
 use crate::launch::{LaunchError, LaunchSpec, ResolvedCommand};
 use crate::pty::{PtyError, PtySession, PtySize};
@@ -56,6 +57,7 @@ struct Entry {
     command: ResolvedCommand,
     pty: Option<Arc<PtySession>>,
     scrollback: RingBuffer,
+    grid: TerminalGrid,
     generation: u64,
     stop_requested: bool,
 }
@@ -155,6 +157,7 @@ impl SessionRegistry {
                     command: command.clone(),
                     pty: None,
                     scrollback: RingBuffer::default(),
+                    grid: TerminalGrid::default(),
                     generation: 1,
                     stop_requested: false,
                 },
@@ -349,6 +352,18 @@ impl SessionRegistry {
             .entries
             .get(id)
             .map(|entry| entry.scrollback.to_vec())
+            .ok_or_else(|| RegistryError::Missing(id.clone()))
+    }
+
+    /// Return the parsed terminal state held for a background or pinned pane.
+    /// The focused browser renderer does not need this path: it resets once and
+    /// replays the raw bounded ring returned by [`Self::scrollback`].
+    pub fn grid_snapshot(&self, id: &SessionId) -> Result<TerminalGridSnapshot, RegistryError> {
+        let state = self.inner.state.lock().expect("registry poisoned");
+        state
+            .entries
+            .get(id)
+            .map(|entry| entry.grid.snapshot())
             .ok_or_else(|| RegistryError::Missing(id.clone()))
     }
 
@@ -595,9 +610,9 @@ impl SessionRegistry {
 }
 
 fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u8]) {
-    let data = String::from_utf8_lossy(bytes).into_owned();
-    let (event, session) = {
+    let (send_output, session) = {
         let mut state = inner.state.lock().expect("registry poisoned");
+        let focused = state.focused.as_ref() == Some(id);
         let Some(entry) = state.entries.get_mut(id) else {
             return;
         };
@@ -605,21 +620,24 @@ fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u
             return;
         }
         entry.scrollback.push(bytes);
+        entry.grid.advance(bytes);
         if let Some(line) = entry.scrollback.last_line() {
             entry.session.set_last_line(&line);
         }
         if entry.session.status == SessionStatus::Starting {
             entry.session.set_status(SessionStatus::Idle);
         }
-        (
+        (focused || entry.session.pinned, entry.session.clone())
+    };
+    if send_output {
+        emit_inner(
+            inner,
             RegistryEvent::Output {
                 id: id.clone(),
-                data,
+                data: String::from_utf8_lossy(bytes).into_owned(),
             },
-            entry.session.clone(),
-        )
-    };
-    emit_inner(inner, event);
+        );
+    }
     emit_inner(inner, RegistryEvent::SessionUpdated { session });
 }
 
@@ -685,6 +703,55 @@ mod tests {
     }
 
     #[test]
+    fn output_updates_the_background_grid_alongside_scrollback() {
+        let registry = SessionRegistry::new();
+        let cwd = Path::new(".").to_path_buf();
+        let spec = spec_for(Agent::Claude, &cwd);
+        let id = SessionId::new(1);
+        let session = Session::new(id.clone(), &spec);
+        registry
+            .inner
+            .state
+            .lock()
+            .expect("registry poisoned")
+            .entries
+            .insert(
+                id.clone(),
+                Entry {
+                    session,
+                    command: ResolvedCommand {
+                        program: PathBuf::from("test-agent"),
+                        args: Vec::new(),
+                        cwd: cwd.clone(),
+                    },
+                    spec,
+                    pty: None,
+                    scrollback: RingBuffer::default(),
+                    grid: TerminalGrid::default(),
+                    generation: 1,
+                    stop_requested: false,
+                },
+            );
+
+        let events = registry.subscribe();
+        handle_output(&registry.inner, &id, 1, b"hello\x1b[2;1Hworld");
+        assert!(events
+            .try_iter()
+            .all(|event| !matches!(event, RegistryEvent::Output { .. })));
+        assert_eq!(
+            registry.scrollback(&id).expect("scrollback"),
+            b"hello\x1b[2;1Hworld"
+        );
+        assert_eq!(registry.grid_snapshot(&id).expect("grid").lines[1], "world");
+        registry.focus(Some(id.clone())).expect("focus");
+        let _ = events.try_iter().count();
+        handle_output(&registry.inner, &id, 1, b"\r\nfocused");
+        assert!(events
+            .try_iter()
+            .any(|event| matches!(event, RegistryEvent::Output { .. })));
+    }
+
+    #[test]
     fn snapshots_are_sorted_by_attention() {
         let registry = SessionRegistry::new();
         let mut state = registry.inner.state.lock().expect("registry poisoned");
@@ -708,6 +775,7 @@ mod tests {
                     spec,
                     pty: None,
                     scrollback: RingBuffer::default(),
+                    grid: TerminalGrid::default(),
                     generation: 1,
                     stop_requested: false,
                 },
@@ -757,6 +825,7 @@ mod tests {
                     spec,
                     pty: None,
                     scrollback: RingBuffer::default(),
+                    grid: TerminalGrid::default(),
                     generation: 1,
                     stop_requested: false,
                 },

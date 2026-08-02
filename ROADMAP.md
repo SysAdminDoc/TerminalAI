@@ -57,13 +57,6 @@ Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher contin
 
 ### P1
 
-- [ ] R-12 · P1 — One terminal renderer, Rust-side grids for the rest
-  Why: Chromium caps live WebGL contexts at ~16 and silently drops the oldest, so N live xterm.js instances cannot work.
-  Evidence: xterm.js#4379 (open, no fix); xterm.js#791 (buffer memory); `@xterm/xterm` 6.0 removed `addon-canvas`.
-  Touches: `crates/terminalai-core` (new `vte`-based grid), focused-pane component
-  Acceptance: exactly one `Terminal` instance plus one per pinned pane; switching focus does `reset()` + replay from the Rust ring buffer; background sessions hold a `vte` grid only.
-  Complexity: L
-
 - [ ] R-14 · P1 — Three-tier restore ladder
   Why: no design can re-parent a live process, and pretending otherwise loses work; both target CLIs resume natively, which makes the middle tier unusually strong here.
   Evidence: Zellij session resurrection (commands are never auto-run); tmux-resurrect program whitelist; VS Code `persistentSessionReviveProcess`.
