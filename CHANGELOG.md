@@ -38,6 +38,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   queue, a Claude default spend cap, and a live/queued/aggregate-spend fleet summary.
 - R-18 now treats failed process reconciliation as an explicit unknown state, retaining the row and
   PTY until a later positive exit result proves that the process is gone.
+- R-19 adds an opt-in `codex-app-server` daemon transport. The core accepts Codex JSONL/JSON-RPC
+  notifications, preserves unknown methods, maps status and approval signals into the fleet event
+  model, and encodes steer/interrupt requests while the default daemon remains unchanged.
 - Claude/Codex hook payloads now share one parser, including session/thread id aliases and
   permission/idle notification normalization for approval and awaiting-input states.
 - The fleet now has a needs-input filter and per-row reply controls that send bracketed paste

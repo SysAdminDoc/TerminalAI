@@ -12,6 +12,7 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use crate::agent::{AgentBinary, Origin};
+use crate::app_server::{AgentEvent, AppServerEvent};
 use crate::grid::{TerminalGrid, TerminalGridSnapshot};
 use crate::hooks::{HookEvent, HookNotification, HookSignal};
 use crate::launch::{LaunchError, LaunchSpec, ResolvedCommand, Resume};
@@ -102,6 +103,7 @@ pub struct AdmissionSnapshot {
 pub enum RegistryEvent {
     SessionUpdated { session: Session },
     Notification { event: NotificationEvent },
+    AgentEvent { event: AgentEvent },
     Output { id: SessionId, data: String },
     SessionRemoved { id: SessionId },
 }
@@ -620,6 +622,47 @@ impl SessionRegistry {
         true
     }
 
+    /// Apply either a legacy hook or an app-server event without making the
+    /// daemon's event model choose one transport over the other. App-server
+    /// notifications are only accepted for a Codex row that already carries
+    /// the matching native thread id; unknown external threads never create a
+    /// fleet entry.
+    pub fn apply_agent_event(&self, event: AgentEvent) -> bool {
+        let matched = match event.clone() {
+            AgentEvent::Hook(event) => self.apply_hook(event),
+            AgentEvent::AppServer(event) => self.apply_app_server_event(event),
+        };
+        if matched {
+            self.emit(RegistryEvent::AgentEvent { event });
+        }
+        matched
+    }
+
+    fn apply_app_server_event(&self, event: AppServerEvent) -> bool {
+        let Some(thread_id) = app_server_thread_id(&event) else {
+            return false;
+        };
+        if !self.has_native_session(crate::agent::Agent::Codex, thread_id) {
+            return false;
+        }
+        let Some(signal) = app_server_signal(&event) else {
+            return true;
+        };
+        self.apply_hook(HookEvent {
+            agent: crate::agent::Agent::Codex,
+            session_id: Some(thread_id.to_owned()),
+            cwd: None,
+            signal,
+        })
+    }
+
+    fn has_native_session(&self, agent: crate::agent::Agent, native_id: &str) -> bool {
+        let state = self.inner.state.lock().expect("registry poisoned");
+        state.entries.values().any(|entry| {
+            entry.session.agent == agent && entry.session.resume_id.as_deref() == Some(native_id)
+        })
+    }
+
     pub fn focus(&self, id: Option<SessionId>) -> Result<(), RegistryError> {
         if let Some(id) = &id {
             self.require(id)?;
@@ -1060,6 +1103,68 @@ fn emit_inner(inner: &Arc<Inner>, event: RegistryEvent) {
         .retain(|subscriber| subscriber.send(event.clone()).is_ok());
 }
 
+fn app_server_thread_id(event: &AppServerEvent) -> Option<&str> {
+    match event {
+        AppServerEvent::ThreadStatusChanged { thread_id, .. }
+        | AppServerEvent::TokenUsageUpdated { thread_id, .. }
+        | AppServerEvent::ApprovalRequested { thread_id, .. } => Some(thread_id),
+        AppServerEvent::Unknown { .. } => None,
+    }
+}
+
+fn app_server_signal(event: &AppServerEvent) -> Option<HookSignal> {
+    match event {
+        AppServerEvent::ThreadStatusChanged { status, .. } => {
+            if status
+                .active_flags
+                .iter()
+                .any(|flag| is_approval_flag(flag))
+            {
+                Some(HookSignal::Notification {
+                    notification: HookNotification::PermissionPrompt,
+                })
+            } else if status.active_flags.iter().any(|flag| is_input_flag(flag)) {
+                Some(HookSignal::Notification {
+                    notification: HookNotification::IdlePrompt,
+                })
+            } else {
+                match event_status_key(&status.kind) {
+                    Some("active") => Some(HookSignal::PreToolUse),
+                    Some("idle") | Some("notloaded") | Some("systemerror") => {
+                        Some(HookSignal::Stop)
+                    }
+                    _ => None,
+                }
+            }
+        }
+        AppServerEvent::ApprovalRequested { .. } => Some(HookSignal::Notification {
+            notification: HookNotification::PermissionPrompt,
+        }),
+        AppServerEvent::TokenUsageUpdated { .. } | AppServerEvent::Unknown { .. } => None,
+    }
+}
+
+fn event_status_key(value: &str) -> Option<&str> {
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "active" => Some("active"),
+        "idle" => Some("idle"),
+        "notloaded" | "not_loaded" => Some("notloaded"),
+        "systemerror" | "system_error" => Some("systemerror"),
+        _ => None,
+    }
+}
+
+fn is_approval_flag(value: &str) -> bool {
+    let value = value.to_ascii_lowercase();
+    value.contains("approval") || value.contains("permission")
+}
+
+fn is_input_flag(value: &str) -> bool {
+    let value = value.to_ascii_lowercase();
+    value.contains("input") || value.contains("user")
+}
+
 fn next_sequence(id: &SessionId) -> u64 {
     id.0.strip_prefix('s')
         .and_then(|value| value.parse::<u64>().ok())
@@ -1112,6 +1217,7 @@ impl RingBuffer {
 mod tests {
     use super::*;
     use crate::agent::{Agent, AgentBinary, Origin};
+    use crate::app_server::{AppServerEvent, AppServerThreadStatus, AppServerTokenUsage};
     use crate::launch::spec_for;
     use std::path::{Path, PathBuf};
 
@@ -1571,6 +1677,71 @@ mod tests {
             cwd: Some(PathBuf::from(".")),
             signal: HookSignal::Stop,
         }));
+    }
+
+    #[test]
+    fn app_server_events_update_codex_rows_and_remain_on_the_event_stream() {
+        let registry = SessionRegistry::new();
+        let cwd = Path::new(".").to_path_buf();
+        let spec = spec_for(Agent::Codex, &cwd);
+        let id = SessionId::new(1);
+        let mut session = Session::new(id.clone(), &spec);
+        session.resume_id = Some("thread-1".into());
+        registry
+            .inner
+            .state
+            .lock()
+            .expect("registry poisoned")
+            .entries
+            .insert(
+                id.clone(),
+                Entry {
+                    session,
+                    command: ResolvedCommand {
+                        program: PathBuf::from("test-agent"),
+                        args: Vec::new(),
+                        cwd: cwd.clone(),
+                    },
+                    spec,
+                    pty: None,
+                    scrollback: RingBuffer::default(),
+                    grid: TerminalGrid::default(),
+                    generation: 1,
+                    stop_requested: false,
+                },
+            );
+        let events = registry.subscribe();
+
+        assert!(registry.apply_agent_event(AgentEvent::AppServer(
+            AppServerEvent::ThreadStatusChanged {
+                thread_id: "thread-1".into(),
+                status: AppServerThreadStatus {
+                    kind: "active".into(),
+                    active_flags: vec!["waitingOnApproval".into()],
+                },
+            },
+        )));
+        assert_eq!(registry.snapshot()[0].status, SessionStatus::NeedsApproval);
+
+        assert!(registry.apply_agent_event(AgentEvent::AppServer(
+            AppServerEvent::TokenUsageUpdated {
+                thread_id: "thread-1".into(),
+                usage: AppServerTokenUsage {
+                    input_tokens: 1,
+                    cached_input_tokens: 0,
+                    output_tokens: 2,
+                    reasoning_output_tokens: 0,
+                    total_tokens: 3,
+                    model_context_window: None,
+                },
+            },
+        )));
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            RegistryEvent::AgentEvent {
+                event: AgentEvent::AppServer(AppServerEvent::TokenUsageUpdated { .. })
+            }
+        )));
     }
 
     #[cfg(windows)]

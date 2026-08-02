@@ -41,9 +41,6 @@ Single task tracker for this repo. Newest phase at the top; completed items are 
       (`@zed-industries/claude-code-acp`, `agentclientprotocol/codex-acp`)
       — *2026-08-02 research: downgraded to conditional. ACP v1 is stable but neither target CLI speaks it natively;
       only third-party adapters exist. Do this only when adding a third agent family.*
-- [ ] `codex app-server` JSON-RPC transport
-      — *2026-08-02 research: 90 methods / 68 notifications / 10 approval requests; `thread/status/changed` and
-      `thread/tokenUsage/updated` are the signals worth having. Keep behind a flag — see R-19.*
 - [ ] Session templates per repo, read from the repo itself
 
 ## Research-Driven Additions
@@ -53,13 +50,6 @@ Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher contin
 ### P1
 
 ### P2
-
-- [ ] R-19 · P2 — `codex app-server` adapter behind a feature flag
-  Why: the only path to steering (queue work, interrupt, auto-answer approvals) that hooks structurally cannot provide.
-  Evidence: 90 methods / 68 notifications / 10 approval requests; `thread/status/changed`, `thread/tokenUsage/updated`, `turn/steer`, `turn/interrupt`. Schema is generated per build via `codex app-server generate-json-schema`.
-  Touches: new transport crate
-  Acceptance: the daemon's event model is a superset of hook events and JSON-RPC notifications, so the adapter is additive; the flag defaults off while the interface is experimental.
-  Complexity: L
 
 - [ ] R-20 · P2 — Scriptable headless control plane
   Why: every OSS peer is GUI-only and every vendor charges for an API; it is also how TerminalAI becomes usable from the user's own automation.

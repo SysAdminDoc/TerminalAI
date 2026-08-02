@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+default = []
+codex-app-server = []
+
 [lib]
 name = "terminalai_daemon"
 path = "src/lib.rs"

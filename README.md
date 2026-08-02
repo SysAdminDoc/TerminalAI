@@ -45,10 +45,12 @@ Working today (`terminalai-probe`, headless):
 - Spawns and drives either agent on a live ConPTY
 - Runs a Tauri 2.11.5/WebView2 shell with the Catppuccin fleet list, launcher, presets and one
   reused xterm renderer
-- 71 unit tests over the flag mapping, pty boundary, supervision state machine, registry, daemon
-  protocol, presets and fleet-row model
+- 79 default unit tests over the flag mapping, pty boundary, supervision state machine, registry,
+  daemon protocol, presets and fleet-row model; 81 with the opt-in app-server transport enabled
 
-Not built yet: transcript file tailing and transcript-derived status/cost accounting. The named-pipe
+Not built yet: transcript file tailing and transcript-derived status/cost accounting. The experimental
+Codex app-server adapter is available only when the daemon is built with the explicit
+`codex-app-server` feature; the default daemon continues to use hooks and the PTY path. The named-pipe
 daemon keeps live sessions independent of the window; see
 [ROADMAP.md](ROADMAP.md).
 
@@ -77,6 +79,7 @@ Verified against Claude Code 2.1.170 and codex-cli 0.146.0 on Windows 11 26100.
 ```powershell
 cargo build --release
 cargo test
+cargo test --workspace --all-features  # includes the experimental app-server adapter
 
 # Build the unsigned Windows NSIS installer (from the repository root).
 cargo tauri build --ci --no-sign --bundles nsis -- --manifest-path Cargo.toml
@@ -84,6 +87,15 @@ cargo tauri build --ci --no-sign --bundles nsis -- --manifest-path Cargo.toml
 
 The Tauri build runs the Vite frontend build automatically. The installer is written to
 `target/release/bundle/nsis/` and is intentionally unsigned.
+
+The Codex app-server stdio transport is deliberately opt-in:
+
+```powershell
+cargo test -p terminalai-daemon --features codex-app-server
+```
+
+It preserves unknown JSON-RPC notifications and exposes typed status, token-usage, approval,
+steer and interrupt messages without changing the default daemon process.
 
 ## Probe
 

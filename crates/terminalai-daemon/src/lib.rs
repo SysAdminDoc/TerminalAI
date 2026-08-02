@@ -8,6 +8,9 @@
 
 mod persistence;
 
+#[cfg(feature = "codex-app-server")]
+pub mod app_server;
+
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -25,7 +28,7 @@ use terminalai_core::agent::{self, Agent, Origin};
 use terminalai_core::launch::LaunchSpec;
 use terminalai_core::pty::PtySize;
 use terminalai_core::{
-    AdmissionConfig, AdmissionSnapshot, HookEvent, RegistryEvent, Session, SessionId,
+    AdmissionConfig, AdmissionSnapshot, AgentEvent, HookEvent, RegistryEvent, Session, SessionId,
     SessionRegistry,
 };
 
@@ -79,6 +82,9 @@ pub enum Request {
     },
     Hook {
         event: HookEvent,
+    },
+    AgentEvent {
+        event: AgentEvent,
     },
     Launch {
         spec: Box<LaunchSpec>,
@@ -144,6 +150,9 @@ pub enum Response {
         command: String,
     },
     Hook {
+        matched: bool,
+    },
+    AgentEvent {
         matched: bool,
     },
     Launched {
@@ -478,6 +487,9 @@ fn dispatch(request: Request, registry: &SessionRegistry) -> Response {
         Request::Hook { event } => Response::Hook {
             matched: registry.apply_hook(event),
         },
+        Request::AgentEvent { event } => Response::AgentEvent {
+            matched: registry.apply_agent_event(event),
+        },
         Request::Launch {
             spec,
             configured_path,
@@ -769,6 +781,7 @@ fn current_user_pipe_descriptor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use terminalai_core::AppServerEvent;
 
     #[test]
     fn request_envelope_is_tagged_and_round_trips() {
@@ -781,6 +794,28 @@ mod tests {
         assert!(matches!(
             serde_json::from_str(&json),
             Ok(WireMessage::Request { id: 7, .. })
+        ));
+    }
+
+    #[test]
+    fn agent_event_request_is_an_additive_wire_variant() {
+        let message = WireMessage::Request {
+            id: 8,
+            request: Request::AgentEvent {
+                event: AgentEvent::AppServer(AppServerEvent::Unknown {
+                    method: "future/event".into(),
+                    params: serde_json::json!({"value": true}),
+                }),
+            },
+        };
+        let json = serde_json::to_string(&message).expect("encode");
+        assert!(json.contains("agent_event"));
+        assert!(matches!(
+            serde_json::from_str(&json),
+            Ok(WireMessage::Request {
+                id: 8,
+                request: Request::AgentEvent { .. }
+            })
         ));
     }
 
