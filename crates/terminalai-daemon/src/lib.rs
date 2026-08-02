@@ -24,12 +24,15 @@ use serde::{Deserialize, Serialize};
 use terminalai_core::agent::{self, Agent, Origin};
 use terminalai_core::launch::LaunchSpec;
 use terminalai_core::pty::PtySize;
-use terminalai_core::{HookEvent, RegistryEvent, Session, SessionId, SessionRegistry};
+use terminalai_core::{
+    AdmissionConfig, AdmissionSnapshot, HookEvent, RegistryEvent, Session, SessionId,
+    SessionRegistry,
+};
 
 use persistence::StoreWriter;
 
-pub const PROTOCOL_VERSION: u16 = 1;
-pub const PIPE_NAME: &str = "terminalai.control.v1";
+pub const PROTOCOL_VERSION: u16 = 2;
+pub const PIPE_NAME: &str = "terminalai.control.v2";
 
 #[derive(Debug, thiserror::Error)]
 pub enum IpcError {
@@ -51,6 +54,8 @@ pub enum IpcError {
     InvalidMessage(String),
     #[error("session store could not be loaded: {0}")]
     Store(String),
+    #[error("invalid admission configuration: {0}")]
+    Configuration(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,6 +133,7 @@ pub enum Response {
     Snapshot {
         sessions: Vec<Session>,
         focused: Option<SessionId>,
+        admission: AdmissionSnapshot,
     },
     Resolved {
         agent: Agent,
@@ -142,6 +148,7 @@ pub enum Response {
     },
     Launched {
         id: SessionId,
+        queued: bool,
     },
     Scrollback {
         data: String,
@@ -179,12 +186,16 @@ pub struct DaemonServer {
 
 impl DaemonServer {
     pub fn bind() -> Result<Self, IpcError> {
+        let admission = AdmissionConfig::from_environment().map_err(IpcError::Configuration)?;
         let (registry, store_writer) = match persistence::default_path() {
             Some(path) => (
-                SessionRegistry::from_store(persistence::load(&path).map_err(IpcError::Store)?),
+                SessionRegistry::from_store_with_admission(
+                    persistence::load(&path).map_err(IpcError::Store)?,
+                    admission,
+                ),
                 Some(StoreWriter::spawn(path)),
             ),
-            None => (SessionRegistry::new(), None),
+            None => (SessionRegistry::with_admission(admission), None),
         };
         Self::bind_named_with_state(PIPE_NAME, registry, store_writer)
     }
@@ -430,6 +441,7 @@ fn dispatch(request: Request, registry: &SessionRegistry) -> Response {
         Request::Snapshot => Response::Snapshot {
             sessions: registry.snapshot(),
             focused: registry.focused(),
+            admission: registry.admission_snapshot(),
         },
         Request::Resolve {
             agent,
@@ -473,7 +485,12 @@ fn dispatch(request: Request, registry: &SessionRegistry) -> Response {
             let spec = *spec;
             match agent::resolve(spec.agent, configured_path.as_deref()) {
                 Ok(binary) => match registry.launch(spec, binary) {
-                    Ok(id) => Response::Launched { id },
+                    Ok(id) => match registry.is_queued(&id) {
+                        Ok(queued) => Response::Launched { id, queued },
+                        Err(error) => Response::Error {
+                            message: error.to_string(),
+                        },
+                    },
                     Err(error) => Response::Error {
                         message: resolve_registry_error(error),
                     },

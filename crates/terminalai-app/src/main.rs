@@ -11,7 +11,7 @@ use serde::Serialize;
 use tauri::{Emitter, Manager, State};
 use terminalai_core::agent::Agent;
 use terminalai_core::launch::LaunchSpec;
-use terminalai_core::{parse_hook, Session, SessionId};
+use terminalai_core::{parse_hook, AdmissionSnapshot, Session, SessionId};
 use terminalai_daemon::{DaemonClient, Request, Response, PROTOCOL_VERSION};
 
 struct AppState {
@@ -23,6 +23,13 @@ struct AppState {
 struct FleetSnapshot {
     sessions: Vec<Session>,
     focused: Option<SessionId>,
+    admission: AdmissionSnapshot,
+}
+
+#[derive(Debug, Serialize)]
+struct LaunchReceipt {
+    id: SessionId,
+    queued: bool,
 }
 
 fn daemon_response(client: &DaemonClient, request: Request) -> Result<Response, String> {
@@ -40,7 +47,15 @@ fn require_ok(response: Response) -> Result<(), String> {
 #[tauri::command]
 fn fleet_snapshot(state: State<'_, AppState>) -> Result<FleetSnapshot, String> {
     match daemon_response(&state.client, Request::Snapshot)? {
-        Response::Snapshot { sessions, focused } => Ok(FleetSnapshot { sessions, focused }),
+        Response::Snapshot {
+            sessions,
+            focused,
+            admission,
+        } => Ok(FleetSnapshot {
+            sessions,
+            focused,
+            admission,
+        }),
         Response::Error { message } => Err(message),
         other => Err(format!("unexpected snapshot response: {other:?}")),
     }
@@ -88,7 +103,7 @@ fn launch_session(
     spec: LaunchSpec,
     configured_path: Option<PathBuf>,
     state: State<'_, AppState>,
-) -> Result<SessionId, String> {
+) -> Result<LaunchReceipt, String> {
     match daemon_response(
         &state.client,
         Request::Launch {
@@ -96,7 +111,7 @@ fn launch_session(
             configured_path,
         },
     )? {
-        Response::Launched { id } => Ok(id),
+        Response::Launched { id, queued } => Ok(LaunchReceipt { id, queued }),
         Response::Error { message } => Err(message),
         other => Err(format!("unexpected launch response: {other:?}")),
     }
@@ -389,7 +404,7 @@ mod tests {
 
     #[test]
     fn protocol_version_is_pinned_for_the_shell() {
-        assert_eq!(PROTOCOL_VERSION, 1);
+        assert_eq!(PROTOCOL_VERSION, 2);
     }
 
     #[test]

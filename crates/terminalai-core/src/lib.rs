@@ -35,7 +35,10 @@ pub use notification::{
     SuppressionReason, LONG_TOOL_GRACE_PERIOD, STARTUP_GRACE_PERIOD,
 };
 pub use pty::{PtySession, PtySize};
-pub use registry::{RegistryError, RegistryEvent, SessionRegistry};
+pub use registry::{
+    AdmissionConfig, AdmissionSnapshot, RegistryError, RegistryEvent, SessionRegistry,
+    DEFAULT_MAX_LIVE_SESSIONS, DEFAULT_SESSION_BUDGET_USD,
+};
 pub use session::{
     RestartDecision, Session, SessionHealth, SessionId, SessionPhase, SessionStatus, MAX_RESTARTS,
     RESTART_BACKOFF_BASE, RESTART_BACKOFF_MAX,

@@ -48,6 +48,8 @@ impl std::fmt::Display for SessionId {
 pub enum SessionStatus {
     /// Process gone.
     Exited,
+    /// Waiting for an admission slot before a process is spawned.
+    Queued,
     /// Started, nothing has happened yet.
     Starting,
     /// Waiting for the user to type.
@@ -69,6 +71,7 @@ impl SessionStatus {
     pub fn colour(self) -> &'static str {
         match self {
             SessionStatus::Exited => "overlay0",
+            SessionStatus::Queued => "overlay0",
             SessionStatus::Starting => "sapphire",
             SessionStatus::Idle => "surface2",
             SessionStatus::Thinking => "mauve",
@@ -80,7 +83,7 @@ impl SessionStatus {
     }
 
     pub fn is_live(self) -> bool {
-        !matches!(self, SessionStatus::Exited)
+        !matches!(self, SessionStatus::Exited | SessionStatus::Queued)
     }
 }
 
@@ -90,6 +93,7 @@ impl SessionStatus {
 )]
 #[serde(rename_all = "kebab-case")]
 pub enum SessionPhase {
+    Queued,
     Starting,
     Idle,
     Working,
@@ -104,6 +108,7 @@ pub enum SessionPhase {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SessionHealth {
+    Queued,
     Starting,
     Healthy,
     Degraded,
@@ -196,6 +201,7 @@ impl Session {
         self.status_since = now;
         self.state_since = now;
         self.phase = match status {
+            SessionStatus::Queued => SessionPhase::Queued,
             SessionStatus::Starting => SessionPhase::Starting,
             SessionStatus::Idle => SessionPhase::Idle,
             SessionStatus::Thinking | SessionStatus::Working => SessionPhase::Working,
@@ -204,6 +210,7 @@ impl Session {
             SessionStatus::Exited => SessionPhase::Resurrectable,
         };
         self.health = match status {
+            SessionStatus::Queued => SessionHealth::Queued,
             SessionStatus::Starting => SessionHealth::Starting,
             SessionStatus::Exited => SessionHealth::Degraded,
             _ if self.pid.is_some() => SessionHealth::Healthy,
@@ -220,6 +227,17 @@ impl Session {
         self.backoff_until = None;
         self.state_since = now;
         self.status = SessionStatus::Starting;
+        self.status_since = now;
+    }
+
+    /// Keep the row visible while admission control waits for a live slot.
+    pub fn mark_queued_at(&mut self, now: SystemTime) {
+        self.pid = None;
+        self.phase = SessionPhase::Queued;
+        self.health = SessionHealth::Queued;
+        self.backoff_until = None;
+        self.state_since = now;
+        self.status = SessionStatus::Queued;
         self.status_since = now;
     }
 

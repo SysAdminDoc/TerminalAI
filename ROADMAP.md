@@ -57,13 +57,6 @@ Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher contin
 
 ### P1
 
-- [ ] R-17 · P1 — Concurrency admission control and per-session budgets
-  Why: nothing today stops the fleet exceeding RAM or plan quota; this is the failure every vendor monetizes and no OSS tool guards.
-  Evidence: measured 509 MB/session; amirlehmam/wmux#139 (crash loop → 251 processes, 3.3 GB); HN 47221592 (parallel agents exhaust Max limits "in under an hour"); Devin caps its $20 tier at 10 concurrent sessions.
-  Touches: daemon scheduler, launcher
-  Acceptance: a configurable max-live-sessions with a queue for the overflow; a default `--max-budget-usd` per session; the fleet header shows live/queued counts and aggregate spend.
-  Complexity: M
-
 - [ ] R-06 · P1 — Session hibernation and rehydration
   Why: the only lever that makes many tracked sessions affordable — most are idle, and idle sessions cost the same 509 MB as busy ones.
   Evidence: measured RSS and ~250–500 ms cold start (2026-08-02); both CLIs support resume. Blocked on the first Open Question.

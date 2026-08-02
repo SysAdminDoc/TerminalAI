@@ -25,6 +25,75 @@ use crate::store::{ArchivedSession, SessionStoreSnapshot, StoredSession};
 /// Maximum output retained per session in memory. The future daemon can spill
 /// older bytes to disk without changing the registry-facing API.
 pub const MAX_SCROLLBACK_BYTES: usize = 512 * 1024;
+pub const DEFAULT_MAX_LIVE_SESSIONS: usize = 3;
+pub const DEFAULT_SESSION_BUDGET_USD: f64 = 5.0;
+
+/// Admission limits are owned by the daemon but kept in the registry so every
+/// process launch, including automatic restarts, observes the same cap.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AdmissionConfig {
+    pub max_live_sessions: usize,
+    /// Applied to Claude launches that did not supply an explicit cap. Codex
+    /// has no equivalent launcher flag and therefore leaves this unused.
+    pub default_budget_usd: Option<f64>,
+}
+
+impl AdmissionConfig {
+    pub fn new(max_live_sessions: usize, default_budget_usd: Option<f64>) -> Self {
+        Self {
+            max_live_sessions: max_live_sessions.max(1),
+            default_budget_usd: default_budget_usd
+                .filter(|value| value.is_finite() && *value >= 0.0),
+        }
+    }
+
+    /// Read daemon-wide limits without introducing a second config file.
+    /// TERMINALAI_DEFAULT_BUDGET_USD=none disables the Claude default cap.
+    pub fn from_environment() -> Result<Self, String> {
+        let max_live_sessions = std::env::var("TERMINALAI_MAX_LIVE_SESSIONS")
+            .ok()
+            .map(|value| {
+                value.parse::<usize>().map_err(|_| {
+                    "TERMINALAI_MAX_LIVE_SESSIONS must be a positive integer".to_string()
+                })
+            })
+            .transpose()?
+            .unwrap_or(DEFAULT_MAX_LIVE_SESSIONS);
+        let default_budget_usd = match std::env::var("TERMINALAI_DEFAULT_BUDGET_USD") {
+            Ok(value)
+                if value.eq_ignore_ascii_case("none") || value.eq_ignore_ascii_case("off") =>
+            {
+                None
+            }
+            Ok(value) => Some(value.parse::<f64>().map_err(|_| {
+                "TERMINALAI_DEFAULT_BUDGET_USD must be a non-negative decimal or 'none'".to_string()
+            })?),
+            Err(_) => Some(DEFAULT_SESSION_BUDGET_USD),
+        };
+        let config = Self::new(max_live_sessions, default_budget_usd);
+        if config.max_live_sessions != max_live_sessions {
+            return Err("TERMINALAI_MAX_LIVE_SESSIONS must be at least 1".into());
+        }
+        if config.default_budget_usd != default_budget_usd {
+            return Err("TERMINALAI_DEFAULT_BUDGET_USD must be finite and non-negative".into());
+        }
+        Ok(config)
+    }
+}
+
+impl Default for AdmissionConfig {
+    fn default() -> Self {
+        Self::new(DEFAULT_MAX_LIVE_SESSIONS, None)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AdmissionSnapshot {
+    pub max_live_sessions: usize,
+    pub live_sessions: usize,
+    pub queued_sessions: usize,
+    pub aggregate_cost_usd: f64,
+}
 
 /// Events are deliberately coarse: a view can rebuild its rows from a session
 /// update and only the focused pane needs to consume output bytes.
@@ -76,6 +145,8 @@ struct State {
     focused: Option<SessionId>,
     entries: BTreeMap<SessionId, Entry>,
     archives: Vec<ArchivedSession>,
+    queue: VecDeque<SessionId>,
+    admission: AdmissionConfig,
     notifications: NotificationCenter,
     subscribers: Vec<Sender<RegistryEvent>>,
 }
@@ -98,6 +169,10 @@ impl Default for SessionRegistry {
 
 impl SessionRegistry {
     pub fn new() -> Self {
+        Self::with_admission(AdmissionConfig::default())
+    }
+
+    pub fn with_admission(admission: AdmissionConfig) -> Self {
         Self {
             inner: Arc::new(Inner {
                 state: Mutex::new(State {
@@ -105,6 +180,8 @@ impl SessionRegistry {
                     focused: None,
                     entries: BTreeMap::new(),
                     archives: Vec::new(),
+                    queue: VecDeque::new(),
+                    admission,
                     notifications: NotificationCenter::default(),
                     subscribers: Vec::new(),
                 }),
@@ -116,7 +193,14 @@ impl SessionRegistry {
     /// agent automatically. A daemon restart cannot steal a live ConPTY from
     /// the old process, so persisted rows are offered as explicit revives.
     pub fn from_store(snapshot: SessionStoreSnapshot) -> Self {
-        let registry = Self::new();
+        Self::from_store_with_admission(snapshot, AdmissionConfig::default())
+    }
+
+    pub fn from_store_with_admission(
+        snapshot: SessionStoreSnapshot,
+        admission: AdmissionConfig,
+    ) -> Self {
+        let registry = Self::with_admission(admission);
         let mut state = registry.inner.state.lock().expect("registry poisoned");
         let archives = snapshot.archives;
         for archive in &archives {
@@ -154,6 +238,29 @@ impl SessionRegistry {
         }
         drop(state);
         registry
+    }
+
+    pub fn admission_snapshot(&self) -> AdmissionSnapshot {
+        let state = self.inner.state.lock().expect("registry poisoned");
+        AdmissionSnapshot {
+            max_live_sessions: state.admission.max_live_sessions,
+            live_sessions: admitted_count(&state),
+            queued_sessions: state.queue.len(),
+            aggregate_cost_usd: state
+                .entries
+                .values()
+                .filter_map(|entry| entry.session.cost_usd)
+                .sum(),
+        }
+    }
+
+    pub fn is_queued(&self, id: &SessionId) -> Result<bool, RegistryError> {
+        let state = self.inner.state.lock().expect("registry poisoned");
+        state
+            .entries
+            .get(id)
+            .map(|entry| entry.session.status == SessionStatus::Queued)
+            .ok_or_else(|| RegistryError::Missing(id.clone()))
     }
 
     /// Capture only serializable state; live PTY handles and parsed grids are
@@ -212,7 +319,7 @@ impl SessionRegistry {
     /// Spawn a session and immediately make it visible to subscribers.
     pub fn launch(
         &self,
-        spec: LaunchSpec,
+        mut spec: LaunchSpec,
         binary: AgentBinary,
     ) -> Result<SessionId, RegistryError> {
         if spec.agent != binary.agent {
@@ -221,15 +328,30 @@ impl SessionRegistry {
                 binary: binary.agent.command_name(),
             });
         }
+        let admission = self
+            .inner
+            .state
+            .lock()
+            .expect("registry poisoned")
+            .admission;
+        if spec.agent == crate::agent::Agent::Claude && spec.max_budget_usd.is_none() {
+            spec.max_budget_usd = admission.default_budget_usd;
+        }
         let command = spec.resolve(&binary)?;
-        let id = {
+        let (id, queued) = {
             let mut state = self.inner.state.lock().expect("registry poisoned");
             let id = SessionId::new(state.next_id);
             state.next_id = state.next_id.saturating_add(1);
+            let queued = admitted_count(&state) >= state.admission.max_live_sessions;
+            let mut session = Session::new(id.clone(), &spec);
+            if queued {
+                session.mark_queued_at(SystemTime::now());
+                state.queue.push_back(id.clone());
+            }
             state.entries.insert(
                 id.clone(),
                 Entry {
-                    session: Session::new(id.clone(), &spec),
+                    session,
                     spec: spec.clone(),
                     command: command.clone(),
                     pty: None,
@@ -239,28 +361,17 @@ impl SessionRegistry {
                     stop_requested: false,
                 },
             );
-            id
+            (id, queued)
         };
         self.emit_session(&id);
-
-        let generation = 1;
-        let pty = match self.spawn_pty(&id, &command, generation) {
-            Ok(pty) => pty,
-            Err(error) => {
-                self.remove_entry(&id);
-                return Err(error);
-            }
-        };
-
-        {
-            let mut state = self.inner.state.lock().expect("registry poisoned");
-            if let Some(entry) = state.entries.get_mut(&id) {
-                entry.session.mark_spawned_at(pty.pid(), SystemTime::now());
-                entry.pty = Some(pty.clone());
-            }
+        if queued {
+            return Ok(id);
         }
-        self.emit_session(&id);
-        self.spawn_monitor(id.clone(), pty, generation);
+
+        if let Err(error) = self.start_entry(&id, command, 1) {
+            self.remove_entry(&id);
+            return Err(error);
+        }
         Ok(id)
     }
 
@@ -284,8 +395,9 @@ impl SessionRegistry {
     /// Explicitly revive a non-running row through its native resume command.
     /// Automatic restart never calls this path.
     pub fn revive(&self, id: &SessionId) -> Result<SessionId, RegistryError> {
-        let (command, generation) = {
+        let (command, generation, queued) = {
             let mut state = self.inner.state.lock().expect("registry poisoned");
+            let admission_full = admitted_count(&state) >= state.admission.max_live_sessions;
             let entry = state
                 .entries
                 .get_mut(id)
@@ -312,47 +424,31 @@ impl SessionRegistry {
             entry.stop_requested = false;
             entry.generation = entry.generation.saturating_add(1);
             let generation = entry.generation;
-            entry.session.begin_manual_revive_at(SystemTime::now());
-            (command, generation)
+            let queued = admission_full;
+            if queued {
+                entry.session.mark_queued_at(SystemTime::now());
+                state.queue.push_back(id.clone());
+            } else {
+                entry.session.begin_manual_revive_at(SystemTime::now());
+            }
+            (command, generation, queued)
         };
         self.emit_session(id);
+        if queued {
+            return Ok(id.clone());
+        }
 
-        let pty = match self.spawn_pty(id, &command, generation) {
-            Ok(pty) => pty,
-            Err(error) => {
-                if let Ok(mut state) = self.inner.state.lock() {
-                    if let Some(entry) = state.entries.get_mut(id) {
-                        if entry.generation == generation {
-                            entry.session.mark_resurrectable_at(None, SystemTime::now());
-                        }
+        if let Err(error) = self.start_entry(id, command, generation) {
+            if let Ok(mut state) = self.inner.state.lock() {
+                if let Some(entry) = state.entries.get_mut(id) {
+                    if entry.generation == generation {
+                        entry.session.mark_resurrectable_at(None, SystemTime::now());
                     }
                 }
-                self.emit_session(id);
-                return Err(error);
             }
-        };
-
-        let accepted = {
-            let mut state = self.inner.state.lock().expect("registry poisoned");
-            match state.entries.get_mut(id) {
-                Some(entry)
-                    if entry.generation == generation
-                        && !entry.stop_requested
-                        && entry.pty.is_none() =>
-                {
-                    entry.session.mark_spawned_at(pty.pid(), SystemTime::now());
-                    entry.pty = Some(pty.clone());
-                    true
-                }
-                _ => false,
-            }
-        };
-        if !accepted {
-            let _ = pty.kill();
-            return Err(RegistryError::NotRunning(id.clone()));
+            self.emit_session(id);
+            return Err(error);
         }
-        self.emit_session(id);
-        self.spawn_monitor(id.clone(), pty, generation);
         Ok(id.clone())
     }
 
@@ -368,6 +464,7 @@ impl SessionRegistry {
                 return Err(RegistryError::StillRunning(id.clone()));
             }
             let entry = state.entries.remove(id).expect("entry checked above");
+            state.queue.retain(|queued| queued != id);
             if state.focused.as_ref() == Some(id) {
                 state.focused = None;
             }
@@ -377,6 +474,7 @@ impl SessionRegistry {
             archived
         };
         self.emit(RegistryEvent::SessionRemoved { id: id.clone() });
+        self.drain_queue();
         Ok(archived)
     }
 
@@ -394,6 +492,17 @@ impl SessionRegistry {
                 .ok_or_else(|| RegistryError::Missing(id.clone()))?;
             entry.stop_requested = true;
             let Some(pty) = entry.pty.clone() else {
+                if entry.session.status == SessionStatus::Queued {
+                    entry.generation = entry.generation.saturating_add(1);
+                    let now = SystemTime::now();
+                    entry.session.mark_resurrectable_at(None, now);
+                    let session = entry.session.clone();
+                    state.queue.retain(|queued| queued != id);
+                    drop(state);
+                    self.emit(RegistryEvent::SessionUpdated { session });
+                    self.drain_queue();
+                    return Ok(());
+                }
                 if entry.session.phase == SessionPhase::Backoff {
                     let previous_status = entry.session.status;
                     let previous_state_since = entry.session.state_since;
@@ -410,6 +519,7 @@ impl SessionRegistry {
                     drop(state);
                     self.emit(RegistryEvent::SessionUpdated { session });
                     self.emit_notification_change(notification);
+                    self.drain_queue();
                     return Ok(());
                 }
                 return Err(RegistryError::Missing(id.clone()));
@@ -464,7 +574,7 @@ impl SessionRegistry {
                             entry.session.agent == event.agent
                                 && event.cwd.as_ref() == Some(&entry.session.cwd)
                                 && entry.session.resume_id.is_none()
-                                && entry.session.status != SessionStatus::Exited
+                                && entry.session.status.is_live()
                         })
                         .map(|(id, _)| id.clone())
                 })
@@ -666,6 +776,77 @@ impl SessionRegistry {
         }
     }
 
+    fn start_entry(
+        &self,
+        id: &SessionId,
+        command: ResolvedCommand,
+        generation: u64,
+    ) -> Result<(), RegistryError> {
+        let pty = self.spawn_pty(id, &command, generation)?;
+        let accepted = {
+            let mut state = self.inner.state.lock().expect("registry poisoned");
+            match state.entries.get_mut(id) {
+                Some(entry)
+                    if entry.generation == generation
+                        && entry.pty.is_none()
+                        && !entry.stop_requested
+                        && entry.session.status == SessionStatus::Starting =>
+                {
+                    entry.session.mark_spawned_at(pty.pid(), SystemTime::now());
+                    entry.pty = Some(pty.clone());
+                    true
+                }
+                _ => false,
+            }
+        };
+        if !accepted {
+            let _ = pty.kill();
+            return Err(RegistryError::NotRunning(id.clone()));
+        }
+        self.emit_session(id);
+        self.spawn_monitor(id.clone(), pty, generation);
+        Ok(())
+    }
+
+    fn drain_queue(&self) {
+        loop {
+            let (id, command, generation) = {
+                let mut state = self.inner.state.lock().expect("registry poisoned");
+                if admitted_count(&state) >= state.admission.max_live_sessions {
+                    return;
+                }
+                let Some(id) = state.queue.pop_front() else {
+                    return;
+                };
+                let Some(entry) = state.entries.get_mut(&id) else {
+                    continue;
+                };
+                if entry.session.status != SessionStatus::Queued {
+                    continue;
+                }
+                entry.generation = entry.generation.saturating_add(1);
+                entry.session.begin_restart_at(SystemTime::now());
+                (id, entry.command.clone(), entry.generation)
+            };
+
+            self.emit_session(&id);
+            if self.start_entry(&id, command, generation).is_err() {
+                let session = {
+                    let mut state = self.inner.state.lock().expect("registry poisoned");
+                    let Some(entry) = state.entries.get_mut(&id) else {
+                        continue;
+                    };
+                    if entry.generation != generation {
+                        continue;
+                    }
+                    entry.session.mark_resurrectable_at(None, SystemTime::now());
+                    entry.session.clone()
+                };
+                self.emit(RegistryEvent::SessionUpdated { session });
+            }
+        }
+    }
+
     fn emit(&self, event: RegistryEvent) {
         let mut state = self.inner.state.lock().expect("registry poisoned");
         state
@@ -719,6 +900,7 @@ impl SessionRegistry {
         };
         self.emit(RegistryEvent::SessionUpdated { session });
         self.emit_notification_change(notification);
+        self.drain_queue();
         if let Some((generation, delay)) = restart {
             self.schedule_restart(id.clone(), generation, delay);
         }
@@ -737,6 +919,7 @@ impl SessionRegistry {
     fn restart(&self, id: SessionId, pending_generation: u64) {
         let (command, generation) = {
             let mut state = self.inner.state.lock().expect("registry poisoned");
+            let admission_full = admitted_count(&state) >= state.admission.max_live_sessions;
             let Some(entry) = state.entries.get_mut(&id) else {
                 return;
             };
@@ -747,45 +930,20 @@ impl SessionRegistry {
             {
                 return;
             }
+            if admission_full {
+                drop(state);
+                self.schedule_restart(id, pending_generation, Duration::from_millis(250));
+                return;
+            }
             entry.generation = entry.generation.saturating_add(1);
             let generation = entry.generation;
             entry.session.begin_restart_at(SystemTime::now());
             (entry.command.clone(), generation)
         };
         self.emit_session(&id);
-
-        let pty = match self.spawn_pty(&id, &command, generation) {
-            Ok(pty) => pty,
-            Err(_) => {
-                self.restart_spawn_failed(&id, generation);
-                return;
-            }
-        };
-
-        let accepted = {
-            let mut state = self.inner.state.lock().expect("registry poisoned");
-            match state.entries.get_mut(&id) {
-                None => false,
-                Some(entry)
-                    if entry.generation != generation
-                        || entry.stop_requested
-                        || entry.session.phase != SessionPhase::Starting =>
-                {
-                    false
-                }
-                Some(entry) => {
-                    entry.session.mark_spawned_at(pty.pid(), SystemTime::now());
-                    entry.pty = Some(pty.clone());
-                    true
-                }
-            }
-        };
-        if !accepted {
-            let _ = pty.kill();
-            return;
+        if self.start_entry(&id, command, generation).is_err() {
+            self.restart_spawn_failed(&id, generation);
         }
-        self.emit_session(&id);
-        self.spawn_monitor(id, pty, generation);
     }
 
     fn restart_spawn_failed(&self, id: &SessionId, generation: u64) {
@@ -894,6 +1052,14 @@ fn next_sequence(id: &SessionId) -> u64 {
         .saturating_add(1)
 }
 
+fn admitted_count(state: &State) -> usize {
+    state
+        .entries
+        .values()
+        .filter(|entry| entry.session.status.is_live())
+        .count()
+}
+
 #[derive(Default)]
 struct RingBuffer {
     bytes: VecDeque<u8>,
@@ -946,6 +1112,83 @@ mod tests {
         let mut ring = RingBuffer::default();
         ring.push(b"first\r\nlast\r\n");
         assert_eq!(ring.last_line().as_deref(), Some("last"));
+    }
+
+    #[test]
+    fn admission_queues_overflow_and_applies_default_budget() {
+        let registry = SessionRegistry::with_admission(AdmissionConfig::new(1, Some(4.5)));
+        let cwd = Path::new(".").to_path_buf();
+        let active_id = SessionId::new(99);
+        let spec = spec_for(Agent::Claude, &cwd);
+        let mut active = Session::new(active_id.clone(), &spec);
+        active.status = SessionStatus::Idle;
+        active.phase = SessionPhase::Idle;
+        active.health = crate::session::SessionHealth::Degraded;
+        registry
+            .inner
+            .state
+            .lock()
+            .expect("registry poisoned")
+            .entries
+            .insert(
+                active_id.clone(),
+                Entry {
+                    session: active,
+                    spec: spec.clone(),
+                    command: ResolvedCommand {
+                        program: PathBuf::from("active-agent"),
+                        args: Vec::new(),
+                        cwd: cwd.clone(),
+                    },
+                    pty: None,
+                    scrollback: RingBuffer::default(),
+                    grid: TerminalGrid::default(),
+                    generation: 1,
+                    stop_requested: false,
+                },
+            );
+
+        let queued_id = registry
+            .launch(
+                spec,
+                AgentBinary {
+                    agent: Agent::Claude,
+                    path: PathBuf::from("missing-terminalai-test-agent.exe"),
+                    origin: Origin::Path,
+                },
+            )
+            .expect("overflow is queued before spawn");
+        assert!(registry.is_queued(&queued_id).expect("queued row"));
+        let snapshot = registry.admission_snapshot();
+        assert_eq!(snapshot.max_live_sessions, 1);
+        assert_eq!(snapshot.live_sessions, 1);
+        assert_eq!(snapshot.queued_sessions, 1);
+        assert_eq!(
+            registry
+                .inner
+                .state
+                .lock()
+                .expect("registry poisoned")
+                .entries[&queued_id]
+                .spec
+                .max_budget_usd,
+            Some(4.5)
+        );
+
+        registry
+            .inner
+            .state
+            .lock()
+            .expect("registry poisoned")
+            .entries
+            .remove(&active_id);
+        registry.drain_queue();
+        assert_eq!(
+            registry.snapshot()[0].status,
+            SessionStatus::Exited,
+            "a failed queued spawn remains visible as stopped"
+        );
+        assert_eq!(registry.admission_snapshot().queued_sessions, 0);
     }
 
     #[test]

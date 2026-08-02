@@ -13,7 +13,8 @@ const STATUS_ORDER = {
   thinking: 4,
   idle: 3,
   starting: 2,
-  exited: 1,
+  queued: 1,
+  exited: 0,
 };
 
 const STATUS_META = {
@@ -24,6 +25,7 @@ const STATUS_META = {
   thinking: { glyph: "✦", label: "Thinking", tone: "mauve" },
   idle: { glyph: "·", label: "Idle", tone: "surface2" },
   starting: { glyph: "…", label: "Starting", tone: "sapphire" },
+  queued: { glyph: "⏳", label: "Queued", tone: "overlay0" },
   exited: { glyph: "×", label: "Exited", tone: "overlay0" },
 };
 
@@ -42,6 +44,7 @@ const state = {
   fitAddon: null,
   previewTimer: null,
   attentionToasts: new Map(),
+  admission: { max_live_sessions: 3, live_sessions: 0, queued_sessions: 0, aggregate_cost_usd: 0 },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -124,10 +127,13 @@ function sortedSessions() {
 }
 
 function renderSummary() {
-  const live = state.sessions.filter((session) => session.status !== "exited").length;
+  const live = state.sessions.filter((session) => !["exited", "queued"].includes(session.status)).length;
+  const queued = state.sessions.filter((session) => session.status === "queued").length;
   const needsYou = state.sessions.filter((session) => ["needs-you", "needs-approval", "awaiting-input"].includes(session.status)).length;
   const working = state.sessions.filter((session) => ["working", "thinking"].includes(session.status)).length;
-  $("fleet-summary").innerHTML = `<span class="summary-item"><b>${live}</b> live</span><span class="summary-separator">/</span><span class="summary-item summary-attention"><b>${needsYou}</b> needs you</span><span class="summary-separator">/</span><span class="summary-item"><b>${working}</b> active</span>`;
+  const spend = state.sessions.reduce((total, session) => total + (Number(session.cost_usd) || 0), 0);
+  const maxLive = state.admission.max_live_sessions ?? 3;
+  $("fleet-summary").innerHTML = `<span class="summary-item"><b>${live}/${maxLive}</b> live</span><span class="summary-separator">/</span><span class="summary-item"><b>${queued}</b> queued</span><span class="summary-separator">/</span><span class="summary-item summary-attention"><b>${needsYou}</b> needs you</span><span class="summary-separator">/</span><span class="summary-item"><b>${working}</b> active</span><span class="summary-separator">/</span><span class="summary-item"><b>$${spend.toFixed(2)}</b> spent</span>`;
   $("fleet-count").textContent = `${state.sessions.length} tracked`;
 }
 
@@ -188,7 +194,7 @@ function renderRow(session) {
     : "";
   const stop = session.status === "exited"
     ? ""
-    : `<button type="button" data-action="kill" class="row-action row-action-danger" title="Stop session">×</button>`;
+    : `<button type="button" data-action="kill" class="row-action row-action-danger" title="${session.status === "queued" ? "Cancel queued session" : "Stop session"}">×</button>`;
   const reply = isAttention(session) ? `<div class="row-reply"><input data-reply type="text" maxlength="500" placeholder="Reply without opening terminal" aria-label="Reply to ${escapeHtml(session.name)}" /><button type="button" data-action="reply" class="row-reply-send" title="Send reply">↵</button></div>` : "";
   return `<article class="fleet-row${active}${unread}" data-id="${escapeHtml(session.id)}" role="listitem" tabindex="0" aria-label="${escapeHtml(`${session.name}, ${meta.label}`)}">
     <div class="row-identity"><span class="status-glyph tone-${meta.tone}" title="${meta.label}">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name">${escapeHtml(session.name)}${session.unread ? '<span class="unread-dot" title="Unread attention"></span>' : ""}</div><div class="row-folder">${escapeHtml(folderLabel(session.cwd))}<span class="row-status-label">${meta.label}</span></div></div></div>
@@ -246,6 +252,7 @@ async function loadSnapshot() {
     const snapshot = await invoke("fleet_snapshot");
     state.sessions = snapshot.sessions ?? [];
     state.focused = snapshot.focused ?? null;
+    state.admission = snapshot.admission ?? state.admission;
     renderRows();
     updateTerminalHeader();
     if (state.focused) {
@@ -423,9 +430,15 @@ async function launchCurrentSpec() {
     return false;
   }
   try {
-    await invoke("launch_session", invokeArgs(spec));
+    const receipt = await invoke("launch_session", invokeArgs(spec));
     $("launcher-dialog").close();
-    showToast(`${spec.agent === "codex" ? "Codex" : "Claude Code"} session launched`, "success");
+    const agentLabel = spec.agent === "codex" ? "Codex" : "Claude Code";
+    showToast(
+      receipt?.queued
+        ? agentLabel + " session queued for an admission slot"
+        : agentLabel + " session launched",
+      "success",
+    );
     return true;
   } catch (error) {
     showToast(String(error));

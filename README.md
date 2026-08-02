@@ -45,7 +45,7 @@ Working today (`terminalai-probe`, headless):
 - Spawns and drives either agent on a live ConPTY
 - Runs a Tauri 2.11.5/WebView2 shell with the Catppuccin fleet list, launcher, presets and one
   reused xterm renderer
-- 69 unit tests over the flag mapping, pty boundary, supervision state machine, registry, daemon
+- 70 unit tests over the flag mapping, pty boundary, supervision state machine, registry, daemon
   protocol, presets and fleet-row model
 
 Not built yet: transcript file tailing and transcript-derived status/cost accounting. The named-pipe
@@ -59,6 +59,10 @@ chooses native resume or archive.
 
 Attention notifications are deduplicated per session and status, grouped by repository, retracted
 when the agent proceeds, and quiet during startup or the first seconds of a tool call.
+
+The daemon admits three live processes by default. Set `TERMINALAI_MAX_LIVE_SESSIONS` to change the
+cap and `TERMINALAI_DEFAULT_BUDGET_USD` to change the default Claude `--max-budget-usd` (or `none` to
+disable it). The fleet header shows live/queued counts and the aggregate reported spend.
 
 ## Requirements
 
