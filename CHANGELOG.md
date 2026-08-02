@@ -47,6 +47,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - R-21 reshapes fleet rows around status glyphs, repository/branch, dwell, tool-progress fractions,
   restart counts and ellipsized output, with an all-state header strip, `/` filtering, and a Wide
   view for model, effort and reported cost.
+- R-22 adds deterministic per-session service-port blocks, optional setup/teardown shell hooks,
+  hook/agent environment variables, launcher and probe controls, and allocated-port row metadata.
 - Claude/Codex hook payloads now share one parser, including session/thread id aliases and
   permission/idle notification normalization for approval and awaiting-input states.
 - The fleet now has a needs-input filter and per-row reply controls that send bracketed paste

@@ -15,6 +15,7 @@ use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty};
 
 pub use portable_pty::PtySize;
 
+use crate::environment;
 use crate::launch::ResolvedCommand;
 
 #[derive(Debug, thiserror::Error)]
@@ -51,9 +52,19 @@ impl PtySession {
     /// `on_output` runs on the reader thread and should do as little as possible
     /// — append to a ring buffer, nudge a channel. Blocking here stalls the
     /// agent, because a full pty buffer applies backpressure to the writer.
-    pub fn spawn<F>(
+    pub fn spawn<F>(cmd: &ResolvedCommand, size: PtySize, on_output: F) -> Result<Self, PtyError>
+    where
+        F: FnMut(&[u8]) + Send + 'static,
+    {
+        Self::spawn_with_environment(cmd, size, &[], on_output)
+    }
+
+    /// Spawn with the same safe baseline as [`Self::spawn`] plus explicit
+    /// per-session environment values.
+    pub fn spawn_with_environment<F>(
         cmd: &ResolvedCommand,
         size: PtySize,
+        extra_environment: &[(String, String)],
         mut on_output: F,
     ) -> Result<Self, PtyError>
     where
@@ -64,7 +75,7 @@ impl PtySession {
             .map_err(|e| PtyError::Open(e.to_string()))?;
 
         let mut builder = CommandBuilder::new(&cmd.program);
-        configure_environment(&mut builder);
+        environment::configure_pty_environment(&mut builder, extra_environment);
         for a in &cmd.args {
             builder.arg(a);
         }
@@ -194,36 +205,6 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack.windows(needle.len()).any(|w| w == needle)
 }
 
-/// `portable-pty` starts with the entire parent environment, including values
-/// it discovers in the Windows registry. Agents routinely read environment
-/// variables, so passing that through would turn TerminalAI into a credential
-/// fan-out mechanism. Keep the process environment intentionally small.
-fn configure_environment(builder: &mut CommandBuilder) {
-    builder.env_clear();
-    for key in safe_environment_keys() {
-        if let Some(value) = std::env::var_os(key) {
-            builder.env(key, value);
-        }
-    }
-}
-
-#[cfg(windows)]
-fn safe_environment_keys() -> &'static [&'static str] {
-    &[
-        "PATH",
-        "SYSTEMROOT",
-        "TEMP",
-        "USERPROFILE",
-        "COMSPEC",
-        "PATHEXT",
-    ]
-}
-
-#[cfg(not(windows))]
-fn safe_environment_keys() -> &'static [&'static str] {
-    &["PATH", "HOME", "TMPDIR", "TERM", "LANG", "SHELL"]
-}
-
 /// A sensible default console size for a background session — big enough that
 /// the agent does not wrap its output into uselessness, small enough to keep
 /// the scrollback cheap.
@@ -245,10 +226,10 @@ mod tests {
 
     #[test]
     fn environment_allowlist_has_no_secret_wildcards() {
-        assert!(!safe_environment_keys()
+        assert!(!environment::safe_environment_keys()
             .iter()
             .any(|key| key.contains("KEY")));
-        assert!(!safe_environment_keys()
+        assert!(!environment::safe_environment_keys()
             .iter()
             .any(|key| key.contains("TOKEN")));
     }
@@ -282,6 +263,59 @@ mod tests {
         let _ = session.kill();
         std::env::remove_var(SENTINEL);
         assert!(!String::from_utf8_lossy(&output).contains(SENTINEL));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn child_receives_explicit_session_environment() {
+        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        let cmd = ResolvedCommand {
+            program: PathBuf::from("cmd.exe"),
+            args: vec!["/c".into(), "set TERMINALAI_ & set PORT".into()],
+            cwd: std::env::current_dir().expect("test cwd"),
+        };
+        let session = PtySession::spawn_with_environment(
+            &cmd,
+            default_size(),
+            &[
+                ("TERMINALAI_SESSION_ID".into(), "s0001".into()),
+                ("TERMINALAI_PORTS".into(), "42000,42001".into()),
+                ("PORT".into(), "42000".into()),
+            ],
+            move |chunk| {
+                let _ = tx.send(chunk.to_vec());
+            },
+        )
+        .expect("spawn cmd for environment test");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut output = Vec::new();
+        while Instant::now() < deadline {
+            while let Ok(chunk) = rx.try_recv() {
+                output.extend_from_slice(&chunk);
+            }
+            if matches!(session.try_wait(), Ok(Some(_))) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        while let Ok(chunk) = rx.try_recv() {
+            output.extend_from_slice(&chunk);
+        }
+        let _ = session.kill();
+        let output = String::from_utf8_lossy(&output);
+        assert!(
+            output.contains("TERMINALAI_SESSION_ID=s0001"),
+            "child output did not contain the session id: {output:?}"
+        );
+        assert!(
+            output.contains("TERMINALAI_PORTS=42000,42001"),
+            "child output did not contain the port block: {output:?}"
+        );
+        assert!(
+            output.contains("PORT=42000"),
+            "child output did not contain PORT: {output:?}"
+        );
     }
 
     #[cfg(windows)]

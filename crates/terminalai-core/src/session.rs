@@ -146,6 +146,9 @@ pub struct Session {
     /// can identify one without guessing.
     #[serde(default)]
     pub branch: Option<String>,
+    /// Deterministic service ports reserved for this session's environment.
+    #[serde(default)]
+    pub ports: Vec<u16>,
     pub model: Option<String>,
     pub effort: Option<Effort>,
     pub status: SessionStatus,
@@ -179,12 +182,17 @@ impl Session {
     pub fn new(id: SessionId, spec: &LaunchSpec) -> Self {
         let now = SystemTime::now();
         let name = spec.name.clone().unwrap_or_else(|| folder_label(&spec.cwd));
+        let ports = spec
+            .environment
+            .ports_for_session(&id.0)
+            .unwrap_or_default();
         Self {
             id,
             agent: spec.agent,
             name,
             cwd: spec.cwd.clone(),
             branch: None,
+            ports,
             model: spec.model.clone(),
             effort: spec.effort,
             status: SessionStatus::Starting,
@@ -464,9 +472,11 @@ mod tests {
         let session = Session::new(SessionId::new(6), &spec);
         let mut value = serde_json::to_value(&session).unwrap();
         value.as_object_mut().unwrap().remove("branch");
+        value.as_object_mut().unwrap().remove("ports");
         value.as_object_mut().unwrap().remove("tool_progress");
         let restored: Session = serde_json::from_value(value).unwrap();
         assert_eq!(restored.branch, None);
+        assert!(restored.ports.is_empty());
         assert_eq!(restored.tool_progress, None);
     }
 

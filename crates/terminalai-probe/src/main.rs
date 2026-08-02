@@ -44,6 +44,10 @@ OPTIONS:
   --sandbox <read-only|workspace-write|danger-full-access>   (codex only)
   --name <label>                                             (claude only)
   --prompt <text>
+  --setup-hook <command>                                     (optional per-session setup)
+  --teardown-hook <command>                                  (optional per-session teardown)
+  --port-base <1024..65535>                                  (default 42000)
+  --port-count <0..16>                                       (default 4)
   --timeout <secs>     spawn only; default 30
   --raw <arg>...       everything after this is passed through verbatim
 
@@ -475,6 +479,22 @@ fn parse_launch_spec(
             "--model" => spec.model = Some(take_value(args, &mut index, flag)?),
             "--name" => spec.name = Some(take_value(args, &mut index, flag)?),
             "--prompt" => spec.initial_prompt = Some(take_value(args, &mut index, flag)?),
+            "--setup-hook" => {
+                spec.environment.setup = Some(take_value(args, &mut index, flag)?);
+            }
+            "--teardown-hook" => {
+                spec.environment.teardown = Some(take_value(args, &mut index, flag)?);
+            }
+            "--port-base" => {
+                spec.environment.port_base = take_value(args, &mut index, flag)?
+                    .parse()
+                    .map_err(|_| "--port-base must be an integer".to_string())?;
+            }
+            "--port-count" => {
+                spec.environment.port_count = take_value(args, &mut index, flag)?
+                    .parse()
+                    .map_err(|_| "--port-count must be an integer".to_string())?;
+            }
             "--timeout" if allow_timeout => {
                 let value = take_value(args, &mut index, flag)?;
                 timeout = Duration::from_secs(
@@ -643,6 +663,26 @@ mod tests {
         assert_eq!(spec.effort, Some(Effort::High));
         assert_eq!(spec.extra_args, ["--search"]);
         assert_eq!(timeout, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn start_parser_keeps_environment_hooks_and_port_settings() {
+        let args = vec![
+            "claude".into(),
+            "--setup-hook".into(),
+            "pnpm env:up".into(),
+            "--teardown-hook".into(),
+            "pnpm env:down".into(),
+            "--port-base".into(),
+            "43000".into(),
+            "--port-count".into(),
+            "2".into(),
+        ];
+        let (spec, _) = parse_launch_spec(&args, false).expect("launch spec");
+        assert_eq!(spec.environment.setup.as_deref(), Some("pnpm env:up"));
+        assert_eq!(spec.environment.teardown.as_deref(), Some("pnpm env:down"));
+        assert_eq!(spec.environment.port_base, 43_000);
+        assert_eq!(spec.environment.port_count, 2);
     }
 
     #[test]

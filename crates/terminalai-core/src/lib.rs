@@ -11,6 +11,7 @@
 
 pub mod agent;
 pub mod app_server;
+pub mod environment;
 pub mod grid;
 pub mod hook_config;
 pub mod hooks;
@@ -27,6 +28,10 @@ pub use app_server::{
     parse_message as parse_app_server_message, AgentEvent, AppServerApprovalKind, AppServerEvent,
     AppServerMessage, AppServerNotification, AppServerParseError, AppServerRequest,
     AppServerResponse, AppServerThreadStatus, AppServerTokenUsage, RpcId,
+};
+pub use environment::{
+    EnvironmentError, EnvironmentSpec, DEFAULT_PORT_BASE, DEFAULT_PORT_COUNT, MAX_PORT_COUNT,
+    PORT_BLOCK_STRIDE,
 };
 pub use grid::{TerminalGrid, TerminalGridSnapshot, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS};
 pub use hook_config::{

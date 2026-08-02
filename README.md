@@ -45,8 +45,8 @@ Working today (`terminalai-probe`, headless):
 - Spawns and drives either agent on a live ConPTY
 - Runs a Tauri 2.11.5/WebView2 shell with the Catppuccin fleet list, launcher, presets and one
   reused xterm renderer
-- 85 default unit tests over the flag mapping, pty boundary, supervision state machine, registry,
-  daemon protocol, presets and fleet-row model; 87 with the opt-in app-server transport enabled
+- 91 default unit tests over the flag mapping, pty boundary, supervision state machine, registry,
+  daemon protocol, presets and fleet-row model; 93 with the opt-in app-server transport enabled
 
 Not built yet: transcript file tailing and transcript-derived status/cost accounting. The experimental
 Codex app-server adapter is available only when the daemon is built with the explicit
@@ -70,6 +70,10 @@ The fleet header also shows counts for every session state. Compact rows keep th
 agent, repository/branch, dwell time, tool progress, restart count and last output line in view;
 use **Wide** to reveal model, reasoning effort and reported cost. Press `/` anywhere outside a text
 field to focus the fleet filter.
+
+Each launch can reserve a deterministic block of service ports and run optional setup and teardown
+hooks from the project directory. Hooks and the agent receive `TERMINALAI_SESSION_ID`,
+`TERMINALAI_PORTS`, `TERMINALAI_PORT_BASE`, and the first port as `PORT`.
 
 ## Requirements
 

@@ -51,13 +51,6 @@ Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher contin
 
 ### P2
 
-- [ ] R-22 · P2 — Per-worktree environment state
-  Why: git isolation without port and service isolation still collides; this is universally unserved and the answer everywhere today is "write your own script".
-  Evidence: HN 46424131 ("none of them mention databases… I would need ten different copies"); claude-squad#260 requests a worktree env-setup hook with port isolation.
-  Touches: worktree manager, session config
-  Acceptance: a per-session setup/teardown hook plus deterministic port allocation, with allocated ports visible on the row.
-  Complexity: M
-
 - [ ] R-33 · P2 — Unified review surface across sessions
   Why: the most recurrent community complaint by a wide margin is that human review, not agent throughput, is the bottleneck — a fleet manager that increases agent output without addressing review makes the problem worse.
   Evidence: HN 45486217, 45531694, 46424868 ("converting typing time into reading time, which is usually worse"); 91% increase in PR review time and "code began merging unread" (The New Stack). Commercial precedent: Warp's Code Review Panel, Conductor's dedicated PR page.

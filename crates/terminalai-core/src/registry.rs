@@ -13,6 +13,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::agent::{AgentBinary, Origin};
 use crate::app_server::{AgentEvent, AppServerEvent};
+use crate::environment::{self, EnvironmentError, EnvironmentSpec};
 use crate::grid::{TerminalGrid, TerminalGridSnapshot};
 use crate::hooks::{HookEvent, HookNotification, HookSignal};
 use crate::launch::{LaunchError, LaunchSpec, ResolvedCommand, Resume};
@@ -112,6 +113,8 @@ pub enum RegistryEvent {
 pub enum RegistryError {
     #[error(transparent)]
     Launch(#[from] LaunchError),
+    #[error(transparent)]
+    Environment(#[from] EnvironmentError),
     #[error(transparent)]
     Pty(#[from] PtyError),
     #[error("session does not exist: {0}")]
@@ -217,6 +220,12 @@ impl SessionRegistry {
                 scrollback: bytes,
             } = stored;
             let id = session.id.clone();
+            if session.ports.is_empty() && spec.environment.port_count > 0 {
+                session.ports = spec
+                    .environment
+                    .ports_for_session(&id.0)
+                    .unwrap_or_default();
+            }
             let exit_code = session.last_exit_code;
             session.mark_resurrectable_at(exit_code, SystemTime::now());
             let mut scrollback = RingBuffer::default();
@@ -792,14 +801,20 @@ impl SessionRegistry {
         id: &SessionId,
         command: &ResolvedCommand,
         generation: u64,
+        environment: &[(String, String)],
     ) -> Result<Arc<PtySession>, RegistryError> {
         let weak = Arc::downgrade(&self.inner);
         let callback_id = id.clone();
-        let pty = PtySession::spawn(command, crate::pty::default_size(), move |chunk| {
-            if let Some(inner) = weak.upgrade() {
-                handle_output(&inner, &callback_id, generation, chunk);
-            }
-        })?;
+        let pty = PtySession::spawn_with_environment(
+            command,
+            crate::pty::default_size(),
+            environment,
+            move |chunk| {
+                if let Some(inner) = weak.upgrade() {
+                    handle_output(&inner, &callback_id, generation, chunk);
+                }
+            },
+        )?;
         Ok(Arc::new(pty))
     }
 
@@ -825,7 +840,16 @@ impl SessionRegistry {
         command: ResolvedCommand,
         generation: u64,
     ) -> Result<(), RegistryError> {
-        let pty = self.spawn_pty(id, &command, generation)?;
+        let (cwd, environment_spec, ports) = self.runtime_environment(id)?;
+        let environment = environment::variables(&id.0, &ports);
+        environment::run_setup(&environment_spec, &id.0, &cwd, &ports)?;
+        let pty = match self.spawn_pty(id, &command, generation, &environment) {
+            Ok(pty) => pty,
+            Err(error) => {
+                let _ = environment::run_teardown(&environment_spec, &id.0, &cwd, &ports);
+                return Err(error);
+            }
+        };
         let accepted = {
             let mut state = self.inner.state.lock().expect("registry poisoned");
             match state.entries.get_mut(id) {
@@ -844,11 +868,28 @@ impl SessionRegistry {
         };
         if !accepted {
             let _ = pty.kill();
+            let _ = environment::run_teardown(&environment_spec, &id.0, &cwd, &ports);
             return Err(RegistryError::NotRunning(id.clone()));
         }
         self.emit_session(id);
         self.spawn_monitor(id.clone(), pty, generation);
         Ok(())
+    }
+
+    fn runtime_environment(
+        &self,
+        id: &SessionId,
+    ) -> Result<(std::path::PathBuf, EnvironmentSpec, Vec<u16>), RegistryError> {
+        let state = self.inner.state.lock().expect("registry poisoned");
+        let entry = state
+            .entries
+            .get(id)
+            .ok_or_else(|| RegistryError::Missing(id.clone()))?;
+        Ok((
+            entry.session.cwd.clone(),
+            entry.spec.environment.clone(),
+            entry.session.ports.clone(),
+        ))
     }
 
     fn drain_queue(&self) {
@@ -911,7 +952,7 @@ impl SessionRegistry {
     }
 
     fn mark_process_exit(&self, id: &SessionId, generation: u64, exit_code: Option<u32>) {
-        let (restart, session, notification) = {
+        let (restart, session, notification, teardown) = {
             let mut state = self.inner.state.lock().expect("registry poisoned");
             let Some(entry) = state.entries.get_mut(id) else {
                 return;
@@ -935,12 +976,18 @@ impl SessionRegistry {
                 }
             };
             let session = entry.session.clone();
+            let teardown = (
+                entry.session.cwd.clone(),
+                entry.spec.environment.clone(),
+                entry.session.ports.clone(),
+            );
             let notification =
                 state
                     .notifications
                     .observe(&session, previous_status, previous_state_since, now);
-            (restart, session, notification)
+            (restart, session, notification, teardown)
         };
+        let _ = environment::run_teardown(&teardown.1, &id.0, &teardown.0, &teardown.2);
         self.emit(RegistryEvent::SessionUpdated { session });
         self.emit_notification_change(notification);
         self.drain_queue();

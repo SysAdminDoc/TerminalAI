@@ -129,6 +129,17 @@ function cost(value) {
   return Number.isFinite(amount) ? `$${amount.toFixed(2)}` : "—";
 }
 
+function ports(value) {
+  const assigned = Array.isArray(value)
+    ? value.map(Number).filter((port) => Number.isInteger(port) && port > 0 && port <= 65535)
+    : [];
+  if (!assigned.length) return "—";
+  if (assigned.length > 1 && assigned.every((port, index) => index === 0 || port === assigned[index - 1] + 1)) {
+    return String(assigned[0]) + "–" + String(assigned.at(-1));
+  }
+  return assigned.join(", ");
+}
+
 function folderLabel(path) {
   const parts = String(path ?? "").split(/[\\/]/).filter(Boolean);
   return parts.at(-1) ?? path ?? "—";
@@ -167,7 +178,7 @@ function renderRows() {
   const sessions = sortedSessions().filter((session) => {
     if (state.attentionOnly && !isAttention(session)) return false;
     if (!filter) return true;
-    return [session.name, session.cwd, folderLabel(session.cwd), session.branch, session.agent, session.model, session.status, session.last_line, toolProgress(session.tool_progress), session.restarts]
+    return [session.name, session.cwd, folderLabel(session.cwd), session.branch, session.agent, session.model, session.status, session.last_line, toolProgress(session.tool_progress), session.restarts, ports(session.ports)]
       .filter(Boolean)
       .join(" ")
       .toLowerCase()
@@ -182,6 +193,13 @@ function renderRows() {
   $("wide-toggle").classList.toggle("wide-toggle-active", state.wideMode);
   list.innerHTML = sessions.map(renderRow).join("");
   for (const row of list.querySelectorAll(".fleet-row")) {
+    const rowSession = state.sessions.find((session) => session.id === row.dataset.id);
+    const portBadge = document.createElement("span");
+    portBadge.className = "row-ports";
+    portBadge.title = "Allocated ports";
+    portBadge.textContent = "ports " + ports(rowSession?.ports);
+    row.querySelector(".row-folder")?.append(portBadge);
+    row.setAttribute("aria-label", row.getAttribute("aria-label") + ", ports " + ports(rowSession?.ports));
     row.addEventListener("click", () => focusSession(row.dataset.id));
     for (const button of row.querySelectorAll("button[data-action]")) {
       button.addEventListener("click", (event) => {
@@ -378,6 +396,7 @@ function defaultSpec() {
     web_search: false,
     initial_prompt: null,
     extra_args: [],
+    environment: { setup: null, teardown: null, port_base: 42000, port_count: 4 },
   };
 }
 
@@ -387,6 +406,8 @@ function readSpec() {
   const nativeId = $("resume-id-input").value.trim();
   const resume = resumeKind === "session" ? { kind: "session", id: nativeId } : resumeKind === "fork" ? { kind: "fork", id: nativeId } : { kind: resumeKind };
   const budget = $("budget-input").value.trim();
+  const portBase = Number.parseInt($("port-base-input").value, 10);
+  const portCount = Number.parseInt($("port-count-input").value, 10);
   return {
     agent,
     name: $("name-input").value.trim() || null,
@@ -402,6 +423,12 @@ function readSpec() {
     web_search: agent === "codex" && $("search-input").checked,
     initial_prompt: $("prompt-input").value.trim() || null,
     extra_args: [],
+    environment: {
+      setup: $("setup-hook-input").value.trim() || null,
+      teardown: $("teardown-hook-input").value.trim() || null,
+      port_base: Number.isInteger(portBase) ? portBase : 42000,
+      port_count: Number.isInteger(portCount) ? portCount : 4,
+    },
   };
 }
 
@@ -418,6 +445,10 @@ function writeSpec(spec) {
   $("resume-id-input").value = spec.resume?.id ?? "";
   $("budget-input").value = spec.max_budget_usd ?? "";
   $("search-input").checked = Boolean(spec.web_search);
+  $("port-base-input").value = spec.environment?.port_base ?? 42000;
+  $("port-count-input").value = spec.environment?.port_count ?? 4;
+  $("setup-hook-input").value = spec.environment?.setup ?? "";
+  $("teardown-hook-input").value = spec.environment?.teardown ?? "";
   $("prompt-input").value = spec.initial_prompt ?? "";
   state.extraDirs = spec.add_dirs ?? [];
   $("extra-dirs-input").value = state.extraDirs.join("; ");
@@ -606,7 +637,7 @@ function bindEvents() {
     syncAgentFields();
     schedulePreview();
   });
-  ["cwd-input", "model-input", "name-input", "effort-input", "permission-input", "sandbox-input", "profile-input", "resume-input", "resume-id-input", "budget-input", "prompt-input", "search-input"].forEach((id) => {
+  ["cwd-input", "model-input", "name-input", "effort-input", "permission-input", "sandbox-input", "profile-input", "resume-input", "resume-id-input", "budget-input", "port-base-input", "port-count-input", "setup-hook-input", "teardown-hook-input", "prompt-input", "search-input"].forEach((id) => {
     $(id).addEventListener("input", () => {
       if (id === "resume-input") syncAgentFields();
       schedulePreview();

@@ -9,6 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::agent::{Agent, AgentBinary};
+use crate::environment::{EnvironmentError, EnvironmentSpec};
 
 /// Reasoning effort. Both current CLIs accept all five levels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -89,6 +90,9 @@ pub struct LaunchSpec {
     /// it is TerminalAI-side only.
     pub name: Option<String>,
     pub cwd: PathBuf,
+    /// Per-session setup/teardown hooks and deterministic service ports.
+    #[serde(default)]
+    pub environment: EnvironmentSpec,
     pub model: Option<String>,
     pub effort: Option<Effort>,
     pub permission: Option<Permission>,
@@ -149,6 +153,8 @@ pub enum LaunchError {
     },
     #[error("{0} cannot resume a specific session id from the command line; use Last or New")]
     ResumeUnsupported(&'static str),
+    #[error(transparent)]
+    Environment(#[from] EnvironmentError),
 }
 
 impl LaunchSpec {
@@ -159,6 +165,7 @@ impl LaunchSpec {
         if !self.cwd.is_dir() {
             return Err(LaunchError::MissingCwd(self.cwd.clone()));
         }
+        self.environment.validate()?;
         let args = match self.agent {
             Agent::Claude => self.claude_args()?,
             Agent::Codex => self.codex_args()?,
