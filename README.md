@@ -45,8 +45,8 @@ Working today (`terminalai-probe`, headless):
 - Spawns and drives either agent on a live ConPTY
 - Runs a Tauri 2.11.5/WebView2 shell with the Catppuccin fleet list, launcher, presets and one
   reused xterm renderer
-- 84 default unit tests over the flag mapping, pty boundary, supervision state machine, registry,
-  daemon protocol, presets and fleet-row model; 86 with the opt-in app-server transport enabled
+- 85 default unit tests over the flag mapping, pty boundary, supervision state machine, registry,
+  daemon protocol, presets and fleet-row model; 87 with the opt-in app-server transport enabled
 
 Not built yet: transcript file tailing and transcript-derived status/cost accounting. The experimental
 Codex app-server adapter is available only when the daemon is built with the explicit
@@ -65,6 +65,11 @@ when the agent proceeds, and quiet during startup or the first seconds of a tool
 The daemon admits three live processes by default. Set `TERMINALAI_MAX_LIVE_SESSIONS` to change the
 cap and `TERMINALAI_DEFAULT_BUDGET_USD` to change the default Claude `--max-budget-usd` (or `none` to
 disable it). The fleet header shows live/queued counts and the aggregate reported spend.
+
+The fleet header also shows counts for every session state. Compact rows keep the status glyph,
+agent, repository/branch, dwell time, tool progress, restart count and last output line in view;
+use **Wide** to reveal model, reasoning effort and reported cost. Press `/` anywhere outside a text
+field to focus the fleet filter.
 
 ## Requirements
 

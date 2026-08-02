@@ -51,13 +51,6 @@ Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher contin
 
 ### P2
 
-- [ ] R-21 · P2 — Fleet row information design
-  Why: the row is the product; k9s is the best-studied case of supervising many similar things at a glance.
-  Evidence: k9s pod view — compound fractions (`READY 1/1`), a first-class `RESTARTS` column, relative age, glyph decorators, phase-derived colour, `/` filter, and separate aggregate views rather than a wider table. agent-deck's status sigils (`!` `@` `#` `$`).
-  Touches: fleet list component
-  Acceptance: rows carry status glyph, agent, repo/branch, dwell timer, tool progress as a fraction, restart count, and an ellipsized last line; model/effort/cost live in an expanded "wide" mode; a header strip shows counts by state; `/` filters.
-  Complexity: M
-
 - [ ] R-22 · P2 — Per-worktree environment state
   Why: git isolation without port and service isolation still collides; this is universally unserved and the answer everywhere today is "write your own script".
   Evidence: HN 46424131 ("none of them mention databases… I would need ten different copies"); claude-squad#260 requests a worktree env-setup hook with port isolation.

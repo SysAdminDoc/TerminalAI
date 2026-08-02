@@ -28,9 +28,10 @@
         <section class="fleet-panel" aria-label="Session fleet">
           <div class="panel-toolbar">
             <div class="toolbar-title"><span class="eyebrow">LIVE FLEET</span><span id="fleet-count">0 tracked</span></div>
-            <div class="fleet-tools"><label class="filter-wrap" aria-label="Filter sessions"><span>⌕</span><input id="filter-input" type="search" placeholder="Filter fleet" /></label><button class="attention-filter" id="attention-filter" type="button" aria-pressed="false">Needs input</button></div>
+            <div class="fleet-tools"><label class="filter-wrap" aria-label="Filter sessions"><span aria-hidden="true">⌕</span><input id="filter-input" type="search" aria-keyshortcuts="/" placeholder="Filter fleet (/)" /></label><button class="button button-quiet wide-toggle" id="wide-toggle" type="button" aria-pressed="false" title="Show model, effort, and cost">Wide</button><button class="attention-filter" id="attention-filter" type="button" aria-pressed="false">Needs input</button></div>
           </div>
-          <div class="column-labels" aria-hidden="true"><span>STATUS / SESSION</span><span>MODEL · EFFORT</span><span>DWELL</span><span></span></div>
+          <div id="fleet-state-strip" class="fleet-state-strip" role="list" aria-label="Fleet state counts"></div>
+          <div class="column-labels" aria-hidden="true"><span>STATUS / REPO · BRANCH</span><span>AGENT · PROGRESS</span><span>DWELL / LAST LINE</span><span></span></div>
           <div id="fleet-list" class="fleet-list" role="list" aria-label="Tracked sessions"></div>
           <div id="empty-state" class="empty-state">
             <div class="empty-orbit" aria-hidden="true"><span></span><span></span><span></span></div>

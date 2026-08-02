@@ -119,6 +119,15 @@ pub enum SessionHealth {
     Failed,
 }
 
+/// Optional progress reported by an agent while it is carrying out a tool
+/// plan. A missing value means that the agent has not exposed a countable
+/// plan; the fleet row renders that as an em dash instead of inventing one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ToolProgress {
+    pub completed: u32,
+    pub total: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RestartDecision {
     Backoff(Duration),
@@ -133,6 +142,10 @@ pub struct Session {
     /// User-supplied, else derived from the folder name.
     pub name: String,
     pub cwd: PathBuf,
+    /// Git branch associated with the session, when the launch/runtime layer
+    /// can identify one without guessing.
+    #[serde(default)]
+    pub branch: Option<String>,
     pub model: Option<String>,
     pub effort: Option<Effort>,
     pub status: SessionStatus,
@@ -145,6 +158,9 @@ pub struct Session {
     pub pid: Option<u32>,
     /// Last line of agent output, trimmed for the row.
     pub last_line: String,
+    /// Optional countable tool-plan progress for the fleet row.
+    #[serde(default)]
+    pub tool_progress: Option<ToolProgress>,
     /// Native session id, once the agent reports one. Enables resume and fork.
     pub resume_id: Option<String>,
     pub started_at: SystemTime,
@@ -168,6 +184,7 @@ impl Session {
             agent: spec.agent,
             name,
             cwd: spec.cwd.clone(),
+            branch: None,
             model: spec.model.clone(),
             effort: spec.effort,
             status: SessionStatus::Starting,
@@ -179,6 +196,7 @@ impl Session {
             state_since: now,
             pid: None,
             last_line: String::new(),
+            tool_progress: None,
             resume_id: None,
             started_at: now,
             status_since: now,
@@ -438,6 +456,18 @@ mod tests {
         let mut s = session(SessionStatus::Idle);
         s.set_last_line(&"x".repeat(500));
         assert_eq!(s.last_line.chars().count(), 160);
+    }
+
+    #[test]
+    fn optional_row_metadata_is_backward_compatible() {
+        let spec = spec_for(Agent::Claude, Path::new("."));
+        let session = Session::new(SessionId::new(6), &spec);
+        let mut value = serde_json::to_value(&session).unwrap();
+        value.as_object_mut().unwrap().remove("branch");
+        value.as_object_mut().unwrap().remove("tool_progress");
+        let restored: Session = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.branch, None);
+        assert_eq!(restored.tool_progress, None);
     }
 
     #[test]

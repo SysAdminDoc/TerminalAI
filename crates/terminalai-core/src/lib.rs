@@ -46,8 +46,8 @@ pub use registry::{
     DEFAULT_MAX_LIVE_SESSIONS, DEFAULT_SESSION_BUDGET_USD,
 };
 pub use session::{
-    RestartDecision, Session, SessionHealth, SessionId, SessionPhase, SessionStatus, MAX_RESTARTS,
-    RESTART_BACKOFF_BASE, RESTART_BACKOFF_MAX,
+    RestartDecision, Session, SessionHealth, SessionId, SessionPhase, SessionStatus, ToolProgress,
+    MAX_RESTARTS, RESTART_BACKOFF_BASE, RESTART_BACKOFF_MAX,
 };
 pub use store::{
     ArchivedSession, SessionStoreError, SessionStoreSnapshot, StoredSession,

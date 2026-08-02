@@ -19,17 +19,18 @@ const STATUS_ORDER = {
 };
 
 const STATUS_META = {
-  "needs-approval": { glyph: "!", label: "Needs approval", tone: "peach" },
-  "awaiting-input": { glyph: "?", label: "Awaiting input", tone: "yellow" },
-  "needs-you": { glyph: "!", label: "Needs you", tone: "peach" },
-  working: { glyph: "◒", label: "Working", tone: "yellow" },
-  thinking: { glyph: "✦", label: "Thinking", tone: "mauve" },
-  idle: { glyph: "·", label: "Idle", tone: "surface2" },
-  starting: { glyph: "…", label: "Starting", tone: "sapphire" },
-  queued: { glyph: "⏳", label: "Queued", tone: "overlay0" },
-  unknown: { glyph: "?", label: "State unknown", tone: "overlay0" },
-  exited: { glyph: "×", label: "Exited", tone: "overlay0" },
+  "needs-approval": { glyph: "!", label: "Needs approval", short: "approval", tone: "peach" },
+  "awaiting-input": { glyph: "?", label: "Awaiting input", short: "input", tone: "yellow" },
+  "needs-you": { glyph: "!", label: "Needs you", short: "you", tone: "peach" },
+  working: { glyph: "◒", label: "Working", short: "working", tone: "yellow" },
+  thinking: { glyph: "✦", label: "Thinking", short: "thinking", tone: "mauve" },
+  idle: { glyph: "·", label: "Idle", short: "idle", tone: "surface2" },
+  starting: { glyph: "…", label: "Starting", short: "starting", tone: "sapphire" },
+  queued: { glyph: "⏳", label: "Queued", short: "queued", tone: "overlay0" },
+  unknown: { glyph: "?", label: "State unknown", short: "unknown", tone: "overlay0" },
+  exited: { glyph: "×", label: "Exited", short: "exited", tone: "overlay0" },
 };
+const STATUS_KEYS = Object.keys(STATUS_META);
 
 const MODEL_SUGGESTIONS = {
   claude: ["opus", "sonnet", "haiku"],
@@ -42,6 +43,7 @@ const state = {
   presets: [],
   extraDirs: [],
   attentionOnly: false,
+  wideMode: false,
   terminal: null,
   fitAddon: null,
   previewTimer: null,
@@ -115,6 +117,18 @@ function dwell(value) {
   return `${hours}h ${minutes % 60}m`;
 }
 
+function toolProgress(value) {
+  const completed = Number(value?.completed);
+  const total = Number(value?.total);
+  if (!Number.isInteger(completed) || !Number.isInteger(total) || completed < 0 || total <= 0) return "—";
+  return `${Math.min(completed, total)}/${total}`;
+}
+
+function cost(value) {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? `$${amount.toFixed(2)}` : "—";
+}
+
 function folderLabel(path) {
   const parts = String(path ?? "").split(/[\\/]/).filter(Boolean);
   return parts.at(-1) ?? path ?? "—";
@@ -137,6 +151,14 @@ function renderSummary() {
   const maxLive = state.admission.max_live_sessions ?? 3;
   $("fleet-summary").innerHTML = `<span class="summary-item"><b>${live}/${maxLive}</b> live</span><span class="summary-separator">/</span><span class="summary-item"><b>${queued}</b> queued</span><span class="summary-separator">/</span><span class="summary-item summary-attention"><b>${needsYou}</b> needs you</span><span class="summary-separator">/</span><span class="summary-item"><b>${working}</b> active</span><span class="summary-separator">/</span><span class="summary-item"><b>$${spend.toFixed(2)}</b> spent</span>`;
   $("fleet-count").textContent = `${state.sessions.length} tracked`;
+  const counts = Object.fromEntries(STATUS_KEYS.map((status) => [status, 0]));
+  for (const session of state.sessions) {
+    if (session.status in counts) counts[session.status] += 1;
+  }
+  $("fleet-state-strip").innerHTML = STATUS_KEYS.map((status) => {
+    const meta = STATUS_META[status];
+    return `<span class="state-chip tone-${meta.tone}" role="listitem" title="${escapeHtml(meta.label)}: ${counts[status]}" aria-label="${escapeHtml(meta.label)}: ${counts[status]}"><span class="state-chip-glyph" aria-hidden="true">${meta.glyph}</span><b>${counts[status]}</b><span>${escapeHtml(meta.short)}</span></span>`;
+  }).join("");
 }
 
 function renderRows() {
@@ -145,7 +167,7 @@ function renderRows() {
   const sessions = sortedSessions().filter((session) => {
     if (state.attentionOnly && !isAttention(session)) return false;
     if (!filter) return true;
-    return [session.name, session.cwd, session.agent, session.model, session.last_line]
+    return [session.name, session.cwd, folderLabel(session.cwd), session.branch, session.agent, session.model, session.status, session.last_line, toolProgress(session.tool_progress), session.restarts]
       .filter(Boolean)
       .join(" ")
       .toLowerCase()
@@ -154,6 +176,10 @@ function renderRows() {
   const list = $("fleet-list");
   $("empty-state").classList.toggle("empty-state-hidden", state.sessions.length > 0);
   list.classList.toggle("fleet-list-hidden", state.sessions.length === 0);
+  list.classList.toggle("fleet-list-wide", state.wideMode);
+  $("wide-toggle").setAttribute("aria-pressed", String(state.wideMode));
+  $("wide-toggle").textContent = state.wideMode ? "Compact" : "Wide";
+  $("wide-toggle").classList.toggle("wide-toggle-active", state.wideMode);
   list.innerHTML = sessions.map(renderRow).join("");
   for (const row of list.querySelectorAll(".fleet-row")) {
     row.addEventListener("click", () => focusSession(row.dataset.id));
@@ -187,6 +213,11 @@ function renderRow(session) {
   const agentLabel = session.agent === "codex" ? "CX" : "CC";
   const model = session.model || "default";
   const effort = session.effort || "—";
+  const repo = folderLabel(session.cwd);
+  const branch = session.branch || "—";
+  const progress = toolProgress(session.tool_progress);
+  const restartCount = Number.isInteger(Number(session.restarts)) ? Number(session.restarts) : 0;
+  const lastLine = session.last_line || "No output yet";
   const pinLabel = session.pinned ? "Unpin" : "Pin";
   const revive = session.status === "exited" && session.resume_id
     ? `<button type="button" data-action="revive" class="row-action" title="Revive with native resume">↻</button>`
@@ -198,11 +229,13 @@ function renderRow(session) {
     ? ""
     : `<button type="button" data-action="kill" class="row-action row-action-danger" title="${session.status === "queued" ? "Cancel queued session" : "Stop session"}">×</button>`;
   const reply = isAttention(session) ? `<div class="row-reply"><input data-reply type="text" maxlength="500" placeholder="Reply without opening terminal" aria-label="Reply to ${escapeHtml(session.name)}" /><button type="button" data-action="reply" class="row-reply-send" title="Send reply">↵</button></div>` : "";
-  return `<article class="fleet-row${active}${unread}" data-id="${escapeHtml(session.id)}" role="listitem" tabindex="0" aria-label="${escapeHtml(`${session.name}, ${meta.label}`)}">
-    <div class="row-identity"><span class="status-glyph tone-${meta.tone}" title="${meta.label}">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name">${escapeHtml(session.name)}${session.unread ? '<span class="unread-dot" title="Unread attention"></span>' : ""}</div><div class="row-folder">${escapeHtml(folderLabel(session.cwd))}<span class="row-status-label">${meta.label}</span></div></div></div>
-    <div class="row-model"><span class="agent-badge agent-${session.agent}">${agentLabel}</span><span class="model-name">${escapeHtml(model)}</span><span class="effort-chip">${escapeHtml(effort)}</span></div>
-    <div class="row-dwell"><span>${dwell(session.status_since)}</span><small>${escapeHtml(session.last_line || "No output yet")}</small></div>
+  const wideMeta = state.wideMode ? `<div class="row-wide-meta"><span><small>MODEL</small><b>${escapeHtml(model)}</b></span><span><small>EFFORT</small><b>${escapeHtml(effort)}</b></span><span><small>COST</small><b>${escapeHtml(cost(session.cost_usd))}</b></span></div>` : "";
+  return `<article class="fleet-row${active}${unread}" data-id="${escapeHtml(session.id)}" role="listitem" tabindex="0" aria-label="${escapeHtml(`${session.name}, ${meta.label}, ${repo}, ${branch}, progress ${progress}, ${restartCount} restarts`)}">
+    <div class="row-identity"><span class="status-glyph tone-${meta.tone}" title="${meta.label}" aria-label="${meta.label}">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name">${escapeHtml(session.name)}${session.unread ? '<span class="unread-dot" title="Unread attention"></span>' : ""}</div><div class="row-folder"><span class="row-repo" title="Repository">${escapeHtml(repo)}</span><span class="row-branch" title="Branch">${escapeHtml(branch)}</span><span class="row-status-label">${meta.label}</span></div></div></div>
+    <div class="row-metrics"><span class="agent-badge agent-${session.agent}" title="${session.agent === "codex" ? "Codex" : "Claude Code"}">${agentLabel}</span><span class="row-progress" title="Tool progress"><small>PROG</small><b>${escapeHtml(progress)}</b></span><span class="row-restarts" title="Restart count">↻ ${restartCount}</span></div>
+    <div class="row-dwell"><span>${dwell(session.status_since)}</span><small class="row-last-line" title="${escapeHtml(lastLine)}">${escapeHtml(lastLine)}</small></div>
     <div class="row-actions"><button type="button" data-action="pin" class="row-action ${session.pinned ? "row-action-active" : ""}" title="${pinLabel}">${session.pinned ? "◆" : "◇"}</button><button type="button" data-action="focus" class="row-action" title="Focus terminal">↗</button>${revive}${archive}${stop}</div>
+    ${wideMeta}
     ${reply}
   </article>`;
 }
@@ -551,11 +584,23 @@ function bindEvents() {
   $("empty-new-button").addEventListener("click", openLauncher);
   $("refresh-button").addEventListener("click", loadSnapshot);
   $("filter-input").addEventListener("input", renderRows);
+  $("wide-toggle").addEventListener("click", () => {
+    state.wideMode = !state.wideMode;
+    renderRows();
+  });
   $("attention-filter").addEventListener("click", () => {
     state.attentionOnly = !state.attentionOnly;
     $("attention-filter").setAttribute("aria-pressed", String(state.attentionOnly));
     $("attention-filter").classList.toggle("attention-filter-active", state.attentionOnly);
     renderRows();
+  });
+  document.addEventListener("keydown", (event) => {
+    const tag = event.target?.tagName?.toLowerCase();
+    if (event.key === "/" && !event.target?.isContentEditable && !["input", "textarea", "select"].includes(tag)) {
+      event.preventDefault();
+      $("filter-input").focus({ preventScroll: true });
+      $("filter-input").select();
+    }
   });
   $("agent-input").addEventListener("change", () => {
     syncAgentFields();

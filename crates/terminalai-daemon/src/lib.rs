@@ -132,6 +132,10 @@ pub enum Request {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+// Snapshot/status responses intentionally carry the full fleet row model;
+// boxing them would add needless wire/API indirection without changing the
+// local control-plane contract.
+#[allow(clippy::large_enum_variant)]
 pub enum Response {
     Hello {
         protocol: u16,
