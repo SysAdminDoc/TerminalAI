@@ -176,6 +176,9 @@ pub struct Session {
     pub unread: bool,
     /// Pinned sessions keep a live terminal grid even when not focused.
     pub pinned: bool,
+    /// Operator acknowledgement for the current review snapshot.
+    #[serde(default)]
+    pub reviewed: bool,
 }
 
 impl Session {
@@ -211,6 +214,7 @@ impl Session {
             cost_usd: None,
             unread: false,
             pinned: false,
+            reviewed: false,
         }
     }
 
@@ -474,10 +478,12 @@ mod tests {
         value.as_object_mut().unwrap().remove("branch");
         value.as_object_mut().unwrap().remove("ports");
         value.as_object_mut().unwrap().remove("tool_progress");
+        value.as_object_mut().unwrap().remove("reviewed");
         let restored: Session = serde_json::from_value(value).unwrap();
         assert_eq!(restored.branch, None);
         assert!(restored.ports.is_empty());
         assert_eq!(restored.tool_progress, None);
+        assert!(!restored.reviewed);
     }
 
     #[test]

@@ -44,6 +44,8 @@ const state = {
   extraDirs: [],
   attentionOnly: false,
   wideMode: false,
+  reviewMode: false,
+  reviews: [],
   terminal: null,
   fitAddon: null,
   previewTimer: null,
@@ -129,6 +131,61 @@ function cost(value) {
   return Number.isFinite(amount) ? `$${amount.toFixed(2)}` : "—";
 }
 
+function reviewNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
+}
+
+function syncReviewVisibility() {
+  const hidden = state.reviewMode;
+  ["fleet-state-strip", "column-labels", "fleet-list", "empty-state"].forEach((id) => {
+    $(id).classList.toggle("view-hidden", hidden);
+  });
+  $("review-view").classList.toggle("view-hidden", !hidden);
+  $("review-toggle").setAttribute("aria-pressed", String(hidden));
+  $("review-toggle").classList.toggle("wide-toggle-active", hidden);
+  $("review-toggle").textContent = hidden ? "Fleet" : "Review";
+}
+
+function renderReview() {
+  const entries = Array.isArray(state.reviews) ? state.reviews : [];
+  const pending = entries.filter((entry) => !entry.reviewed).length;
+  const conflicts = entries.filter((entry) => (entry.conflicts?.length ?? 0) > 0 || reviewNumber(entry.conflict_markers) > 0).length;
+  $("review-summary").textContent = entries.length + " session" + (entries.length === 1 ? "" : "s") + " · " + pending + " pending · " + conflicts + " with conflicts";
+  $("review-empty").classList.toggle("view-hidden", entries.length > 0);
+  $("review-list").innerHTML = entries.map(renderReviewEntry).join("");
+}
+
+function renderReviewEntry(entry) {
+  const conflicts = Array.isArray(entry.conflicts) ? entry.conflicts : [];
+  const markers = reviewNumber(entry.conflict_markers);
+  const additions = reviewNumber(entry.additions);
+  const deletions = reviewNumber(entry.deletions);
+  const files = reviewNumber(entry.files_changed);
+  const reviewCost = reviewNumber(entry.review_cost);
+  const agent = entry.agent === "codex" ? "Codex" : "Claude Code";
+  const status = entry.reviewed ? "Reviewed" : "Pending";
+  const conflictDetails = conflicts.length
+    ? "<ul>" + conflicts.map((path) => "<li><code>" + escapeHtml(path) + "</code></li>").join("") + "</ul>"
+    : "";
+  const conflictMarkup = conflicts.length || markers
+    ? '<div class="review-conflict" role="alert"><strong>Conflict markers surfaced</strong><span>' + conflicts.length + " conflicted file" + (conflicts.length === 1 ? "" : "s") + (markers ? " · " + markers + " marker lines" : "") + "</span>" + conflictDetails + "</div>"
+    : "";
+  const errorMarkup = entry.error ? '<div class="review-error" role="alert">' + escapeHtml(entry.error) + "</div>" : "";
+  const diffMarkup = entry.diff
+    ? '<details class="review-diff" ' + (conflicts.length || markers ? "open" : "") + "><summary>Show diff" + (entry.diff_truncated ? " · truncated" : "") + "</summary><pre>" + escapeHtml(entry.diff) + "</pre></details>"
+    : '<div class="review-no-diff">No textual diff was returned.</div>';
+  const actionMarkup = entry.reviewed
+    ? '<span class="reviewed-label">✓ Reviewed</span>'
+    : entry.error
+      ? ""
+      : '<button type="button" class="button button-secondary review-mark" data-review-action="mark-reviewed" data-review-id="' + escapeHtml(entry.session_id) + '">Mark reviewed</button>';
+  return '<article class="review-entry' + (entry.reviewed ? " review-entry-reviewed" : "") + '" role="listitem">' +
+    '<div class="review-entry-heading"><div><h3>' + escapeHtml(entry.name) + '</h3><div class="review-repo"><span>' + escapeHtml(folderLabel(entry.cwd)) + '</span><span>' + escapeHtml(agent) + '</span><code>' + escapeHtml(entry.session_id) + '</code></div></div><div class="review-entry-action">' + actionMarkup + "</div></div>" +
+    '<div class="review-metrics"><span><b>' + files + "</b> file" + (files === 1 ? "" : "s") + '</span><span class="review-additions">+' + additions + '</span><span class="review-deletions">−' + deletions + '</span><span>cost ' + reviewCost + '</span><span class="review-state">' + status + "</span></div>" +
+    conflictMarkup + errorMarkup + diffMarkup + "</article>";
+}
+
 function ports(value) {
   const assigned = Array.isArray(value)
     ? value.map(Number).filter((port) => Number.isInteger(port) && port > 0 && port <= 65535)
@@ -173,6 +230,7 @@ function renderSummary() {
 }
 
 function renderRows() {
+  syncReviewVisibility();
   renderSummary();
   const filter = $("filter-input").value.trim().toLowerCase();
   const sessions = sortedSessions().filter((session) => {
@@ -298,6 +356,37 @@ function resetTerminal(status = "Waiting for a session") {
   if (state.terminal) state.terminal.reset();
   $("terminal-status").textContent = status;
   updateTerminalHeader();
+}
+
+async function loadReview() {
+  try {
+    const snapshot = await invoke("review_snapshot");
+    state.reviews = snapshot.entries ?? [];
+    renderReview();
+  } catch (error) {
+    showToast("Could not read review snapshot: " + error);
+  }
+}
+
+function setReviewMode(active) {
+  state.reviewMode = active;
+  syncReviewVisibility();
+  if (active) void loadReview();
+  else renderRows();
+}
+
+async function markReviewed(id, button) {
+  if (button) button.disabled = true;
+  try {
+    await invoke("mark_reviewed", { id });
+    const entry = state.reviews.find((review) => review.session_id === id);
+    if (entry) entry.reviewed = true;
+    renderReview();
+    showToast("Session marked reviewed", "success");
+  } catch (error) {
+    if (button) button.disabled = false;
+    showToast("Could not mark session reviewed: " + error);
+  }
 }
 
 async function loadSnapshot() {
@@ -614,6 +703,15 @@ function bindEvents() {
   $("new-session-button").addEventListener("click", openLauncher);
   $("empty-new-button").addEventListener("click", openLauncher);
   $("refresh-button").addEventListener("click", loadSnapshot);
+  $("review-toggle").addEventListener("click", () => setReviewMode(!state.reviewMode));
+  $("review-refresh").addEventListener("click", loadReview);
+  $("review-list").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-review-action]");
+    if (!button) return;
+    if (button.dataset.reviewAction === "mark-reviewed") {
+      void markReviewed(button.dataset.reviewId, button);
+    }
+  });
   $("filter-input").addEventListener("input", renderRows);
   $("wide-toggle").addEventListener("click", () => {
     state.wideMode = !state.wideMode;

@@ -20,6 +20,7 @@
         <div class="top-actions">
           <div class="preset-control"><select id="preset-select" aria-label="Saved launcher presets"><option value="">Presets</option></select><button class="button button-quiet" id="launch-preset-button" title="Launch selected preset">▶</button></div>
           <button class="button button-quiet" id="refresh-button" title="Refresh fleet snapshot">↻ <span>Refresh</span></button>
+          <button class="button button-quiet" id="review-toggle" type="button" aria-pressed="false">Review</button>
           <button class="button button-primary" id="new-session-button"><span class="button-plus">+</span> New session</button>
         </div>
       </header>
@@ -29,6 +30,11 @@
           <div class="panel-toolbar">
             <div class="toolbar-title"><span class="eyebrow">LIVE FLEET</span><span id="fleet-count">0 tracked</span></div>
             <div class="fleet-tools"><label class="filter-wrap" aria-label="Filter sessions"><span aria-hidden="true">⌕</span><input id="filter-input" type="search" aria-keyshortcuts="/" placeholder="Filter fleet (/)" /></label><button class="button button-quiet wide-toggle" id="wide-toggle" type="button" aria-pressed="false" title="Show model, effort, and cost">Wide</button><button class="attention-filter" id="attention-filter" type="button" aria-pressed="false">Needs input</button></div>
+          </div>
+          <div id="review-view" class="review-view view-hidden" aria-label="Pending review">
+            <div class="review-toolbar"><span class="eyebrow">PENDING REVIEW</span><span id="review-summary"></span><button class="button button-quiet" id="review-refresh" type="button">Refresh</button></div>
+            <div id="review-list" class="review-list" role="list" aria-label="Session changes pending review"></div>
+            <div id="review-empty" class="review-empty view-hidden">No pending diffs</div>
           </div>
           <div id="fleet-state-strip" class="fleet-state-strip" role="list" aria-label="Fleet state counts"></div>
           <div class="column-labels" aria-hidden="true"><span>STATUS / REPO · BRANCH</span><span>AGENT · PROGRESS</span><span>DWELL / LAST LINE</span><span></span></div>

@@ -28,8 +28,8 @@ use terminalai_core::agent::{self, Agent, Origin};
 use terminalai_core::launch::LaunchSpec;
 use terminalai_core::pty::PtySize;
 use terminalai_core::{
-    AdmissionConfig, AdmissionSnapshot, AgentEvent, HookEvent, RegistryEvent, Session, SessionId,
-    SessionRegistry,
+    AdmissionConfig, AdmissionSnapshot, AgentEvent, HookEvent, RegistryEvent, ReviewItem, Session,
+    SessionId, SessionRegistry,
 };
 
 use persistence::StoreWriter;
@@ -72,6 +72,10 @@ pub enum Request {
     Ping,
     Close,
     Snapshot,
+    ReviewSnapshot,
+    MarkReviewed {
+        id: SessionId,
+    },
     Status {
         id: SessionId,
     },
@@ -147,6 +151,9 @@ pub enum Response {
         sessions: Vec<Session>,
         focused: Option<SessionId>,
         admission: AdmissionSnapshot,
+    },
+    ReviewSnapshot {
+        entries: Vec<ReviewItem>,
     },
     Status {
         session: Session,
@@ -462,6 +469,15 @@ fn dispatch(request: Request, registry: &SessionRegistry) -> Response {
             sessions: registry.snapshot(),
             focused: registry.focused(),
             admission: registry.admission_snapshot(),
+        },
+        Request::ReviewSnapshot => Response::ReviewSnapshot {
+            entries: registry.review_snapshot(),
+        },
+        Request::MarkReviewed { id } => match registry.mark_reviewed(&id) {
+            Ok(()) => Response::Ok,
+            Err(error) => Response::Error {
+                message: error.to_string(),
+            },
         },
         Request::Status { id } => match registry
             .snapshot()

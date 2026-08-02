@@ -11,7 +11,7 @@ use serde::Serialize;
 use tauri::{Emitter, Manager, State};
 use terminalai_core::agent::Agent;
 use terminalai_core::launch::LaunchSpec;
-use terminalai_core::{parse_hook, AdmissionSnapshot, Session, SessionId};
+use terminalai_core::{parse_hook, AdmissionSnapshot, ReviewItem, Session, SessionId};
 use terminalai_daemon::{DaemonClient, Request, Response, PROTOCOL_VERSION};
 
 struct AppState {
@@ -24,6 +24,11 @@ struct FleetSnapshot {
     sessions: Vec<Session>,
     focused: Option<SessionId>,
     admission: AdmissionSnapshot,
+}
+
+#[derive(Debug, Serialize)]
+struct ReviewSnapshot {
+    entries: Vec<ReviewItem>,
 }
 
 #[derive(Debug, Serialize)]
@@ -59,6 +64,23 @@ fn fleet_snapshot(state: State<'_, AppState>) -> Result<FleetSnapshot, String> {
         Response::Error { message } => Err(message),
         other => Err(format!("unexpected snapshot response: {other:?}")),
     }
+}
+
+#[tauri::command]
+fn review_snapshot(state: State<'_, AppState>) -> Result<ReviewSnapshot, String> {
+    match daemon_response(&state.client, Request::ReviewSnapshot)? {
+        Response::ReviewSnapshot { entries } => Ok(ReviewSnapshot { entries }),
+        Response::Error { message } => Err(message),
+        other => Err(format!("unexpected review response: {other:?}")),
+    }
+}
+
+#[tauri::command]
+fn mark_reviewed(id: SessionId, state: State<'_, AppState>) -> Result<(), String> {
+    require_ok(daemon_response(
+        &state.client,
+        Request::MarkReviewed { id },
+    )?)
 }
 
 #[tauri::command]
@@ -296,6 +318,8 @@ fn run_app() -> Result<(), String> {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             fleet_snapshot,
+            review_snapshot,
+            mark_reviewed,
             preview_launch,
             resolve_agent,
             launch_session,

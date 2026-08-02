@@ -19,6 +19,7 @@ use crate::hooks::{HookEvent, HookNotification, HookSignal};
 use crate::launch::{LaunchError, LaunchSpec, ResolvedCommand, Resume};
 use crate::notification::{NotificationCenter, NotificationChange, NotificationEvent};
 use crate::pty::{PtyError, PtySession, PtySize};
+use crate::review::{collect_review, ReviewItem};
 use crate::session::{
     fleet_order, RestartDecision, Session, SessionId, SessionPhase, SessionStatus,
 };
@@ -318,6 +319,31 @@ impl SessionRegistry {
         sessions
     }
 
+    /// Read a bounded, daemon-owned review snapshot without holding the
+    /// registry lock while Git inspects each session directory.
+    pub fn review_snapshot(&self) -> Vec<ReviewItem> {
+        let sessions: Vec<_> = {
+            let state = self.inner.state.lock().expect("registry poisoned");
+            state
+                .entries
+                .values()
+                .map(|entry| entry.session.clone())
+                .collect()
+        };
+        let mut reviews: Vec<_> = sessions
+            .iter()
+            .map(collect_review)
+            .filter(|item| item.files_changed > 0 || item.error.is_some())
+            .collect();
+        reviews.sort_by(|a, b| {
+            b.review_cost
+                .cmp(&a.review_cost)
+                .then_with(|| b.conflicts.len().cmp(&a.conflicts.len()))
+                .then_with(|| a.session_id.cmp(&b.session_id))
+        });
+        reviews
+    }
+
     pub fn focused(&self) -> Option<SessionId> {
         self.inner
             .state
@@ -551,6 +577,10 @@ impl SessionRegistry {
 
     pub fn mark_read(&self, id: &SessionId) -> Result<(), RegistryError> {
         self.update(id, |session| session.unread = false)
+    }
+
+    pub fn mark_reviewed(&self, id: &SessionId) -> Result<(), RegistryError> {
+        self.update(id, |session| session.reviewed = true)
     }
 
     /// Apply a normalized Claude/Codex hook to the matching live session.

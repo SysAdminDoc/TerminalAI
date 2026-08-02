@@ -45,8 +45,9 @@ Working today (`terminalai-probe`, headless):
 - Spawns and drives either agent on a live ConPTY
 - Runs a Tauri 2.11.5/WebView2 shell with the Catppuccin fleet list, launcher, presets and one
   reused xterm renderer
-- 91 default unit tests over the flag mapping, pty boundary, supervision state machine, registry,
-  daemon protocol, presets and fleet-row model; 93 with the opt-in app-server transport enabled
+- 95 default unit tests over the flag mapping, pty boundary, supervision state machine, registry,
+  review aggregation, daemon protocol, presets and fleet-row model; 97 with the opt-in app-server
+  transport enabled
 
 Not built yet: transcript file tailing and transcript-derived status/cost accounting. The experimental
 Codex app-server adapter is available only when the daemon is built with the explicit
@@ -74,6 +75,11 @@ field to focus the fleet filter.
 Each launch can reserve a deterministic block of service ports and run optional setup and teardown
 hooks from the project directory. Hooks and the agent receive `TERMINALAI_SESSION_ID`,
 `TERMINALAI_PORTS`, `TERMINALAI_PORT_BASE`, and the first port as `PORT`.
+
+The Review view is a daemon-owned, read-only Git diff surface across all sessions with changes.
+It ranks entries by file and line review cost, shows additions/deletions and conflict markers, caps
+diff payloads at 128 KiB per session, and lets the operator mark a session reviewed. It never stages,
+resolves, or commits changes.
 
 ## Requirements
 
