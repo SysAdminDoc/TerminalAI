@@ -156,6 +156,13 @@ impl PtySession {
         self.running.load(Ordering::SeqCst)
     }
 
+    /// Process identity for supervision and diagnostics. The child handle is
+    /// intentionally kept behind the same lock as wait/kill so a replacement
+    /// session can never be confused with an older PID.
+    pub fn pid(&self) -> Option<u32> {
+        self.child.lock().ok().and_then(|child| child.process_id())
+    }
+
     /// Exit status if the process has finished, `None` while it is still alive.
     pub fn try_wait(&self) -> Result<Option<u32>, PtyError> {
         let mut c = self.child.lock().map_err(|_| PtyError::Gone)?;

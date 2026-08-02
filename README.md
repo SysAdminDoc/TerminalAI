@@ -45,11 +45,11 @@ Working today (`terminalai-probe`, headless):
 - Spawns and drives either agent on a live ConPTY
 - Runs a Tauri 2.11.5/WebView2 shell with the Catppuccin fleet list, launcher, presets and one
   reused xterm renderer
-- 33 unit tests over the flag mapping, pty boundary, registry, daemon protocol, presets and
-  fleet-row model
+- 44 unit tests over the flag mapping, pty boundary, supervision state machine, registry, daemon
+  protocol, presets and fleet-row model
 
-Not built yet: hook registration, durable session restore and transcript-derived status/cost
-accounting. The named-pipe daemon keeps live sessions independent of the window; see
+Not built yet: consented hook installation, durable session restore, transcript file tailing and
+transcript-derived status/cost accounting. The named-pipe daemon keeps live sessions independent of the window; see
 [ROADMAP.md](ROADMAP.md).
 
 ## Requirements

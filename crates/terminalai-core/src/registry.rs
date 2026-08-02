@@ -9,13 +9,15 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use crate::agent::AgentBinary;
 use crate::hooks::{HookEvent, HookNotification, HookSignal};
-use crate::launch::{LaunchError, LaunchSpec};
+use crate::launch::{LaunchError, LaunchSpec, ResolvedCommand};
 use crate::pty::{PtyError, PtySession, PtySize};
-use crate::session::{fleet_order, Session, SessionId, SessionStatus};
+use crate::session::{
+    fleet_order, RestartDecision, Session, SessionId, SessionPhase, SessionStatus,
+};
 
 /// Maximum output retained per session in memory. The future daemon can spill
 /// older bytes to disk without changing the registry-facing API.
@@ -51,8 +53,11 @@ pub enum RegistryError {
 struct Entry {
     session: Session,
     spec: LaunchSpec,
+    command: ResolvedCommand,
     pty: Option<Arc<PtySession>>,
     scrollback: RingBuffer,
+    generation: u64,
+    stop_requested: bool,
 }
 
 struct State {
@@ -147,36 +152,35 @@ impl SessionRegistry {
                 Entry {
                     session: Session::new(id.clone(), &spec),
                     spec: spec.clone(),
+                    command: command.clone(),
                     pty: None,
                     scrollback: RingBuffer::default(),
+                    generation: 1,
+                    stop_requested: false,
                 },
             );
             id
         };
         self.emit_session(&id);
 
-        let weak = Arc::downgrade(&self.inner);
-        let callback_id = id.clone();
-        let pty = match PtySession::spawn(&command, crate::pty::default_size(), move |chunk| {
-            if let Some(inner) = weak.upgrade() {
-                handle_output(&inner, &callback_id, chunk);
-            }
-        }) {
-            Ok(pty) => Arc::new(pty),
+        let generation = 1;
+        let pty = match self.spawn_pty(&id, &command, generation) {
+            Ok(pty) => pty,
             Err(error) => {
                 self.remove_entry(&id);
-                return Err(error.into());
+                return Err(error);
             }
         };
 
         {
             let mut state = self.inner.state.lock().expect("registry poisoned");
             if let Some(entry) = state.entries.get_mut(&id) {
+                entry.session.mark_spawned_at(pty.pid(), SystemTime::now());
                 entry.pty = Some(pty.clone());
             }
         }
         self.emit_session(&id);
-        self.spawn_monitor(id.clone(), pty);
+        self.spawn_monitor(id.clone(), pty, generation);
         Ok(id)
     }
 
@@ -191,9 +195,34 @@ impl SessionRegistry {
     }
 
     pub fn kill(&self, id: &SessionId) -> Result<(), RegistryError> {
-        let pty = self.pty(id)?;
-        pty.kill()?;
-        self.mark_exited(id);
+        let (pty, generation) = {
+            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let entry = state
+                .entries
+                .get_mut(id)
+                .ok_or_else(|| RegistryError::Missing(id.clone()))?;
+            entry.stop_requested = true;
+            let Some(pty) = entry.pty.clone() else {
+                if entry.session.phase == SessionPhase::Backoff {
+                    entry.generation = entry.generation.saturating_add(1);
+                    entry.session.mark_resurrectable_at(None, SystemTime::now());
+                    drop(state);
+                    self.emit_session(id);
+                    return Ok(());
+                }
+                return Err(RegistryError::Missing(id.clone()));
+            };
+            (pty, entry.generation)
+        };
+        if let Err(error) = pty.kill() {
+            if let Ok(mut state) = self.inner.state.lock() {
+                if let Some(entry) = state.entries.get_mut(id) {
+                    entry.stop_requested = false;
+                }
+            }
+            return Err(error.into());
+        }
+        self.mark_process_exit(id, generation, None);
         Ok(())
     }
 
@@ -220,7 +249,7 @@ impl SessionRegistry {
                         .iter()
                         .find(|(_, entry)| {
                             entry.session.agent == event.agent
-                                && Some(session_id) == entry.session.native_id.as_deref()
+                                && Some(session_id) == entry.session.resume_id.as_deref()
                         })
                         .map(|(id, _)| id.clone())
                 })
@@ -232,7 +261,7 @@ impl SessionRegistry {
                         .find(|(_, entry)| {
                             entry.session.agent == event.agent
                                 && event.cwd.as_ref() == Some(&entry.session.cwd)
-                                && entry.session.native_id.is_none()
+                                && entry.session.resume_id.is_none()
                                 && entry.session.status != SessionStatus::Exited
                         })
                         .map(|(id, _)| id.clone())
@@ -245,8 +274,8 @@ impl SessionRegistry {
             let Some(entry) = state.entries.get_mut(&id) else {
                 return false;
             };
-            if let Some(native_id) = event.session_id {
-                entry.session.native_id = Some(native_id);
+            if let Some(resume_id) = event.session_id {
+                entry.session.resume_id = Some(resume_id);
             }
             match event.signal {
                 HookSignal::SessionStart => {}
@@ -334,11 +363,14 @@ impl SessionRegistry {
 
     pub fn shutdown(&self) {
         let ptys: Vec<_> = {
-            let state = self.inner.state.lock().expect("registry poisoned");
+            let mut state = self.inner.state.lock().expect("registry poisoned");
             state
                 .entries
-                .values()
-                .filter_map(|entry| entry.pty.clone())
+                .values_mut()
+                .filter_map(|entry| {
+                    entry.stop_requested = true;
+                    entry.pty.clone()
+                })
                 .collect()
         };
         for pty in ptys {
@@ -377,6 +409,22 @@ impl SessionRegistry {
         Ok(())
     }
 
+    fn spawn_pty(
+        &self,
+        id: &SessionId,
+        command: &ResolvedCommand,
+        generation: u64,
+    ) -> Result<Arc<PtySession>, RegistryError> {
+        let weak = Arc::downgrade(&self.inner);
+        let callback_id = id.clone();
+        let pty = PtySession::spawn(command, crate::pty::default_size(), move |chunk| {
+            if let Some(inner) = weak.upgrade() {
+                handle_output(&inner, &callback_id, generation, chunk);
+            }
+        })?;
+        Ok(Arc::new(pty))
+    }
+
     fn emit_session(&self, id: &SessionId) {
         let session = {
             let state = self.inner.state.lock().expect("registry poisoned");
@@ -407,38 +455,138 @@ impl SessionRegistry {
         }
     }
 
-    fn mark_exited(&self, id: &SessionId) {
-        let changed = {
+    fn mark_process_exit(&self, id: &SessionId, generation: u64, exit_code: Option<u32>) {
+        let restart = {
             let mut state = self.inner.state.lock().expect("registry poisoned");
             let Some(entry) = state.entries.get_mut(id) else {
                 return;
             };
-            if entry.session.status == SessionStatus::Exited {
-                false
+            if entry.generation != generation {
+                return;
+            }
+            entry.pty = None;
+            entry.generation = entry.generation.saturating_add(1);
+            let now = SystemTime::now();
+            if entry.stop_requested {
+                entry.stop_requested = false;
+                entry.session.mark_resurrectable_at(exit_code, now);
+                None
             } else {
-                entry.session.set_status(SessionStatus::Exited);
-                true
+                match entry.session.schedule_restart_at(exit_code, now) {
+                    RestartDecision::Backoff(delay) => Some((entry.generation, delay)),
+                    RestartDecision::Failed => None,
+                }
             }
         };
-        if changed {
-            self.emit_session(id);
+        self.emit_session(id);
+        if let Some((generation, delay)) = restart {
+            self.schedule_restart(id.clone(), generation, delay);
         }
     }
 
-    fn spawn_monitor(&self, id: SessionId, pty: Arc<PtySession>) {
+    fn schedule_restart(&self, id: SessionId, generation: u64, delay: Duration) {
+        let registry = self.clone();
+        let _ = thread::Builder::new()
+            .name(format!("terminalai-restart-{id}"))
+            .spawn(move || {
+                thread::sleep(delay);
+                registry.restart(id, generation);
+            });
+    }
+
+    fn restart(&self, id: SessionId, pending_generation: u64) {
+        let (command, generation) = {
+            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let Some(entry) = state.entries.get_mut(&id) else {
+                return;
+            };
+            if entry.generation != pending_generation
+                || entry.pty.is_some()
+                || entry.stop_requested
+                || entry.session.phase != SessionPhase::Backoff
+            {
+                return;
+            }
+            entry.generation = entry.generation.saturating_add(1);
+            let generation = entry.generation;
+            entry.session.begin_restart_at(SystemTime::now());
+            (entry.command.clone(), generation)
+        };
+        self.emit_session(&id);
+
+        let pty = match self.spawn_pty(&id, &command, generation) {
+            Ok(pty) => pty,
+            Err(_) => {
+                self.restart_spawn_failed(&id, generation);
+                return;
+            }
+        };
+
+        let accepted = {
+            let mut state = self.inner.state.lock().expect("registry poisoned");
+            match state.entries.get_mut(&id) {
+                None => false,
+                Some(entry)
+                    if entry.generation != generation
+                        || entry.stop_requested
+                        || entry.session.phase != SessionPhase::Starting =>
+                {
+                    false
+                }
+                Some(entry) => {
+                    entry.session.mark_spawned_at(pty.pid(), SystemTime::now());
+                    entry.pty = Some(pty.clone());
+                    true
+                }
+            }
+        };
+        if !accepted {
+            let _ = pty.kill();
+            return;
+        }
+        self.emit_session(&id);
+        self.spawn_monitor(id, pty, generation);
+    }
+
+    fn restart_spawn_failed(&self, id: &SessionId, generation: u64) {
+        let restart = {
+            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let Some(entry) = state.entries.get_mut(id) else {
+                return;
+            };
+            if entry.generation != generation {
+                return;
+            }
+            entry.generation = entry.generation.saturating_add(1);
+            match entry.session.schedule_restart_at(None, SystemTime::now()) {
+                RestartDecision::Backoff(delay) => Some((entry.generation, delay)),
+                RestartDecision::Failed => None,
+            }
+        };
+        self.emit_session(id);
+        if let Some((generation, delay)) = restart {
+            self.schedule_restart(id.clone(), generation, delay);
+        }
+    }
+
+    fn spawn_monitor(&self, id: SessionId, pty: Arc<PtySession>, generation: u64) {
         let registry = self.clone();
         let _ = thread::Builder::new()
             .name(format!("terminalai-session-{id}"))
             .spawn(move || loop {
                 match pty.try_wait() {
-                    Ok(Some(_)) | Err(_) => {
-                        registry.mark_exited(&id);
+                    Ok(Some(status)) => {
+                        registry.mark_process_exit(&id, generation, Some(status));
+                        break;
+                    }
+                    Err(_) => {
+                        registry.mark_process_exit(&id, generation, None);
                         break;
                     }
                     Ok(None) => {}
                 }
                 if !pty.is_running() {
-                    registry.mark_exited(&id);
+                    registry.mark_process_exit(&id, generation, None);
                     break;
                 }
                 thread::sleep(Duration::from_millis(50));
@@ -446,13 +594,16 @@ impl SessionRegistry {
     }
 }
 
-fn handle_output(inner: &Arc<Inner>, id: &SessionId, bytes: &[u8]) {
+fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u8]) {
     let data = String::from_utf8_lossy(bytes).into_owned();
     let (event, session) = {
         let mut state = inner.state.lock().expect("registry poisoned");
         let Some(entry) = state.entries.get_mut(id) else {
             return;
         };
+        if entry.generation != generation {
+            return;
+        }
         entry.scrollback.push(bytes);
         if let Some(line) = entry.scrollback.last_line() {
             entry.session.set_last_line(&line);
@@ -549,9 +700,16 @@ mod tests {
                 session.id.clone(),
                 Entry {
                     session,
+                    command: ResolvedCommand {
+                        program: PathBuf::from("test-agent"),
+                        args: Vec::new(),
+                        cwd: cwd.clone(),
+                    },
                     spec,
                     pty: None,
                     scrollback: RingBuffer::default(),
+                    generation: 1,
+                    stop_requested: false,
                 },
             );
         }
@@ -575,7 +733,7 @@ mod tests {
     }
 
     #[test]
-    fn hooks_bind_native_id_and_distinguish_attention_states() {
+    fn hooks_bind_resume_id_and_distinguish_attention_states() {
         let registry = SessionRegistry::new();
         let cwd = Path::new(".").to_path_buf();
         let spec = spec_for(Agent::Claude, &cwd);
@@ -591,9 +749,16 @@ mod tests {
                 id.clone(),
                 Entry {
                     session,
+                    command: ResolvedCommand {
+                        program: PathBuf::from("test-agent"),
+                        args: Vec::new(),
+                        cwd: cwd.clone(),
+                    },
                     spec,
                     pty: None,
                     scrollback: RingBuffer::default(),
+                    generation: 1,
+                    stop_requested: false,
                 },
             );
 
@@ -612,7 +777,7 @@ mod tests {
             },
         }));
         let session = registry.snapshot().pop().expect("session");
-        assert_eq!(session.native_id.as_deref(), Some("native-1"));
+        assert_eq!(session.resume_id.as_deref(), Some("native-1"));
         assert_eq!(session.status, SessionStatus::NeedsApproval);
         assert!(session.unread);
 
@@ -634,5 +799,56 @@ mod tests {
             cwd: Some(PathBuf::from(".")),
             signal: HookSignal::Stop,
         }));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn exited_process_enters_backoff_and_restarts_with_new_supervision_state() {
+        use std::time::Instant;
+
+        let registry = SessionRegistry::new();
+        let spec = LaunchSpec {
+            agent: Agent::Claude,
+            cwd: std::env::current_dir().expect("test cwd"),
+            extra_args: vec!["/c".into(), "exit".into(), "7".into()],
+            ..LaunchSpec::default()
+        };
+        let id = registry
+            .launch(
+                spec,
+                AgentBinary {
+                    agent: Agent::Claude,
+                    path: PathBuf::from("cmd.exe"),
+                    origin: Origin::Path,
+                },
+            )
+            .expect("spawn short-lived process");
+        assert!(registry.snapshot()[0].pid.is_some());
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut saw_backoff = false;
+        while Instant::now() < deadline {
+            let session = registry
+                .snapshot()
+                .into_iter()
+                .find(|session| session.id == id)
+                .expect("session remains tracked");
+            if session.restarts >= 1 {
+                saw_backoff |= session.phase == SessionPhase::Backoff;
+                assert_eq!(session.last_exit_code, Some(7));
+            }
+            if session.restarts >= 2 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let session = registry
+            .snapshot()
+            .into_iter()
+            .find(|session| session.id == id)
+            .expect("session remains tracked");
+        assert!(saw_backoff, "unexpected supervision state: {session:?}");
+        assert!(session.restarts >= 2, "restart did not occur: {session:?}");
+        registry.shutdown();
     }
 }

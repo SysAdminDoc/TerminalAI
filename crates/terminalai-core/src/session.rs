@@ -15,6 +15,13 @@ use std::time::{Duration, SystemTime};
 use crate::agent::Agent;
 use crate::launch::{Effort, LaunchSpec};
 
+/// Maximum number of automatic restart attempts for one session. A session
+/// that keeps failing after this limit stays failed until the operator revives
+/// it explicitly.
+pub const MAX_RESTARTS: u32 = 5;
+pub const RESTART_BACKOFF_BASE: Duration = Duration::from_millis(250);
+pub const RESTART_BACKOFF_MAX: Duration = Duration::from_secs(30);
+
 #[derive(
     Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
@@ -77,6 +84,38 @@ impl SessionStatus {
     }
 }
 
+/// What the agent is doing, independent of whether its process is healthy.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionPhase {
+    Starting,
+    Idle,
+    Working,
+    AwaitingInput,
+    NeedsApproval,
+    Backoff,
+    Failed,
+    Resurrectable,
+}
+
+/// Health of the process and its supervision boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SessionHealth {
+    Starting,
+    Healthy,
+    Degraded,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestartDecision {
+    Backoff(Duration),
+    Failed,
+}
+
 /// One row of the fleet list.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Session {
@@ -88,11 +127,20 @@ pub struct Session {
     pub model: Option<String>,
     pub effort: Option<Effort>,
     pub status: SessionStatus,
+    pub phase: SessionPhase,
+    pub health: SessionHealth,
+    pub restarts: u32,
+    pub last_exit_code: Option<u32>,
+    pub backoff_until: Option<SystemTime>,
+    pub state_since: SystemTime,
+    pub pid: Option<u32>,
     /// Last line of agent output, trimmed for the row.
     pub last_line: String,
     /// Native session id, once the agent reports one. Enables resume and fork.
-    pub native_id: Option<String>,
+    pub resume_id: Option<String>,
     pub started_at: SystemTime,
+    /// Retained as the raw-I/O status clock for existing clients. Supervision
+    /// transitions use `state_since`.
     pub status_since: SystemTime,
     /// Accumulated spend, when the agent reports it.
     pub cost_usd: Option<f64>,
@@ -114,8 +162,15 @@ impl Session {
             model: spec.model.clone(),
             effort: spec.effort,
             status: SessionStatus::Starting,
+            phase: SessionPhase::Starting,
+            health: SessionHealth::Starting,
+            restarts: 0,
+            last_exit_code: None,
+            backoff_until: None,
+            state_since: now,
+            pid: None,
             last_line: String::new(),
-            native_id: None,
+            resume_id: None,
             started_at: now,
             status_since: now,
             cost_usd: None,
@@ -137,7 +192,98 @@ impl Session {
             self.unread = true;
         }
         self.status = status;
-        self.status_since = SystemTime::now();
+        let now = SystemTime::now();
+        self.status_since = now;
+        self.state_since = now;
+        self.phase = match status {
+            SessionStatus::Starting => SessionPhase::Starting,
+            SessionStatus::Idle => SessionPhase::Idle,
+            SessionStatus::Thinking | SessionStatus::Working => SessionPhase::Working,
+            SessionStatus::NeedsYou | SessionStatus::AwaitingInput => SessionPhase::AwaitingInput,
+            SessionStatus::NeedsApproval => SessionPhase::NeedsApproval,
+            SessionStatus::Exited => SessionPhase::Resurrectable,
+        };
+        self.health = match status {
+            SessionStatus::Starting => SessionHealth::Starting,
+            SessionStatus::Exited => SessionHealth::Degraded,
+            _ if self.pid.is_some() => SessionHealth::Healthy,
+            _ => SessionHealth::Degraded,
+        };
+    }
+
+    /// Record a process that has been spawned. The agent may still be in its
+    /// startup phase, but the supervision boundary is now healthy.
+    pub fn mark_spawned_at(&mut self, pid: Option<u32>, now: SystemTime) {
+        self.pid = pid;
+        self.phase = SessionPhase::Starting;
+        self.health = SessionHealth::Healthy;
+        self.backoff_until = None;
+        self.state_since = now;
+        self.status = SessionStatus::Starting;
+        self.status_since = now;
+    }
+
+    pub fn begin_restart_at(&mut self, now: SystemTime) {
+        self.pid = None;
+        self.phase = SessionPhase::Starting;
+        self.health = SessionHealth::Starting;
+        self.backoff_until = None;
+        self.state_since = now;
+        self.status = SessionStatus::Starting;
+        self.status_since = now;
+    }
+
+    /// Stop without automatically restarting. The row remains available for a
+    /// future explicit revive operation.
+    pub fn mark_resurrectable_at(&mut self, exit_code: Option<u32>, now: SystemTime) {
+        self.pid = None;
+        if exit_code.is_some() {
+            self.last_exit_code = exit_code;
+        }
+        self.phase = SessionPhase::Resurrectable;
+        self.health = SessionHealth::Degraded;
+        self.backoff_until = None;
+        self.state_since = now;
+        self.status = SessionStatus::Exited;
+        self.status_since = now;
+    }
+
+    /// Schedule one automatic restart using exponential backoff. The final
+    /// failed attempt transitions to a terminal `Failed` state.
+    pub fn schedule_restart_at(
+        &mut self,
+        exit_code: Option<u32>,
+        now: SystemTime,
+    ) -> RestartDecision {
+        self.pid = None;
+        if exit_code.is_some() {
+            self.last_exit_code = exit_code;
+        }
+        if self.restarts >= MAX_RESTARTS {
+            self.phase = SessionPhase::Failed;
+            self.health = SessionHealth::Failed;
+            self.backoff_until = None;
+            self.state_since = now;
+            self.status = SessionStatus::Exited;
+            self.status_since = now;
+            return RestartDecision::Failed;
+        }
+
+        self.restarts += 1;
+        let delay = restart_backoff(self.restarts);
+        self.phase = SessionPhase::Backoff;
+        self.health = SessionHealth::Degraded;
+        self.backoff_until = Some(now + delay);
+        self.state_since = now;
+        self.status = SessionStatus::Exited;
+        self.status_since = now;
+        RestartDecision::Backoff(delay)
+    }
+
+    pub fn in_state_for(&self) -> Duration {
+        SystemTime::now()
+            .duration_since(self.state_since)
+            .unwrap_or_default()
     }
 
     /// How long the session has held its current status — the number that tells
@@ -151,6 +297,14 @@ impl Session {
     pub fn set_last_line(&mut self, line: &str) {
         self.last_line = trim_for_row(line, 160);
     }
+}
+
+fn restart_backoff(attempt: u32) -> Duration {
+    let exponent = attempt.saturating_sub(1).min(63);
+    let multiplier = 1u128 << exponent;
+    let millis = RESTART_BACKOFF_BASE.as_millis().saturating_mul(multiplier);
+    let capped = millis.min(RESTART_BACKOFF_MAX.as_millis());
+    Duration::from_millis(capped as u64)
 }
 
 /// Sort key for the fleet list: attention first, then longest-waiting.
@@ -250,5 +404,63 @@ mod tests {
     fn unnamed_sessions_borrow_the_folder_name() {
         let spec = spec_for(Agent::Codex, Path::new(r"C:\Users\me\repos\TerminalAI"));
         assert_eq!(Session::new(SessionId::new(2), &spec).name, "TerminalAI");
+    }
+
+    #[test]
+    fn supervision_starts_explicitly_and_tracks_process_identity() {
+        let spec = spec_for(Agent::Claude, Path::new("."));
+        let mut session = Session::new(SessionId::new(3), &spec);
+        assert_eq!(session.phase, SessionPhase::Starting);
+        assert_eq!(session.health, SessionHealth::Starting);
+        assert_eq!(session.restarts, 0);
+        assert_eq!(session.pid, None);
+
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(10);
+        session.mark_spawned_at(Some(42), now);
+        assert_eq!(session.pid, Some(42));
+        assert_eq!(session.health, SessionHealth::Healthy);
+        assert_eq!(session.state_since, now);
+    }
+
+    #[test]
+    fn restart_backoff_is_exponential_and_eventually_terminal() {
+        let spec = spec_for(Agent::Claude, Path::new("."));
+        let mut session = Session::new(SessionId::new(4), &spec);
+        let mut now = SystemTime::UNIX_EPOCH;
+        for expected in [250, 500, 1_000, 2_000, 4_000] {
+            assert_eq!(
+                session.schedule_restart_at(Some(17), now),
+                RestartDecision::Backoff(Duration::from_millis(expected))
+            );
+            assert_eq!(session.phase, SessionPhase::Backoff);
+            assert_eq!(session.health, SessionHealth::Degraded);
+            assert_eq!(
+                session.backoff_until,
+                Some(now + Duration::from_millis(expected))
+            );
+            now += Duration::from_millis(expected);
+        }
+        assert_eq!(session.restarts, MAX_RESTARTS);
+        assert_eq!(
+            session.schedule_restart_at(Some(99), now),
+            RestartDecision::Failed
+        );
+        assert_eq!(session.phase, SessionPhase::Failed);
+        assert_eq!(session.health, SessionHealth::Failed);
+        assert_eq!(session.last_exit_code, Some(99));
+        assert_eq!(session.backoff_until, None);
+    }
+
+    #[test]
+    fn manual_exit_is_resurrectable_without_restart() {
+        let spec = spec_for(Agent::Codex, Path::new("."));
+        let mut session = Session::new(SessionId::new(5), &spec);
+        session.mark_spawned_at(Some(7), SystemTime::UNIX_EPOCH);
+        session.mark_resurrectable_at(Some(3), SystemTime::UNIX_EPOCH + Duration::from_secs(1));
+        assert_eq!(session.phase, SessionPhase::Resurrectable);
+        assert_eq!(session.health, SessionHealth::Degraded);
+        assert_eq!(session.pid, None);
+        assert_eq!(session.last_exit_code, Some(3));
+        assert_eq!(session.restarts, 0);
     }
 }

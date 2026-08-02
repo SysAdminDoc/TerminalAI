@@ -22,7 +22,10 @@ pub use hooks::{HookEvent, HookNotification, HookSignal};
 pub use launch::{Effort, LaunchError, LaunchSpec, Permission, ResolvedCommand, Resume, Sandbox};
 pub use pty::{PtySession, PtySize};
 pub use registry::{RegistryError, RegistryEvent, SessionRegistry};
-pub use session::{Session, SessionId, SessionStatus};
+pub use session::{
+    RestartDecision, Session, SessionHealth, SessionId, SessionPhase, SessionStatus, MAX_RESTARTS,
+    RESTART_BACKOFF_BASE, RESTART_BACKOFF_MAX,
+};
 pub use transcript::{
     PricingTable, TokenRates, TranscriptAccumulator, TranscriptError, UsageTotals,
 };

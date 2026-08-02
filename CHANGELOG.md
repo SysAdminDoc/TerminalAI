@@ -17,6 +17,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   `terminalai-probe hook` delivery and separate approval/input attention states.
 - `terminalai_core::transcript::TranscriptAccumulator` — nested usage extraction, requestId
   deduplication, and cost calculation through a caller-pinned pricing-table version.
+- Explicit session supervision state now separates agent phase from process health, exposes PID,
+  resume id, exit metadata and restart counters, and retries unexpected exits with exponential
+  backoff before entering a terminal failed state.
 - The fleet now has a needs-input filter and per-row reply controls that send bracketed paste
   through the daemon without switching terminal focus.
 - Strict agent/binary matching before a process is spawned, preventing a launcher configuration

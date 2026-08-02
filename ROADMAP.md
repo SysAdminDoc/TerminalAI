@@ -83,13 +83,6 @@ Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher contin
   Acceptance: exactly one `Terminal` instance plus one per pinned pane; switching focus does `reset()` + replay from the Rust ring buffer; background sessions hold a `vte` grid only.
   Complexity: L
 
-- [ ] R-13 · P1 — Real supervision state, separate from raw I/O
-  Why: `SessionStatus` conflates "what the agent is doing" with "is this session healthy", so a crash-looping session is indistinguishable from a busy one.
-  Evidence: systemd `Restart`/`StartLimitBurst`/`RestartSteps`; Docker `start_period`/`retries`; RESEARCH.md "Refactor candidates".
-  Touches: `crates/terminalai-core/src/session.rs`, `pty.rs`, `registry.rs`
-  Acceptance: a session exposes `phase` (starting|idle|working|awaiting-input|needs-approval|backoff|failed|resurrectable), `health`, `restarts`, `last_exit_code`, `backoff_until`, `state_since`, `pid`, `resume_id`; restart backoff is exponential and gives up into a terminal failed state.
-  Complexity: M
-
 - [ ] R-14 · P1 — Three-tier restore ladder
   Why: no design can re-parent a live process, and pretending otherwise loses work; both target CLIs resume natively, which makes the middle tier unusually strong here.
   Evidence: Zellij session resurrection (commands are never auto-run); tmux-resurrect program whitelist; VS Code `persistentSessionReviveProcess`.
