@@ -1,0 +1,32 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Node / Tauri frontend
+node_modules/
+dist/
+.vite/
+src-tauri/target/
+src-tauri/gen/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Agent working files
+CLAUDE.md
+CODEX_CHANGELOG.md
+.claude/
+AGENTS.md
+*.bak
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Local config and captures
+*.local.toml
+screenshots/tmp/

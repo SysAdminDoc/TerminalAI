@@ -1,0 +1,16 @@
+[package]
+name = "terminalai-probe"
+description = "Headless harness that proves TerminalAI can find and drive the agent CLIs on this machine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "terminalai-probe"
+path = "src/main.rs"
+
+[dependencies]
+terminalai-core.workspace = true
