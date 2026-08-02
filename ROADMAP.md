@@ -97,13 +97,6 @@ Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher contin
   Acceptance: reattach (process alive, replay bounded scrollback) → revive (`claude --resume <id>` / `codex resume <id>`, offered as an explicit per-row action, never automatic) → archive (layout + cwd + command only); session state serializes to a human-readable file on a background thread.
   Complexity: L
 
-- [ ] R-15 · P1 — Approvals inbox with in-list replies
-  Why: the highest-value unbuilt feature in the survey; today answering one prompt costs a full context switch into a pane.
-  Evidence: claude-squad#312 exists only as the author's private fork; octomux ships a cross-session permission inbox; "which agent needs me" is the #3 recurring community pain.
-  Touches: fleet list component, daemon input path
-  Acceptance: a filtered view shows only sessions awaiting input or approval; the user can answer or send a short reply from the row without focusing the session, including bracketed paste; per-row buttons rather than bare keystrokes, per the repo's no-shortcuts rule.
-  Complexity: L
-
 - [ ] R-16 · P1 — Notification lifecycle: dedupe, auto-retract, grace periods
   Why: a stale "needs input" marker is worse than none, and per-event toasts across 20 sessions are unusable.
   Evidence: PagerDuty `dedup_key` + auto-resolve; Slack per-channel batching; Docker `start_period`; notification fatigue named as the failure mode of the obvious fix.

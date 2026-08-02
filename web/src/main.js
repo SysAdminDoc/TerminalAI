@@ -37,6 +37,7 @@ const state = {
   focused: null,
   presets: [],
   extraDirs: [],
+  attentionOnly: false,
   terminal: null,
   fitAddon: null,
   previewTimer: null,
@@ -111,6 +112,7 @@ function renderRows() {
   renderSummary();
   const filter = $("filter-input").value.trim().toLowerCase();
   const sessions = sortedSessions().filter((session) => {
+    if (state.attentionOnly && !isAttention(session)) return false;
     if (!filter) return true;
     return [session.name, session.cwd, session.agent, session.model, session.last_line]
       .filter(Boolean)
@@ -127,10 +129,24 @@ function renderRows() {
     for (const button of row.querySelectorAll("button[data-action]")) {
       button.addEventListener("click", (event) => {
         event.stopPropagation();
-        rowAction(button.dataset.action, row.dataset.id);
+        rowAction(button.dataset.action, row.dataset.id, row);
+      });
+    }
+    const reply = row.querySelector("input[data-reply]");
+    if (reply) {
+      reply.addEventListener("click", (event) => event.stopPropagation());
+      reply.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          rowAction("reply", row.dataset.id, row);
+        }
       });
     }
   }
+}
+
+function isAttention(session) {
+  return ["needs-approval", "awaiting-input", "needs-you"].includes(session.status);
 }
 
 function renderRow(session) {
@@ -141,11 +157,13 @@ function renderRow(session) {
   const model = session.model || "default";
   const effort = session.effort || "—";
   const pinLabel = session.pinned ? "Unpin" : "Pin";
+  const reply = isAttention(session) ? `<div class="row-reply"><input data-reply type="text" maxlength="500" placeholder="Reply without opening terminal" aria-label="Reply to ${escapeHtml(session.name)}" /><button type="button" data-action="reply" class="row-reply-send" title="Send reply">↵</button></div>` : "";
   return `<article class="fleet-row${active}${unread}" data-id="${escapeHtml(session.id)}" role="listitem" tabindex="0" aria-label="${escapeHtml(`${session.name}, ${meta.label}`)}">
     <div class="row-identity"><span class="status-glyph tone-${meta.tone}" title="${meta.label}">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name">${escapeHtml(session.name)}${session.unread ? '<span class="unread-dot" title="Unread attention"></span>' : ""}</div><div class="row-folder">${escapeHtml(folderLabel(session.cwd))}<span class="row-status-label">${meta.label}</span></div></div></div>
     <div class="row-model"><span class="agent-badge agent-${session.agent}">${agentLabel}</span><span class="model-name">${escapeHtml(model)}</span><span class="effort-chip">${escapeHtml(effort)}</span></div>
     <div class="row-dwell"><span>${dwell(session.status_since)}</span><small>${escapeHtml(session.last_line || "No output yet")}</small></div>
     <div class="row-actions"><button type="button" data-action="pin" class="row-action ${session.pinned ? "row-action-active" : ""}" title="${pinLabel}">${session.pinned ? "◆" : "◇"}</button><button type="button" data-action="focus" class="row-action" title="Focus terminal">↗</button><button type="button" data-action="kill" class="row-action row-action-danger" title="Stop session">×</button></div>
+    ${reply}
   </article>`;
 }
 
@@ -226,10 +244,20 @@ async function hydrateTerminal(id) {
   renderRows();
 }
 
-async function rowAction(action, id) {
+async function rowAction(action, id, row = null) {
   try {
     if (action === "pin") await invoke("toggle_pin", { id });
     if (action === "focus") await focusSession(id);
+    if (action === "reply") {
+      const input = row?.querySelector("input[data-reply]");
+      const reply = input?.value.trim();
+      if (!reply) return;
+      const bracketedPaste = `\x1b[200~${reply}\x1b[201~\r`;
+      await invoke("write_session", { id, data: bracketedPaste });
+      await invoke("mark_read", { id });
+      input.value = "";
+      showToast("Reply sent", "success");
+    }
     if (action === "kill") {
       await invoke("kill_session", { id });
       showToast("Stop signal sent", "success");
@@ -451,6 +479,12 @@ function bindEvents() {
   $("empty-new-button").addEventListener("click", openLauncher);
   $("refresh-button").addEventListener("click", loadSnapshot);
   $("filter-input").addEventListener("input", renderRows);
+  $("attention-filter").addEventListener("click", () => {
+    state.attentionOnly = !state.attentionOnly;
+    $("attention-filter").setAttribute("aria-pressed", String(state.attentionOnly));
+    $("attention-filter").classList.toggle("attention-filter-active", state.attentionOnly);
+    renderRows();
+  });
   $("agent-input").addEventListener("change", () => {
     syncAgentFields();
     schedulePreview();
