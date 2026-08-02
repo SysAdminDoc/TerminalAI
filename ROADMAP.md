@@ -51,13 +51,6 @@ Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher contin
 
 ### P2
 
-- [ ] R-20 · P2 — Scriptable headless control plane
-  Why: every OSS peer is GUI-only and every vendor charges for an API; it is also how TerminalAI becomes usable from the user's own automation.
-  Evidence: Conductor's API is Pro-only; Warp's analytics API is Enterprise; RESEARCH.md paywall analysis item 5.
-  Touches: `crates/terminalai-probe` (promote to a real CLI), daemon pipe protocol
-  Acceptance: `terminalai list|start|stop|send|status --json` drives the daemon over the named pipe with stable JSON output; the GUI uses the same protocol and holds no privileged path.
-  Complexity: M
-
 - [ ] R-21 · P2 — Fleet row information design
   Why: the row is the product; k9s is the best-studied case of supervising many similar things at a glance.
   Evidence: k9s pod view — compound fractions (`READY 1/1`), a first-class `RESTARTS` column, relative age, glyph decorators, phase-derived colour, `/` filter, and separate aggregate views rather than a wider table. agent-deck's status sigils (`!` `@` `#` `$`).

@@ -45,8 +45,8 @@ Working today (`terminalai-probe`, headless):
 - Spawns and drives either agent on a live ConPTY
 - Runs a Tauri 2.11.5/WebView2 shell with the Catppuccin fleet list, launcher, presets and one
   reused xterm renderer
-- 79 default unit tests over the flag mapping, pty boundary, supervision state machine, registry,
-  daemon protocol, presets and fleet-row model; 81 with the opt-in app-server transport enabled
+- 84 default unit tests over the flag mapping, pty boundary, supervision state machine, registry,
+  daemon protocol, presets and fleet-row model; 86 with the opt-in app-server transport enabled
 
 Not built yet: transcript file tailing and transcript-derived status/cost accounting. The experimental
 Codex app-server adapter is available only when the daemon is built with the explicit
@@ -105,6 +105,13 @@ process, so everything that touches the machine is exercised here first.
 ```powershell
 # Where are the agents?
 terminalai-probe resolve
+
+# Drive the daemon headlessly; each --json command emits one stable JSON object.
+terminalai-probe list --json
+terminalai-probe start claude --cwd . --prompt "run the tests" --json
+terminalai-probe status s0001 --json
+terminalai-probe send s0001 "focus on failing tests first" --json
+terminalai-probe stop s0001 --json
 
 # What would this launcher choice actually run?
 terminalai-probe preview claude --model opus --effort xhigh --permission plan

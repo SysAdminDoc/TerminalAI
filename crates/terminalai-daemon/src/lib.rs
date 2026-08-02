@@ -72,6 +72,9 @@ pub enum Request {
     Ping,
     Close,
     Snapshot,
+    Status {
+        id: SessionId,
+    },
     Resolve {
         agent: Agent,
         configured_path: Option<PathBuf>,
@@ -139,6 +142,10 @@ pub enum Response {
     Snapshot {
         sessions: Vec<Session>,
         focused: Option<SessionId>,
+        admission: AdmissionSnapshot,
+    },
+    Status {
+        session: Session,
         admission: AdmissionSnapshot,
     },
     Resolved {
@@ -451,6 +458,19 @@ fn dispatch(request: Request, registry: &SessionRegistry) -> Response {
             sessions: registry.snapshot(),
             focused: registry.focused(),
             admission: registry.admission_snapshot(),
+        },
+        Request::Status { id } => match registry
+            .snapshot()
+            .into_iter()
+            .find(|session| session.id == id)
+        {
+            Some(session) => Response::Status {
+                session,
+                admission: registry.admission_snapshot(),
+            },
+            None => Response::Error {
+                message: format!("session does not exist: {id}"),
+            },
         },
         Request::Resolve {
             agent,
@@ -836,6 +856,19 @@ mod tests {
         assert!(matches!(
             dispatch(Request::Ping, &SessionRegistry::new()),
             Response::Pong
+        ));
+    }
+
+    #[test]
+    fn dispatcher_reports_a_missing_status_without_touching_the_registry() {
+        assert!(matches!(
+            dispatch(
+                Request::Status {
+                    id: SessionId("missing".into())
+                },
+                &SessionRegistry::new()
+            ),
+            Response::Error { message } if message.contains("session does not exist")
         ));
     }
 

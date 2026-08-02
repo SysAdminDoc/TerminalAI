@@ -28,6 +28,11 @@ USAGE:
   terminalai-probe resolve
   terminalai-probe preview <claude|codex> [options]
   terminalai-probe spawn   <claude|codex> [options] [--raw <arg>...]
+  terminalai-probe list    --json
+  terminalai-probe start   <claude|codex> [options] --json
+  terminalai-probe stop    <session-id> --json
+  terminalai-probe send    <session-id> <text> --json
+  terminalai-probe status  <session-id> --json
   terminalai-probe hook    <claude|codex>    (read one hook JSON object from stdin)
   terminalai-probe hooks   <status|preview|install|remove> <claude|codex> [options]
 
@@ -53,6 +58,11 @@ fn main() {
         Some("resolve") => cmd_resolve(),
         Some("preview") => cmd_build(&args[1..], false),
         Some("spawn") => cmd_build(&args[1..], true),
+        Some("list") => cmd_list(&args[1..]),
+        Some("start") => cmd_start(&args[1..]),
+        Some("stop") => cmd_stop(&args[1..]),
+        Some("send") => cmd_send(&args[1..]),
+        Some("status") => cmd_status(&args[1..]),
         Some("exec") => cmd_exec(&args[1..]),
         Some("hook") => cmd_hook(&args[1..]),
         Some("hooks") => cmd_hooks(&args[1..]),
@@ -66,6 +76,130 @@ fn main() {
         }
     };
     std::process::exit(code);
+}
+
+fn cmd_list(args: &[String]) -> i32 {
+    let (machine, args) = without_json(args);
+    if !args.is_empty() {
+        return control_usage("list takes no arguments other than --json");
+    }
+    match control_call(Request::Snapshot) {
+        Ok(response) => print_control_response(response, machine),
+        Err(error) => print_control_error(error, machine),
+    }
+}
+
+fn cmd_start(args: &[String]) -> i32 {
+    let (machine, args) = without_json(args);
+    let (spec, _) = match parse_launch_spec(&args, false) {
+        Ok(parsed) => parsed,
+        Err(error) => return control_usage(&error),
+    };
+    match control_call(Request::Launch {
+        spec: Box::new(spec),
+        configured_path: None,
+    }) {
+        Ok(response) => print_control_response(response, machine),
+        Err(error) => print_control_error(error, machine),
+    }
+}
+
+fn cmd_stop(args: &[String]) -> i32 {
+    let (machine, args) = without_json(args);
+    let id = match one_control_argument(&args, "stop <session-id> [--json]") {
+        Ok(id) => terminalai_core::SessionId(id),
+        Err(error) => return control_usage(&error),
+    };
+    match control_call(Request::Kill { id }) {
+        Ok(response) => print_control_response(response, machine),
+        Err(error) => print_control_error(error, machine),
+    }
+}
+
+fn cmd_send(args: &[String]) -> i32 {
+    let (machine, args) = without_json(args);
+    if args.len() < 2 {
+        return control_usage("send <session-id> <text> [--json]");
+    }
+    let id = terminalai_core::SessionId(args[0].clone());
+    let text = args[1..].join(" ");
+    let data = bracketed_paste(&text);
+    match control_call(Request::Write { id, data }) {
+        Ok(response) => print_control_response(response, machine),
+        Err(error) => print_control_error(error, machine),
+    }
+}
+
+fn cmd_status(args: &[String]) -> i32 {
+    let (machine, args) = without_json(args);
+    let id = match one_control_argument(&args, "status <session-id> [--json]") {
+        Ok(id) => terminalai_core::SessionId(id),
+        Err(error) => return control_usage(&error),
+    };
+    match control_call(Request::Status { id }) {
+        Ok(response) => print_control_response(response, machine),
+        Err(error) => print_control_error(error, machine),
+    }
+}
+
+fn without_json(args: &[String]) -> (bool, Vec<String>) {
+    let machine = args.iter().any(|arg| arg == "--json");
+    let args = args
+        .iter()
+        .filter(|arg| arg.as_str() != "--json")
+        .cloned()
+        .collect();
+    (machine, args)
+}
+
+fn one_control_argument(args: &[String], usage: &str) -> Result<String, String> {
+    if args.len() != 1 {
+        return Err(format!("usage: terminalai-probe {usage}"));
+    }
+    Ok(args[0].clone())
+}
+
+fn control_usage(message: &str) -> i32 {
+    eprintln!("{message}\n\n{USAGE}");
+    1
+}
+
+fn control_call(request: Request) -> Result<Response, String> {
+    let timeout = Duration::from_secs(5);
+    let client = DaemonClient::connect_named_with_timeout(PIPE_NAME, timeout)
+        .map_err(|error| format!("could not connect to TerminalAI daemon: {error}"))?;
+    client
+        .call_with_timeout(request, timeout)
+        .map_err(|error| format!("TerminalAI daemon request failed: {error}"))
+}
+
+fn print_control_response(response: Response, machine: bool) -> i32 {
+    let failed = matches!(response, Response::Error { .. });
+    if machine {
+        match serde_json::to_string(&response) {
+            Ok(json) => println!("{json}"),
+            Err(error) => return print_control_error(error.to_string(), true),
+        }
+    } else if let Response::Error { message } = &response {
+        eprintln!("{message}");
+    } else {
+        println!("{response:?}");
+    }
+    i32::from(failed)
+}
+
+fn print_control_error(error: impl std::fmt::Display, machine: bool) -> i32 {
+    if machine {
+        let output = serde_json::json!({ "kind": "error", "message": error.to_string() });
+        println!("{output}");
+    } else {
+        eprintln!("{error}");
+    }
+    1
+}
+
+fn bracketed_paste(text: &str) -> String {
+    format!("\x1b[200~{text}\x1b[201~\r")
 }
 
 fn cmd_hook(args: &[String]) -> i32 {
@@ -259,80 +393,14 @@ fn cmd_exec(args: &[String]) -> i32 {
 }
 
 fn cmd_build(args: &[String], run: bool) -> i32 {
-    let Some(agent_arg) = args.first() else {
-        eprintln!("missing agent\n\n{USAGE}");
-        return 1;
-    };
-    let which = match agent_arg.as_str() {
-        "claude" => Agent::Claude,
-        "codex" => Agent::Codex,
-        other => {
-            eprintln!("unknown agent: {other}");
+    let (spec, timeout) = match parse_launch_spec(args, true) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            eprintln!("{error}\n\n{USAGE}");
             return 1;
         }
     };
-
-    let mut spec = LaunchSpec {
-        agent: which,
-        cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-        ..Default::default()
-    };
-    let mut timeout = Duration::from_secs(30);
-    let mut it = args[1..].iter();
-    while let Some(flag) = it.next() {
-        let mut value = || it.next().cloned().unwrap_or_default();
-        match flag.as_str() {
-            "--cwd" => spec.cwd = PathBuf::from(value()),
-            "--model" => spec.model = Some(value()),
-            "--name" => spec.name = Some(value()),
-            "--prompt" => spec.initial_prompt = Some(value()),
-            "--timeout" => timeout = Duration::from_secs(value().parse().unwrap_or(30)),
-            "--effort" => {
-                spec.effort = Some(match value().as_str() {
-                    "low" => Effort::Low,
-                    "medium" => Effort::Medium,
-                    "high" => Effort::High,
-                    "xhigh" => Effort::XHigh,
-                    "max" => Effort::Max,
-                    other => {
-                        eprintln!("bad --effort: {other}");
-                        return 1;
-                    }
-                })
-            }
-            "--permission" => {
-                spec.permission = Some(match value().as_str() {
-                    "ask" => Permission::Ask,
-                    "plan" => Permission::Plan,
-                    "accept-edits" => Permission::AcceptEdits,
-                    "bypass" => Permission::Bypass,
-                    other => {
-                        eprintln!("bad --permission: {other}");
-                        return 1;
-                    }
-                })
-            }
-            "--sandbox" => {
-                spec.sandbox = Some(match value().as_str() {
-                    "read-only" => Sandbox::ReadOnly,
-                    "workspace-write" => Sandbox::WorkspaceWrite,
-                    "danger-full-access" => Sandbox::DangerFullAccess,
-                    other => {
-                        eprintln!("bad --sandbox: {other}");
-                        return 1;
-                    }
-                })
-            }
-            "--raw" => {
-                spec.extra_args.extend(it.by_ref().cloned());
-                break;
-            }
-            other => {
-                eprintln!("unknown option: {other}\n\n{USAGE}");
-                return 1;
-            }
-        }
-    }
+    let which = spec.agent;
 
     let binary = match agent::resolve(which, None) {
         Ok(b) => b,
@@ -378,6 +446,88 @@ fn cmd_build(args: &[String], run: bool) -> i32 {
     } else {
         3
     }
+}
+
+fn parse_launch_spec(
+    args: &[String],
+    allow_timeout: bool,
+) -> Result<(LaunchSpec, Duration), String> {
+    let Some(agent_arg) = args.first() else {
+        return Err("missing agent".into());
+    };
+    let agent = match agent_arg.as_str() {
+        "claude" => Agent::Claude,
+        "codex" => Agent::Codex,
+        other => return Err(format!("unknown agent: {other}")),
+    };
+    let mut spec = LaunchSpec {
+        agent,
+        cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        ..Default::default()
+    };
+    let mut timeout = Duration::from_secs(30);
+    let mut index = 1;
+    while index < args.len() {
+        let flag = &args[index];
+        index += 1;
+        match flag.as_str() {
+            "--cwd" => spec.cwd = PathBuf::from(take_value(args, &mut index, flag)?),
+            "--model" => spec.model = Some(take_value(args, &mut index, flag)?),
+            "--name" => spec.name = Some(take_value(args, &mut index, flag)?),
+            "--prompt" => spec.initial_prompt = Some(take_value(args, &mut index, flag)?),
+            "--timeout" if allow_timeout => {
+                let value = take_value(args, &mut index, flag)?;
+                timeout = Duration::from_secs(
+                    value
+                        .parse()
+                        .map_err(|_| "--timeout must be a whole number of seconds".to_string())?,
+                );
+            }
+            "--timeout" => return Err("--timeout is only supported by spawn".into()),
+            "--effort" => {
+                spec.effort = Some(match take_value(args, &mut index, flag)?.as_str() {
+                    "low" => Effort::Low,
+                    "medium" => Effort::Medium,
+                    "high" => Effort::High,
+                    "xhigh" => Effort::XHigh,
+                    "max" => Effort::Max,
+                    other => return Err(format!("bad --effort: {other}")),
+                });
+            }
+            "--permission" => {
+                spec.permission = Some(match take_value(args, &mut index, flag)?.as_str() {
+                    "ask" => Permission::Ask,
+                    "plan" => Permission::Plan,
+                    "accept-edits" => Permission::AcceptEdits,
+                    "bypass" => Permission::Bypass,
+                    other => return Err(format!("bad --permission: {other}")),
+                });
+            }
+            "--sandbox" => {
+                spec.sandbox = Some(match take_value(args, &mut index, flag)?.as_str() {
+                    "read-only" => Sandbox::ReadOnly,
+                    "workspace-write" => Sandbox::WorkspaceWrite,
+                    "danger-full-access" => Sandbox::DangerFullAccess,
+                    other => return Err(format!("bad --sandbox: {other}")),
+                });
+            }
+            "--raw" => {
+                spec.extra_args.extend(args[index..].iter().cloned());
+                break;
+            }
+            other => return Err(format!("unknown option: {other}")),
+        }
+    }
+    Ok((spec, timeout))
+}
+
+fn take_value(args: &[String], index: &mut usize, flag: &str) -> Result<String, String> {
+    let value = args
+        .get(*index)
+        .cloned()
+        .ok_or_else(|| format!("{flag} requires a value"))?;
+    *index += 1;
+    Ok(value)
 }
 
 /// Read until the child exits or the timeout expires.
@@ -458,6 +608,57 @@ mod tests {
             HookSignal::Notification {
                 notification: HookNotification::PermissionPrompt
             }
+        );
+    }
+
+    #[test]
+    fn control_json_flag_is_removed_without_reordering_arguments() {
+        let args = vec![
+            "claude".into(),
+            "--json".into(),
+            "--model".into(),
+            "opus".into(),
+        ];
+        let (machine, args) = without_json(&args);
+        assert!(machine);
+        assert_eq!(args, ["claude", "--model", "opus"]);
+    }
+
+    #[test]
+    fn start_parser_builds_the_same_launch_spec_as_the_probe() {
+        let args = vec![
+            "codex".into(),
+            "--cwd".into(),
+            ".".into(),
+            "--model".into(),
+            "gpt-5.1-codex".into(),
+            "--effort".into(),
+            "high".into(),
+            "--raw".into(),
+            "--search".into(),
+        ];
+        let (spec, timeout) = parse_launch_spec(&args, false).expect("launch spec");
+        assert_eq!(spec.agent, Agent::Codex);
+        assert_eq!(spec.model.as_deref(), Some("gpt-5.1-codex"));
+        assert_eq!(spec.effort, Some(Effort::High));
+        assert_eq!(spec.extra_args, ["--search"]);
+        assert_eq!(timeout, Duration::from_secs(30));
+    }
+
+    #[test]
+    fn send_uses_the_same_bracketed_paste_contract_as_the_gui() {
+        assert_eq!(bracketed_paste("hello"), "\x1b[200~hello\x1b[201~\r");
+    }
+
+    #[test]
+    fn control_responses_are_single_line_json() {
+        let response = Response::Launched {
+            id: terminalai_core::SessionId("s0001".into()),
+            queued: false,
+        };
+        assert_eq!(
+            serde_json::to_string(&response).expect("response JSON"),
+            r#"{"kind":"launched","id":"s0001","queued":false}"#
         );
     }
 }

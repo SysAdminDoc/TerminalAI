@@ -41,6 +41,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - R-19 adds an opt-in `codex-app-server` daemon transport. The core accepts Codex JSONL/JSON-RPC
   notifications, preserves unknown methods, maps status and approval signals into the fleet event
   model, and encodes steer/interrupt requests while the default daemon remains unchanged.
+- R-20 promotes the headless probe into a daemon control client with JSON `list`, `start`, `stop`,
+  `send`, and `status` commands. It uses the same named-pipe protocol as the GUI, returns one stable
+  JSON object per invocation, and keeps connection/remote failures on a nonzero exit path.
 - Claude/Codex hook payloads now share one parser, including session/thread id aliases and
   permission/idle notification normalization for approval and awaiting-input states.
 - The fleet now has a needs-input filter and per-row reply controls that send bracketed paste
