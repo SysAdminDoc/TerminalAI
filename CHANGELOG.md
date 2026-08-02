@@ -51,6 +51,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   hook/agent environment variables, launcher and probe controls, and allocated-port row metadata.
 - R-33 adds a daemon-owned Review view that aggregates Git diffs across sessions, ranks review cost,
   preserves conflict markers, and lets the operator mark a session reviewed.
+- R-25 adds real-pty echo coverage for output and exit detection plus version-pinned Claude Code
+  and Codex CLI launch-argument golden fixtures.
 - Claude/Codex hook payloads now share one parser, including session/thread id aliases and
   permission/idle notification normalization for approval and awaiting-input states.
 - The fleet now has a needs-input filter and per-row reply controls that send bracketed paste

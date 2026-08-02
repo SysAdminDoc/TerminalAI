@@ -1,0 +1,24 @@
+{
+  "version": "codex-cli 0.146.0",
+  "expected_args": [
+    "resume",
+    "codex-thread-1",
+    "--model",
+    "gpt-5.1-codex",
+    "--config",
+    "model_reasoning_effort=\"xhigh\"",
+    "--ask-for-approval",
+    "untrusted",
+    "--sandbox",
+    "workspace-write",
+    "--profile",
+    "work",
+    "--cd",
+    "__CARGO_MANIFEST_DIR__",
+    "--add-dir",
+    "__CARGO_MANIFEST_DIR__/shared",
+    "--search",
+    "--verbose",
+    "review the parser"
+  ]
+}

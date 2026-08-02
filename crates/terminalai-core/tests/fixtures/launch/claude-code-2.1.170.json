@@ -1,0 +1,22 @@
+{
+  "version": "Claude Code 2.1.170",
+  "expected_args": [
+    "--model",
+    "opus",
+    "--effort",
+    "xhigh",
+    "--permission-mode",
+    "plan",
+    "--name",
+    "golden review",
+    "--add-dir",
+    "__CARGO_MANIFEST_DIR__/shared",
+    "--max-budget-usd",
+    "5",
+    "--resume",
+    "claude-session-1",
+    "--fork-session",
+    "--verbose",
+    "review the parser"
+  ]
+}
