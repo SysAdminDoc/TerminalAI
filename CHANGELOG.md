@@ -20,6 +20,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Explicit session supervision state now separates agent phase from process health, exposes PID,
   resume id, exit metadata and restart counters, and retries unexpected exits with exponential
   backoff before entering a terminal failed state.
+- Reversible agent hook configuration now previews, installs, reports and removes only
+  `--terminalai-managed` Claude JSON and Codex TOML entries; Claude handlers are asynchronous,
+  Codex preserves unrelated `notify` commands, and the installed app hook path fails open when the
+  daemon is unavailable.
+- Claude/Codex hook payloads now share one parser, including session/thread id aliases and
+  permission/idle notification normalization for approval and awaiting-input states.
 - The fleet now has a needs-input filter and per-row reply controls that send bracketed paste
   through the daemon without switching terminal focus.
 - Strict agent/binary matching before a process is spawned, preventing a launcher configuration

@@ -4,11 +4,6 @@ Single task tracker for this repo. Newest phase at the top; completed items are 
 
 ## v0.3.0 — knowing what the fleet is doing
 
-- [ ] Hook bus: local listener; register Claude Code `SessionStart` / `Stop` / `Notification` /
-      `PreToolUse` / `PostToolUse` hooks that post session state
-      — *2026-08-02 research: a bare loopback HTTP listener is browser-reachable and DNS-rebinding-attackable.
-      Harden per R-07. Claude exposes 30 hook events and `Notification.type` is the blocked-state signal (R-08);
-      Codex has its own hooks table plus a `notify` key (R-09).*
 - [ ] Transcript tailing — `~/.claude/projects/<slug>/*.jsonl` and Codex session rollouts, for
       last message, native session id, token and cost accounting
       — *2026-08-02 research: slug = cwd with `\`, `:`, `.` → `-`; filename stem IS the session UUID. Use
@@ -61,20 +56,6 @@ Single task tracker for this repo. Newest phase at the top; completed items are 
 Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher continues from R-34.
 
 ### P1
-
-- [ ] R-08 · P1 — Blocked-state detection from Claude Code's `Notification` hook
-  Why: this is the single signal the whole fleet list depends on, and every competitor that infers it from terminal output has a top-ranked "wrong status" bug.
-  Evidence: Claude Code exposes 30 hook events; `Notification` carries `type: "permission_prompt" | "idle_prompt"`. Counter-examples: ccmanager#227, cmux#1027, claude-squad#216.
-  Touches: `crates/terminalai-core/src/session.rs`, daemon hook endpoint
-  Acceptance: `permission_prompt` → needs-approval, `idle_prompt` → awaiting-input, `Stop` → idle, correlated by `session_id`; hooks registered `async: true` so they never stall the agent.
-  Complexity: M
-
-- [ ] R-09 · P1 — Blocked-state detection for Codex
-  Why: Codex has a hooks table including `PermissionRequest`, which the closest competitor believes does not exist and therefore cannot show "waiting" for Codex at all.
-  Evidence: https://developers.openai.com/codex/config-schema.json (`[hooks]` keyed by `PreToolUse`, `PermissionRequest`, `PostToolUse`, `SessionStart`, `SessionEnd`, `Stop`, …); the gap is workmux#197.
-  Touches: daemon hook endpoint, Codex config writer
-  Acceptance: a Codex session blocked on an approval renders needs-approval; `notify = ["<terminalai-exe>"]` works as a zero-config fallback when hooks are unavailable.
-  Complexity: M
 
 - [ ] R-12 · P1 — One terminal renderer, Rust-side grids for the rest
   Why: Chromium caps live WebGL contexts at ~16 and silently drops the oldest, so N live xterm.js instances cannot work.
@@ -154,13 +135,6 @@ Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher contin
   Touches: new review view, worktree manager
   Acceptance: one view aggregates the pending diff of every session with per-session file counts and line deltas, ordered by review cost; a session can be marked reviewed; conflict markers are surfaced rather than auto-resolved.
   Complexity: L
-
-- [ ] R-24 · P2 — Consented, reversible hook installation
-  Why: writing to the user's global agent config without asking is a trust violation, and orphaned hook entries break the user's CLI after uninstall.
-  Evidence: a competitor auto-injects its hook into `~/.claude/settings.json`; Claude Code has a `disableAllHooks` kill switch worth respecting.
-  Touches: settings writer, onboarding
-  Acceptance: hook installation is explicit, shows the exact JSON to be written, is idempotent, and can be fully removed; TerminalAI detects and reports when its own hooks are missing or stale.
-  Complexity: S
 
 - [ ] R-25 · P2 — Test harness for the machine-facing layer
   Why: both bugs found on 2026-08-02 (the ConPTY DSR stall and EOF-based exit detection) were reachable by an automated test that did not exist.

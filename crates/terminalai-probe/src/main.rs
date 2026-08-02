@@ -17,8 +17,8 @@ use std::{io, io::Read};
 
 use terminalai_core::agent::{self, Agent};
 use terminalai_core::launch::{Effort, LaunchSpec, Permission, ResolvedCommand, Sandbox};
+use terminalai_core::parse_hook;
 use terminalai_core::pty::{self, PtySession};
-use terminalai_core::{HookEvent, HookNotification, HookSignal};
 use terminalai_daemon::{DaemonClient, Request, Response, PIPE_NAME};
 
 const USAGE: &str = "\
@@ -29,6 +29,7 @@ USAGE:
   terminalai-probe preview <claude|codex> [options]
   terminalai-probe spawn   <claude|codex> [options] [--raw <arg>...]
   terminalai-probe hook    <claude|codex>    (read one hook JSON object from stdin)
+  terminalai-probe hooks   <status|preview|install|remove> <claude|codex> [options]
 
 OPTIONS:
   --cwd <dir>          working directory (default: current)
@@ -40,6 +41,10 @@ OPTIONS:
   --prompt <text>
   --timeout <secs>     spawn only; default 30
   --raw <arg>...       everything after this is passed through verbatim
+
+HOOK OPTIONS:
+  --config <path>      override the agent settings file
+  --executable <path>  executable used by the installed hook command
 ";
 
 fn main() {
@@ -50,6 +55,7 @@ fn main() {
         Some("spawn") => cmd_build(&args[1..], true),
         Some("exec") => cmd_exec(&args[1..]),
         Some("hook") => cmd_hook(&args[1..]),
+        Some("hooks") => cmd_hooks(&args[1..]),
         Some("--help") | Some("-h") | None => {
             print!("{USAGE}");
             0
@@ -104,62 +110,91 @@ fn cmd_hook(args: &[String]) -> i32 {
     0
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct RawHook {
-    #[serde(default, alias = "thread_id")]
-    session_id: Option<String>,
-    #[serde(default)]
-    cwd: Option<PathBuf>,
-    #[serde(default, alias = "event_name")]
-    hook_event_name: Option<String>,
-    #[serde(default)]
-    event: Option<String>,
-    #[serde(default)]
-    notification_type: Option<String>,
-    #[serde(default, rename = "type")]
-    notification_kind: Option<String>,
-}
-
-fn parse_hook(agent: Agent, input: &str) -> Result<HookEvent, String> {
-    let raw: RawHook = serde_json::from_str(input).map_err(|error| error.to_string())?;
-    let event_name = raw.hook_event_name.or(raw.event).unwrap_or_default();
-    let normalized = normalize(&event_name);
-    let notification_name = raw.notification_type.or(raw.notification_kind);
-    let signal = match normalized.as_str() {
-        "sessionstart" | "session_start" => HookSignal::SessionStart,
-        "sessionend" | "session_end" | "stop" => HookSignal::Stop,
-        "pretooluse" | "pre_tool_use" => HookSignal::PreToolUse,
-        "posttooluse" | "post_tool_use" => HookSignal::PostToolUse,
-        "notification" | "permissionrequest" | "permission_request" => HookSignal::Notification {
-            notification: parse_notification(notification_name.as_deref()),
-        },
-        "" if notification_name.is_some() => HookSignal::Notification {
-            notification: parse_notification(notification_name.as_deref()),
-        },
-        other => return Err(format!("unsupported hook event {other:?}")),
+fn cmd_hooks(args: &[String]) -> i32 {
+    let Some(operation) = args.first().map(String::as_str) else {
+        eprintln!("usage: terminalai-probe hooks <status|preview|install|remove> <claude|codex>");
+        return 1;
     };
-    Ok(HookEvent {
-        agent,
-        session_id: raw
-            .session_id
-            .filter(|session_id| !session_id.trim().is_empty()),
-        cwd: raw.cwd.or_else(|| std::env::current_dir().ok()),
-        signal,
-    })
-}
-
-fn parse_notification(value: Option<&str>) -> HookNotification {
-    match value.map(normalize).as_deref() {
-        Some("permission_prompt" | "permission_request" | "approval_request") => {
-            HookNotification::PermissionPrompt
+    let Some(agent_arg) = args.get(1) else {
+        eprintln!("missing hook agent");
+        return 1;
+    };
+    let agent = match agent_arg.as_str() {
+        "claude" => Agent::Claude,
+        "codex" => Agent::Codex,
+        other => {
+            eprintln!("unknown hook agent: {other}");
+            return 1;
         }
-        Some("idle_prompt" | "idle" | "awaiting_input") => HookNotification::IdlePrompt,
-        _ => HookNotification::Other,
+    };
+    let mut config = None;
+    let mut executable = None;
+    let mut it = args[2..].iter();
+    while let Some(flag) = it.next() {
+        match flag.as_str() {
+            "--config" => config = it.next().map(PathBuf::from),
+            "--executable" => executable = it.next().map(PathBuf::from),
+            other => {
+                eprintln!("unknown hooks option: {other}");
+                return 1;
+            }
+        }
+    }
+
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("."));
+    let codex_home = std::env::var_os("CODEX_HOME").map(PathBuf::from);
+    let config = config
+        .unwrap_or_else(|| terminalai_core::hook_config_path(agent, &home, codex_home.as_deref()));
+    let executable = executable
+        .or_else(|| std::env::current_exe().ok())
+        .unwrap_or_else(|| PathBuf::from("terminalai-probe"));
+
+    match operation {
+        "preview" => {
+            println!(
+                "{}",
+                terminalai_core::hook_config_preview(agent, &executable)
+            );
+            0
+        }
+        "status" => match terminalai_core::hook_status_at(agent, &config, &executable) {
+            Ok(status) => print_json(status),
+            Err(error) => print_error(error),
+        },
+        "install" => match terminalai_core::install_hooks_at(agent, &config, &executable) {
+            Ok(change) => print_json(change),
+            Err(error) => print_error(error),
+        },
+        "remove" => match terminalai_core::remove_hooks_at(agent, &config, &executable) {
+            Ok(change) => print_json(change),
+            Err(error) => print_error(error),
+        },
+        other => {
+            eprintln!("unknown hooks operation: {other}");
+            1
+        }
     }
 }
 
-fn normalize(value: &str) -> String {
-    value.trim().replace(['-', ' '], "_").to_ascii_lowercase()
+fn print_json<T: serde::Serialize>(value: T) -> i32 {
+    match serde_json::to_string_pretty(&value) {
+        Ok(value) => {
+            println!("{value}");
+            0
+        }
+        Err(error) => {
+            eprintln!("could not encode hook result: {error}");
+            1
+        }
+    }
+}
+
+fn print_error(error: impl std::fmt::Display) -> i32 {
+    eprintln!("{error}");
+    1
 }
 
 fn cmd_resolve() -> i32 {
@@ -392,6 +427,7 @@ fn drain(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use terminalai_core::{HookNotification, HookSignal};
 
     #[test]
     fn parses_claude_notification_payload() {

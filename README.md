@@ -48,8 +48,8 @@ Working today (`terminalai-probe`, headless):
 - 44 unit tests over the flag mapping, pty boundary, supervision state machine, registry, daemon
   protocol, presets and fleet-row model
 
-Not built yet: consented hook installation, durable session restore, transcript file tailing and
-transcript-derived status/cost accounting. The named-pipe daemon keeps live sessions independent of the window; see
+Not built yet: durable session restore, transcript file tailing and transcript-derived status/cost
+accounting. The named-pipe daemon keeps live sessions independent of the window; see
 [ROADMAP.md](ROADMAP.md).
 
 ## Requirements
@@ -96,7 +96,17 @@ terminalai-probe exec cmd.exe /c "echo hello"
 # Deliver one Claude/Codex hook payload without a browser-reachable listener.
 echo '{"session_id":"...","hook_event_name":"Notification","notification_type":"permission_prompt"}' |
   terminalai-probe hook claude
+
+# Preview, inspect, install, or remove the explicitly managed agent hooks.
+terminalai-probe hooks preview claude --executable .\target\release\terminalai.exe
+terminalai-probe hooks status claude --executable .\target\release\terminalai.exe
+terminalai-probe hooks install claude --executable .\target\release\terminalai.exe
+terminalai-probe hooks remove claude --executable .\target\release\terminalai.exe
 ```
+
+Hook installation is opt-in and only owns entries carrying `--terminalai-managed`; unrelated
+Claude handlers and Codex `notify` commands are preserved. Use `--config <path>` to inspect or
+modify a disposable settings file before touching the user-level config.
 
 ## What the launcher maps to
 

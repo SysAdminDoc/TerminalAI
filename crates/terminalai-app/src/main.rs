@@ -4,13 +4,14 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
+use std::{io, io::Read};
 
 use preset::{Preset, PresetStore};
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
 use terminalai_core::agent::Agent;
 use terminalai_core::launch::LaunchSpec;
-use terminalai_core::{Session, SessionId};
+use terminalai_core::{parse_hook, Session, SessionId};
 use terminalai_daemon::{DaemonClient, Request, Response, PROTOCOL_VERSION};
 
 struct AppState {
@@ -289,7 +290,63 @@ fn run_app() -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+fn is_hook_invocation(args: &[String]) -> bool {
+    args.first().is_some_and(|arg| arg == "hook")
+}
+
+/// Deliver an agent hook without initializing Tauri/WebView2.
+///
+/// Hook commands are deliberately fail-open: an unavailable desktop daemon
+/// must never stall or fail the user's agent command. Claude's async hook
+/// support normally keeps this off the agent's critical path; the short
+/// timeout also bounds Codex's synchronous command hook.
+fn run_hook_cli(args: &[String]) -> i32 {
+    let Some(agent_arg) = args.first() else {
+        eprintln!("usage: terminalai hook <claude|codex>");
+        return 0;
+    };
+    let agent = match agent_arg.as_str() {
+        "claude" => Agent::Claude,
+        "codex" => Agent::Codex,
+        other => {
+            eprintln!("ignoring hook for unknown agent: {other}");
+            return 0;
+        }
+    };
+    let mut input = String::new();
+    if let Err(error) = io::stdin().read_to_string(&mut input) {
+        eprintln!("ignoring hook input read failure: {error}");
+        return 0;
+    }
+    let event = match parse_hook(agent, &input) {
+        Ok(event) => event,
+        Err(error) => {
+            eprintln!("ignoring malformed hook input: {error}");
+            return 0;
+        }
+    };
+    let timeout = Duration::from_millis(750);
+    let client =
+        match DaemonClient::connect_named_with_timeout(terminalai_daemon::PIPE_NAME, timeout) {
+            Ok(client) => client,
+            Err(error) => {
+                eprintln!("ignoring hook because TerminalAI is unavailable: {error}");
+                return 0;
+            }
+        };
+    match client.call_with_timeout(Request::Hook { event }, timeout) {
+        Ok(Response::Hook { .. }) | Ok(Response::Ok) => {}
+        Ok(other) => eprintln!("ignoring unexpected hook response: {other:?}"),
+        Err(error) => eprintln!("ignoring hook delivery failure: {error}"),
+    }
+    0
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if is_hook_invocation(&args) {
+        std::process::exit(run_hook_cli(&args[1..]));
+    }
     if let Err(error) = run_app() {
         eprintln!("TerminalAI: {error}");
         std::process::exit(1);
@@ -303,5 +360,12 @@ mod tests {
     #[test]
     fn protocol_version_is_pinned_for_the_shell() {
         assert_eq!(PROTOCOL_VERSION, 1);
+    }
+
+    #[test]
+    fn hook_invocation_bypasses_the_gui_shell() {
+        assert!(is_hook_invocation(&["hook".into(), "claude".into()]));
+        assert!(!is_hook_invocation(&["--help".into()]));
+        assert!(!is_hook_invocation(&[]));
     }
 }
