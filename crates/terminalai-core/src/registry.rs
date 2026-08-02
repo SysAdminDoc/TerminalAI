@@ -12,6 +12,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::agent::AgentBinary;
+use crate::hooks::{HookEvent, HookNotification, HookSignal};
 use crate::launch::{LaunchError, LaunchSpec};
 use crate::pty::{PtyError, PtySession, PtySize};
 use crate::session::{fleet_order, Session, SessionId, SessionStatus};
@@ -198,6 +199,73 @@ impl SessionRegistry {
 
     pub fn mark_read(&self, id: &SessionId) -> Result<(), RegistryError> {
         self.update(id, |session| session.unread = false)
+    }
+
+    /// Apply a normalized Claude/Codex hook to the matching live session.
+    ///
+    /// A hook may arrive before the agent has written its native id anywhere
+    /// else, so SessionStart first falls back to the newest starting session
+    /// for the same agent and working directory. Unknown sessions are ignored:
+    /// hooks from agents launched outside TerminalAI must not fabricate rows or
+    /// delete state.
+    pub fn apply_hook(&self, event: HookEvent) -> bool {
+        let id = {
+            let state = self.inner.state.lock().expect("registry poisoned");
+            event
+                .session_id
+                .as_deref()
+                .and_then(|session_id| {
+                    state
+                        .entries
+                        .iter()
+                        .find(|(_, entry)| {
+                            entry.session.agent == event.agent
+                                && Some(session_id) == entry.session.native_id.as_deref()
+                        })
+                        .map(|(id, _)| id.clone())
+                })
+                .or_else(|| {
+                    state
+                        .entries
+                        .iter()
+                        .rev()
+                        .find(|(_, entry)| {
+                            entry.session.agent == event.agent
+                                && event.cwd.as_ref() == Some(&entry.session.cwd)
+                                && entry.session.native_id.is_none()
+                                && entry.session.status != SessionStatus::Exited
+                        })
+                        .map(|(id, _)| id.clone())
+                })
+        };
+        let Some(id) = id else { return false };
+
+        {
+            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let Some(entry) = state.entries.get_mut(&id) else {
+                return false;
+            };
+            if let Some(native_id) = event.session_id {
+                entry.session.native_id = Some(native_id);
+            }
+            match event.signal {
+                HookSignal::SessionStart => {}
+                HookSignal::Stop => entry.session.set_status(SessionStatus::Idle),
+                HookSignal::PreToolUse => entry.session.set_status(SessionStatus::Working),
+                HookSignal::PostToolUse => entry.session.set_status(SessionStatus::Thinking),
+                HookSignal::Notification { notification } => match notification {
+                    HookNotification::PermissionPrompt => {
+                        entry.session.set_status(SessionStatus::NeedsApproval)
+                    }
+                    HookNotification::IdlePrompt => {
+                        entry.session.set_status(SessionStatus::AwaitingInput)
+                    }
+                    HookNotification::Other => {}
+                },
+            }
+        }
+        self.emit_session(&id);
+        true
     }
 
     pub fn focus(&self, id: Option<SessionId>) -> Result<(), RegistryError> {
@@ -504,5 +572,67 @@ mod tests {
             registry.launch(spec, binary),
             Err(RegistryError::AgentMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn hooks_bind_native_id_and_distinguish_attention_states() {
+        let registry = SessionRegistry::new();
+        let cwd = Path::new(".").to_path_buf();
+        let spec = spec_for(Agent::Claude, &cwd);
+        let id = SessionId::new(1);
+        let session = Session::new(id.clone(), &spec);
+        registry
+            .inner
+            .state
+            .lock()
+            .expect("registry poisoned")
+            .entries
+            .insert(
+                id.clone(),
+                Entry {
+                    session,
+                    spec,
+                    pty: None,
+                    scrollback: RingBuffer::default(),
+                },
+            );
+
+        assert!(registry.apply_hook(HookEvent {
+            agent: Agent::Claude,
+            session_id: Some("native-1".into()),
+            cwd: Some(cwd.clone()),
+            signal: HookSignal::SessionStart,
+        }));
+        assert!(registry.apply_hook(HookEvent {
+            agent: Agent::Claude,
+            session_id: Some("native-1".into()),
+            cwd: Some(cwd.clone()),
+            signal: HookSignal::Notification {
+                notification: HookNotification::PermissionPrompt,
+            },
+        }));
+        let session = registry.snapshot().pop().expect("session");
+        assert_eq!(session.native_id.as_deref(), Some("native-1"));
+        assert_eq!(session.status, SessionStatus::NeedsApproval);
+        assert!(session.unread);
+
+        assert!(registry.apply_hook(HookEvent {
+            agent: Agent::Claude,
+            session_id: Some("native-1".into()),
+            cwd: Some(cwd),
+            signal: HookSignal::Stop,
+        }));
+        assert_eq!(registry.snapshot()[0].status, SessionStatus::Idle);
+    }
+
+    #[test]
+    fn hooks_from_other_sessions_are_ignored() {
+        let registry = SessionRegistry::new();
+        assert!(!registry.apply_hook(HookEvent {
+            agent: Agent::Codex,
+            session_id: Some("missing".into()),
+            cwd: Some(PathBuf::from(".")),
+            signal: HookSignal::Stop,
+        }));
     }
 }

@@ -10,12 +10,14 @@
 //! headlessly and the Tauri shell drives it from a command handler.
 
 pub mod agent;
+pub mod hooks;
 pub mod launch;
 pub mod pty;
 pub mod registry;
 pub mod session;
 
 pub use agent::{Agent, AgentBinary, ResolveError};
+pub use hooks::{HookEvent, HookNotification, HookSignal};
 pub use launch::{Effort, LaunchError, LaunchSpec, Permission, ResolvedCommand, Resume, Sandbox};
 pub use pty::{PtySession, PtySize};
 pub use registry::{RegistryError, RegistryEvent, SessionRegistry};

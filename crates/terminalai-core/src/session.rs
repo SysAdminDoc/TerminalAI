@@ -51,6 +51,10 @@ pub enum SessionStatus {
     Working,
     /// Blocked on a permission prompt or a question. Demands attention.
     NeedsYou,
+    /// Waiting for the user to answer an idle prompt.
+    AwaitingInput,
+    /// Waiting for an explicit permission decision.
+    NeedsApproval,
 }
 
 impl SessionStatus {
@@ -62,6 +66,8 @@ impl SessionStatus {
             SessionStatus::Idle => "surface2",
             SessionStatus::Thinking => "mauve",
             SessionStatus::Working => "yellow",
+            SessionStatus::NeedsApproval => "peach",
+            SessionStatus::AwaitingInput => "yellow",
             SessionStatus::NeedsYou => "peach",
         }
     }
@@ -90,7 +96,7 @@ pub struct Session {
     pub status_since: SystemTime,
     /// Accumulated spend, when the agent reports it.
     pub cost_usd: Option<f64>,
-    /// Set when the session goes to `NeedsYou` and cleared when the user looks.
+    /// Set when the session enters an attention state and cleared when the user looks.
     pub unread: bool,
     /// Pinned sessions keep a live terminal grid even when not focused.
     pub pinned: bool,
@@ -124,7 +130,10 @@ impl Session {
         if self.status == status {
             return;
         }
-        if status == SessionStatus::NeedsYou {
+        if matches!(
+            status,
+            SessionStatus::NeedsApproval | SessionStatus::AwaitingInput | SessionStatus::NeedsYou
+        ) {
             self.unread = true;
         }
         self.status = status;

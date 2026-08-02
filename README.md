@@ -92,6 +92,10 @@ terminalai-probe spawn claude --raw --version
 # Run anything on a pseudo-console — isolates "the pty is broken" from
 # "this agent is behaving oddly under a pty".
 terminalai-probe exec cmd.exe /c "echo hello"
+
+# Deliver one Claude/Codex hook payload without a browser-reachable listener.
+echo '{"session_id":"...","hook_event_name":"Notification","notification_type":"permission_prompt"}' |
+  terminalai-probe hook claude
 ```
 
 ## What the launcher maps to

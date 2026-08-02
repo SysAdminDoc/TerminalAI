@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use terminalai_core::agent::{self, Agent, Origin};
 use terminalai_core::launch::LaunchSpec;
 use terminalai_core::pty::PtySize;
-use terminalai_core::{RegistryEvent, Session, SessionId, SessionRegistry};
+use terminalai_core::{HookEvent, RegistryEvent, Session, SessionId, SessionRegistry};
 
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const PIPE_NAME: &str = "terminalai.control.v1";
@@ -65,6 +65,9 @@ pub enum Request {
     Preview {
         spec: Box<LaunchSpec>,
         configured_path: Option<PathBuf>,
+    },
+    Hook {
+        event: HookEvent,
     },
     Launch {
         spec: Box<LaunchSpec>,
@@ -118,6 +121,9 @@ pub enum Response {
     },
     Preview {
         command: String,
+    },
+    Hook {
+        matched: bool,
     },
     Launched {
         id: SessionId,
@@ -399,6 +405,9 @@ fn dispatch(request: Request, registry: &SessionRegistry) -> Response {
                 },
             }
         }
+        Request::Hook { event } => Response::Hook {
+            matched: registry.apply_hook(event),
+        },
         Request::Launch {
             spec,
             configured_path,
@@ -503,6 +512,10 @@ impl DaemonClient {
     }
 
     pub fn connect_named(name: &str) -> Result<Self, IpcError> {
+        Self::connect_named_with_timeout(name, Duration::from_secs(30))
+    }
+
+    pub fn connect_named_with_timeout(name: &str, timeout: Duration) -> Result<Self, IpcError> {
         let stream = LocalSocketStream::connect(socket_name(name)?)?;
         let (receive, send) = stream.split();
         let pending = Arc::new(Mutex::new(HashMap::new()));
@@ -514,10 +527,13 @@ impl DaemonClient {
             events: Arc::new(Mutex::new(event_rx)),
             next_id: Arc::new(AtomicU64::new(1)),
         };
-        match client.call(Request::Hello {
-            protocol: PROTOCOL_VERSION,
-            client_pid: std::process::id(),
-        })? {
+        match client.call_with_timeout(
+            Request::Hello {
+                protocol: PROTOCOL_VERSION,
+                client_pid: std::process::id(),
+            },
+            timeout,
+        )? {
             Response::Hello { protocol, .. } if protocol == PROTOCOL_VERSION => Ok(client),
             Response::Hello { protocol, .. } => Err(IpcError::VersionMismatch {
                 daemon: protocol,
@@ -531,6 +547,14 @@ impl DaemonClient {
     }
 
     pub fn call(&self, request: Request) -> Result<Response, IpcError> {
+        self.call_with_timeout(request, Duration::from_secs(30))
+    }
+
+    pub fn call_with_timeout(
+        &self,
+        request: Request,
+        timeout: Duration,
+    ) -> Result<Response, IpcError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = mpsc::channel();
         self.pending
@@ -545,15 +569,13 @@ impl DaemonClient {
                 .remove(&id);
             return Err(error);
         }
-        receiver
-            .recv_timeout(Duration::from_secs(30))
-            .map_err(|error| match error {
-                mpsc::RecvTimeoutError::Timeout => IpcError::Timeout,
-                mpsc::RecvTimeoutError::Disconnected => IpcError::Io(io::Error::new(
-                    io::ErrorKind::UnexpectedEof,
-                    "daemon disconnected",
-                )),
-            })
+        receiver.recv_timeout(timeout).map_err(|error| match error {
+            mpsc::RecvTimeoutError::Timeout => IpcError::Timeout,
+            mpsc::RecvTimeoutError::Disconnected => IpcError::Io(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "daemon disconnected",
+            )),
+        })
     }
 
     pub fn subscribe(&self) -> Result<(), IpcError> {

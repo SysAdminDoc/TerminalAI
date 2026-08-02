@@ -6,6 +6,8 @@ import "@xterm/xterm/css/xterm.css";
 import "./styles.css";
 
 const STATUS_ORDER = {
+  "needs-approval": 8,
+  "awaiting-input": 7,
   "needs-you": 6,
   working: 5,
   thinking: 4,
@@ -15,6 +17,8 @@ const STATUS_ORDER = {
 };
 
 const STATUS_META = {
+  "needs-approval": { glyph: "!", label: "Needs approval", tone: "peach" },
+  "awaiting-input": { glyph: "?", label: "Awaiting input", tone: "yellow" },
   "needs-you": { glyph: "!", label: "Needs you", tone: "peach" },
   working: { glyph: "◒", label: "Working", tone: "yellow" },
   thinking: { glyph: "✦", label: "Thinking", tone: "mauve" },
@@ -97,7 +101,7 @@ function sortedSessions() {
 
 function renderSummary() {
   const live = state.sessions.filter((session) => session.status !== "exited").length;
-  const needsYou = state.sessions.filter((session) => session.status === "needs-you").length;
+  const needsYou = state.sessions.filter((session) => ["needs-you", "needs-approval", "awaiting-input"].includes(session.status)).length;
   const working = state.sessions.filter((session) => ["working", "thinking"].includes(session.status)).length;
   $("fleet-summary").innerHTML = `<span class="summary-item"><b>${live}</b> live</span><span class="summary-separator">/</span><span class="summary-item summary-attention"><b>${needsYou}</b> needs you</span><span class="summary-separator">/</span><span class="summary-item"><b>${working}</b> active</span>`;
   $("fleet-count").textContent = `${state.sessions.length} tracked`;

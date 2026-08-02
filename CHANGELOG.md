@@ -13,6 +13,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   28px status rows, launcher dialog, exact command preview, folder pickers and saved presets.
 - One canonical 120×40 xterm renderer that replays focused-session scrollback and only resizes on
   the explicit terminal reset action.
+- Normalized Claude/Codex hook ingress through the authenticated daemon pipe, with non-blocking
+  `terminalai-probe hook` delivery and separate approval/input attention states.
 - Strict agent/binary matching before a process is spawned, preventing a launcher configuration
   from accidentally starting the wrong CLI.
 

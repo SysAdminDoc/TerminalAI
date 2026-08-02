@@ -13,10 +13,13 @@
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
+use std::{io, io::Read};
 
 use terminalai_core::agent::{self, Agent};
 use terminalai_core::launch::{Effort, LaunchSpec, Permission, ResolvedCommand, Sandbox};
 use terminalai_core::pty::{self, PtySession};
+use terminalai_core::{HookEvent, HookNotification, HookSignal};
+use terminalai_daemon::{DaemonClient, Request, Response, PIPE_NAME};
 
 const USAGE: &str = "\
 terminalai-probe — machine-facing checks for TerminalAI
@@ -25,6 +28,7 @@ USAGE:
   terminalai-probe resolve
   terminalai-probe preview <claude|codex> [options]
   terminalai-probe spawn   <claude|codex> [options] [--raw <arg>...]
+  terminalai-probe hook    <claude|codex>    (read one hook JSON object from stdin)
 
 OPTIONS:
   --cwd <dir>          working directory (default: current)
@@ -45,6 +49,7 @@ fn main() {
         Some("preview") => cmd_build(&args[1..], false),
         Some("spawn") => cmd_build(&args[1..], true),
         Some("exec") => cmd_exec(&args[1..]),
+        Some("hook") => cmd_hook(&args[1..]),
         Some("--help") | Some("-h") | None => {
             print!("{USAGE}");
             0
@@ -55,6 +60,106 @@ fn main() {
         }
     };
     std::process::exit(code);
+}
+
+fn cmd_hook(args: &[String]) -> i32 {
+    let Some(agent_arg) = args.first() else {
+        eprintln!("usage: terminalai-probe hook <claude|codex>");
+        return 1;
+    };
+    let agent = match agent_arg.as_str() {
+        "claude" => Agent::Claude,
+        "codex" => Agent::Codex,
+        other => {
+            eprintln!("unknown hook agent: {other}");
+            return 1;
+        }
+    };
+    let mut input = String::new();
+    if let Err(error) = io::stdin().read_to_string(&mut input) {
+        eprintln!("could not read hook input: {error}");
+        return 0;
+    }
+    let event = match parse_hook(agent, &input) {
+        Ok(event) => event,
+        Err(error) => {
+            eprintln!("ignoring malformed hook input: {error}");
+            return 0;
+        }
+    };
+
+    let timeout = Duration::from_millis(750);
+    let client = match DaemonClient::connect_named_with_timeout(PIPE_NAME, timeout) {
+        Ok(client) => client,
+        Err(error) => {
+            eprintln!("ignoring hook because TerminalAI is unavailable: {error}");
+            return 0;
+        }
+    };
+    match client.call_with_timeout(Request::Hook { event }, timeout) {
+        Ok(Response::Hook { .. }) | Ok(Response::Ok) => {}
+        Ok(other) => eprintln!("ignoring unexpected hook response: {other:?}"),
+        Err(error) => eprintln!("ignoring hook delivery failure: {error}"),
+    }
+    0
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RawHook {
+    #[serde(default, alias = "thread_id")]
+    session_id: Option<String>,
+    #[serde(default)]
+    cwd: Option<PathBuf>,
+    #[serde(default, alias = "event_name")]
+    hook_event_name: Option<String>,
+    #[serde(default)]
+    event: Option<String>,
+    #[serde(default)]
+    notification_type: Option<String>,
+    #[serde(default, rename = "type")]
+    notification_kind: Option<String>,
+}
+
+fn parse_hook(agent: Agent, input: &str) -> Result<HookEvent, String> {
+    let raw: RawHook = serde_json::from_str(input).map_err(|error| error.to_string())?;
+    let event_name = raw.hook_event_name.or(raw.event).unwrap_or_default();
+    let normalized = normalize(&event_name);
+    let notification_name = raw.notification_type.or(raw.notification_kind);
+    let signal = match normalized.as_str() {
+        "sessionstart" | "session_start" => HookSignal::SessionStart,
+        "sessionend" | "session_end" | "stop" => HookSignal::Stop,
+        "pretooluse" | "pre_tool_use" => HookSignal::PreToolUse,
+        "posttooluse" | "post_tool_use" => HookSignal::PostToolUse,
+        "notification" | "permissionrequest" | "permission_request" => HookSignal::Notification {
+            notification: parse_notification(notification_name.as_deref()),
+        },
+        "" if notification_name.is_some() => HookSignal::Notification {
+            notification: parse_notification(notification_name.as_deref()),
+        },
+        other => return Err(format!("unsupported hook event {other:?}")),
+    };
+    Ok(HookEvent {
+        agent,
+        session_id: raw
+            .session_id
+            .filter(|session_id| !session_id.trim().is_empty()),
+        cwd: raw.cwd.or_else(|| std::env::current_dir().ok()),
+        signal,
+    })
+}
+
+fn parse_notification(value: Option<&str>) -> HookNotification {
+    match value.map(normalize).as_deref() {
+        Some("permission_prompt" | "permission_request" | "approval_request") => {
+            HookNotification::PermissionPrompt
+        }
+        Some("idle_prompt" | "idle" | "awaiting_input") => HookNotification::IdlePrompt,
+        _ => HookNotification::Other,
+    }
+}
+
+fn normalize(value: &str) -> String {
+    value.trim().replace(['-', ' '], "_").to_ascii_lowercase()
 }
 
 fn cmd_resolve() -> i32 {
@@ -282,4 +387,41 @@ fn drain(
         }
     }
     (out, exit)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_claude_notification_payload() {
+        let event = parse_hook(
+            Agent::Claude,
+            r#"{"session_id":"cc-1","cwd":"C:\\repo","hook_event_name":"Notification","notification_type":"permission_prompt"}"#,
+        )
+        .expect("hook");
+        assert_eq!(event.session_id.as_deref(), Some("cc-1"));
+        assert_eq!(
+            event.signal,
+            HookSignal::Notification {
+                notification: HookNotification::PermissionPrompt
+            }
+        );
+    }
+
+    #[test]
+    fn parses_codex_permission_request_and_aliases() {
+        let event = parse_hook(
+            Agent::Codex,
+            r#"{"thread_id":"cx-1","event":"PermissionRequest","type":"approval_request"}"#,
+        )
+        .expect("hook");
+        assert_eq!(event.session_id.as_deref(), Some("cx-1"));
+        assert_eq!(
+            event.signal,
+            HookSignal::Notification {
+                notification: HookNotification::PermissionPrompt
+            }
+        );
+    }
 }
