@@ -906,6 +906,24 @@ impl SessionRegistry {
         }
     }
 
+    fn mark_process_unknown(&self, id: &SessionId, generation: u64) {
+        let session = {
+            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let Some(entry) = state.entries.get_mut(id) else {
+                return;
+            };
+            if entry.generation != generation {
+                return;
+            }
+            if entry.session.status == SessionStatus::Unknown {
+                return;
+            }
+            entry.session.mark_unknown_at(SystemTime::now());
+            entry.session.clone()
+        };
+        self.emit(RegistryEvent::SessionUpdated { session });
+    }
+
     fn schedule_restart(&self, id: SessionId, generation: u64, delay: Duration) {
         let registry = self.clone();
         let _ = thread::Builder::new()
@@ -978,14 +996,11 @@ impl SessionRegistry {
                         break;
                     }
                     Err(_) => {
-                        registry.mark_process_exit(&id, generation, None);
-                        break;
+                        registry.mark_process_unknown(&id, generation);
+                        thread::sleep(Duration::from_millis(250));
+                        continue;
                     }
                     Ok(None) => {}
-                }
-                if !pty.is_running() {
-                    registry.mark_process_exit(&id, generation, None);
-                    break;
                 }
                 thread::sleep(Duration::from_millis(50));
             });
@@ -1189,6 +1204,54 @@ mod tests {
             "a failed queued spawn remains visible as stopped"
         );
         assert_eq!(registry.admission_snapshot().queued_sessions, 0);
+    }
+
+    #[test]
+    fn failed_process_query_marks_unknown_without_deleting_state() {
+        let registry = SessionRegistry::new();
+        let cwd = Path::new(".").to_path_buf();
+        let spec = spec_for(Agent::Claude, &cwd);
+        let id = SessionId::new(1);
+        let mut session = Session::new(id.clone(), &spec);
+        session.status = SessionStatus::Working;
+        session.phase = SessionPhase::Working;
+        registry
+            .inner
+            .state
+            .lock()
+            .expect("registry poisoned")
+            .entries
+            .insert(
+                id.clone(),
+                Entry {
+                    session,
+                    spec,
+                    command: ResolvedCommand {
+                        program: PathBuf::from("test-agent"),
+                        args: Vec::new(),
+                        cwd,
+                    },
+                    pty: None,
+                    scrollback: RingBuffer::default(),
+                    grid: TerminalGrid::default(),
+                    generation: 1,
+                    stop_requested: false,
+                },
+            );
+
+        let events = registry.subscribe();
+        registry.mark_process_unknown(&id, 1);
+        let row = registry.snapshot().pop().expect("row survives");
+        assert_eq!(row.status, SessionStatus::Unknown);
+        assert_eq!(row.phase, SessionPhase::Unknown);
+        assert_eq!(registry.store_snapshot().sessions.len(), 1);
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            RegistryEvent::SessionUpdated { session } if session.id == id
+        )));
+        assert!(!events
+            .try_iter()
+            .any(|event| matches!(event, RegistryEvent::SessionRemoved { .. })));
     }
 
     #[test]

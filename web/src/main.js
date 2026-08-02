@@ -14,6 +14,7 @@ const STATUS_ORDER = {
   idle: 3,
   starting: 2,
   queued: 1,
+  unknown: 1,
   exited: 0,
 };
 
@@ -26,6 +27,7 @@ const STATUS_META = {
   idle: { glyph: "·", label: "Idle", tone: "surface2" },
   starting: { glyph: "…", label: "Starting", tone: "sapphire" },
   queued: { glyph: "⏳", label: "Queued", tone: "overlay0" },
+  unknown: { glyph: "?", label: "State unknown", tone: "overlay0" },
   exited: { glyph: "×", label: "Exited", tone: "overlay0" },
 };
 

@@ -64,13 +64,6 @@ Added 2026-08-02 from `RESEARCH.md`. IDs R-01…R-33; the next researcher contin
   Acceptance: an idle session past a threshold is parked (process exited, transcript and resume id retained, row shows hibernated) and rehydrates on focus via the resume path with scrollback replayed from disk.
   Complexity: L
 
-- [ ] R-18 · P1 — Non-destructive state reconciliation
-  Why: a failed backend query must never be read as "the session is gone".
-  Evidence: workmux#209 — a failed tmux query deletes agent state rather than marking it unknown.
-  Touches: daemon reconciliation loop
-  Acceptance: reconciliation can only move a session to unknown; deletion requires positive confirmation that the process is gone; a test simulates a query failure and asserts no state loss.
-  Complexity: S
-
 ### P2
 
 - [ ] R-19 · P2 — `codex app-server` adapter behind a feature flag

@@ -50,6 +50,8 @@ pub enum SessionStatus {
     Exited,
     /// Waiting for an admission slot before a process is spawned.
     Queued,
+    /// The process query failed; retain the session until its state is proven.
+    Unknown,
     /// Started, nothing has happened yet.
     Starting,
     /// Waiting for the user to type.
@@ -72,6 +74,7 @@ impl SessionStatus {
         match self {
             SessionStatus::Exited => "overlay0",
             SessionStatus::Queued => "overlay0",
+            SessionStatus::Unknown => "overlay0",
             SessionStatus::Starting => "sapphire",
             SessionStatus::Idle => "surface2",
             SessionStatus::Thinking => "mauve",
@@ -94,6 +97,7 @@ impl SessionStatus {
 #[serde(rename_all = "kebab-case")]
 pub enum SessionPhase {
     Queued,
+    Unknown,
     Starting,
     Idle,
     Working,
@@ -202,6 +206,7 @@ impl Session {
         self.state_since = now;
         self.phase = match status {
             SessionStatus::Queued => SessionPhase::Queued,
+            SessionStatus::Unknown => SessionPhase::Unknown,
             SessionStatus::Starting => SessionPhase::Starting,
             SessionStatus::Idle => SessionPhase::Idle,
             SessionStatus::Thinking | SessionStatus::Working => SessionPhase::Working,
@@ -238,6 +243,16 @@ impl Session {
         self.backoff_until = None;
         self.state_since = now;
         self.status = SessionStatus::Queued;
+        self.status_since = now;
+    }
+
+    /// A failed process query is not proof of exit. Keep the PID and all
+    /// session state while exposing an honest degraded state to the operator.
+    pub fn mark_unknown_at(&mut self, now: SystemTime) {
+        self.phase = SessionPhase::Unknown;
+        self.health = SessionHealth::Degraded;
+        self.state_since = now;
+        self.status = SessionStatus::Unknown;
         self.status_since = now;
     }
 

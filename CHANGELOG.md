@@ -36,6 +36,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   raised notifications as deduplicated, click-to-focus in-app alerts.
 - R-17 adds daemon-owned admission control with a configurable live-process cap, FIFO overflow
   queue, a Claude default spend cap, and a live/queued/aggregate-spend fleet summary.
+- R-18 now treats failed process reconciliation as an explicit unknown state, retaining the row and
+  PTY until a later positive exit result proves that the process is gone.
 - Claude/Codex hook payloads now share one parser, including session/thread id aliases and
   permission/idle notification normalization for approval and awaiting-input states.
 - The fleet now has a needs-input filter and per-row reply controls that send bracketed paste
