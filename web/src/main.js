@@ -32,6 +32,12 @@ const STATUS_META = {
   exited: { glyph: "×", label: "Exited", short: "exited", tone: "overlay0" },
 };
 const STATUS_KEYS = Object.keys(STATUS_META);
+const PREFLIGHT_META = {
+  ok: { glyph: "✓", label: "Ready", tone: "green" },
+  warn: { glyph: "!", label: "Needs attention", tone: "peach" },
+  error: { glyph: "×", label: "Unavailable", tone: "red" },
+  unsupported: { glyph: "—", label: "Not applicable", tone: "overlay0" },
+};
 const RELEASES_ENDPOINT = "https://api.github.com/repos/SysAdminDoc/TerminalAI/releases/latest";
 const FALLBACK_APP_VERSION = "0.1.0";
 
@@ -63,6 +69,10 @@ const state = {
   outputChannel: null,
   fitAddon: null,
   previewTimer: null,
+  preflight: null,
+  preflightMode: false,
+  preflightLoading: false,
+  preflightReason: null,
   announcementQueue: new Map(),
   announcementTimer: null,
   orderFreeze: null,
@@ -254,7 +264,7 @@ function renderDiagnostics() {
       return '<li class="diagnostic-event"><span class="diagnostic-event-glyph tone-' + entryMeta.tone + '" aria-hidden="true">' + entryMeta.glyph + '</span><div class="diagnostic-event-body"><div><b>' + escapeHtml(entryMeta.label) + '</b><span>from ' + escapeHtml(from) + '</span></div><small>' + escapeHtml(diagnosticSource(entry.source)) + ' · ' + escapeHtml(diagnosticTime(entry.at)) + '</small>' + (entry.detail ? '<p>' + escapeHtml(entry.detail) + '</p>' : '') + '</div></li>';
     }).join("")
     : '<li class="diagnostics-empty">No transition history was persisted for this session.</li>';
-  host.innerHTML = '<div class="diagnostics-heading"><div><span class="eyebrow">WHY THIS STATE</span><h2>' + escapeHtml(session.name) + '</h2><p>' + escapeHtml(session.cwd) + '</p></div><span class="status-glyph tone-' + meta.tone + '" title="' + escapeHtml(label) + '" aria-hidden="true">' + meta.glyph + '</span></div>' +
+  host.innerHTML = '<div class="diagnostics-heading"><div><span class="eyebrow">WHY THIS STATE</span><h2>' + escapeHtml(session.name) + '</h2><p>' + escapeHtml(session.cwd) + '</p></div><div class="diagnostics-heading-actions"><button type="button" class="button button-quiet" data-diagnostics-action="preflight">Preflight checks</button><span class="status-glyph tone-' + meta.tone + '" title="' + escapeHtml(label) + '" aria-hidden="true">' + meta.glyph + '</span></div></div>' +
     '<div class="diagnostics-current"><span>Current status</span><b>' + escapeHtml(label) + '</b><span>for ' + escapeHtml(dwell(session.status_since)) + ' · source ' + escapeHtml(source) + '</span></div>' +
     '<ol class="diagnostics-timeline">' + timeline + '</ol>';
 }
@@ -274,15 +284,110 @@ function setDiagnosticsMode(active) {
   syncDiagnosticsVisibility();
 }
 
+function syncPreflightVisibility() {
+  const active = state.preflightMode;
+  ["fleet-state-strip", "column-labels", "fleet-list", "fleet-order-notice", "empty-state", "review-view"].forEach((id) => {
+    $(id).classList.toggle("view-hidden", active);
+  });
+  $("preflight-view").classList.toggle("view-hidden", !active);
+  $("preflight-toggle").setAttribute("aria-pressed", String(active));
+  $("preflight-toggle").classList.toggle("wide-toggle-active", active);
+  if (active) renderPreflight();
+}
+
+function setPreflightMode(active) {
+  state.preflightMode = active;
+  if (active) {
+    state.reviewMode = false;
+    state.diagnosticsMode = false;
+  }
+  syncPreflightVisibility();
+  syncReviewVisibility();
+  syncDiagnosticsVisibility();
+  if (active && !state.preflight) void loadPreflight();
+  if (!active) renderRows();
+}
+
+function preflightChecksNeedAttention(report) {
+  return (report?.checks ?? []).some((check) => !["ok", "unsupported"].includes(check.state));
+}
+
+function renderPreflight() {
+  const report = state.preflight;
+  const checks = Array.isArray(report?.checks) ? report.checks : [];
+  const attention = checks.filter((check) => !["ok", "unsupported"].includes(check.state)).length;
+  $("preflight-summary").textContent = state.preflightLoading
+    ? "Checking local dependencies…"
+    : state.preflightReason
+      ? state.preflightReason
+      : attention
+        ? `${attention} check${attention === 1 ? "" : "s"} need attention before the fleet can be trusted.`
+        : "All detected control-plane dependencies are ready.";
+  $("preflight-list").innerHTML = checks.map((check) => {
+    const meta = PREFLIGHT_META[check.state] ?? PREFLIGHT_META.error;
+    const detail = check.detail ? `<small>${escapeHtml(check.detail)}</small>` : "";
+    const fixLabel = check.can_fix ? "Fix" : "Fix unavailable";
+    return `<article class="preflight-row" role="listitem"><span class="status-glyph tone-${meta.tone}" title="${meta.label}" aria-hidden="true">${meta.glyph}</span><div class="preflight-copy"><div><b>${escapeHtml(check.label)}</b><span>${escapeHtml(meta.label)}</span></div><strong>${escapeHtml(check.detected)}</strong>${detail}</div><div class="preflight-actions"><button type="button" class="button button-secondary" data-preflight-action="fix" data-preflight-id="${escapeHtml(check.id)}"${check.can_fix ? "" : " disabled"} aria-label="${fixLabel} ${escapeHtml(check.label)}">${fixLabel}</button><button type="button" class="button button-quiet" data-preflight-action="recheck" data-preflight-id="${escapeHtml(check.id)}" aria-label="Recheck ${escapeHtml(check.label)}">Recheck</button></div></article>`;
+  }).join("");
+}
+
+async function loadPreflight(show = false) {
+  if (show) {
+    state.preflightMode = true;
+    syncPreflightVisibility();
+  }
+  state.preflightLoading = true;
+  renderPreflight();
+  try {
+    const report = await invoke("preflight_report");
+    state.preflight = report;
+    state.preflightReason = null;
+    if (!show && preflightChecksNeedAttention(report)) state.preflightMode = true;
+  } catch (error) {
+    state.preflightReason = `Preflight could not run: ${error}`;
+    state.preflightMode = true;
+  } finally {
+    state.preflightLoading = false;
+    syncPreflightVisibility();
+    syncReviewVisibility();
+    if (!state.preflightMode) renderRows();
+  }
+}
+
+async function handlePreflightAction(action, id, button) {
+  if (button) button.disabled = true;
+  try {
+    if (action === "fix") {
+      await invoke("preflight_fix", { kind: id });
+      showToast(`${id} preflight fix applied`, "success");
+    }
+    await loadPreflight(true);
+    if (id === "daemon" || action === "recheck") {
+      try {
+        await loadSnapshot();
+        if (!preflightChecksNeedAttention(state.preflight)) setPreflightMode(false);
+      } catch (_) {
+        // The preflight panel remains visible with the daemon check's detail.
+      }
+    }
+  } catch (error) {
+    state.preflightReason = `Could not ${action} ${id}: ${error}`;
+    renderPreflight();
+    showToast(state.preflightReason);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 function syncReviewVisibility() {
-  const hidden = state.reviewMode;
+  const hidden = state.reviewMode || state.preflightMode;
   ["fleet-state-strip", "column-labels", "fleet-list", "empty-state"].forEach((id) => {
     $(id).classList.toggle("view-hidden", hidden);
   });
-  $("review-view").classList.toggle("view-hidden", !hidden);
+  $("review-view").classList.toggle("view-hidden", !state.reviewMode || state.preflightMode);
   $("review-toggle").setAttribute("aria-pressed", String(hidden));
-  $("review-toggle").classList.toggle("wide-toggle-active", hidden);
-  $("review-toggle").textContent = hidden ? "Fleet" : "Review";
+  $("review-toggle").classList.toggle("wide-toggle-active", state.reviewMode && !state.preflightMode);
+  $("review-toggle").textContent = state.reviewMode && !state.preflightMode ? "Fleet" : "Review";
 }
 
 function renderReview() {
@@ -750,6 +855,7 @@ async function loadReview() {
 }
 
 function setReviewMode(active) {
+  if (active && state.preflightMode) setPreflightMode(false);
   state.reviewMode = active;
   syncReviewVisibility();
   if (active) void loadReview();
@@ -789,7 +895,11 @@ async function loadSnapshot() {
       renderRows();
     }
   } catch (error) {
-    showToast(`Could not read daemon snapshot: ${error}`);
+    state.preflightReason = `Daemon unavailable: ${error}`;
+    state.preflightMode = true;
+    syncPreflightVisibility();
+    syncReviewVisibility();
+    void loadPreflight(true);
   }
 }
 
@@ -1100,6 +1210,20 @@ function bindEvents() {
     state.storeQuarantineDismissed = true;
     renderStoreQuarantine();
   });
+  $("preflight-toggle").addEventListener("click", () => {
+    if (state.preflightMode) setPreflightMode(false);
+    else {
+      setPreflightMode(true);
+      void loadPreflight(true);
+    }
+  });
+  $("preflight-recheck").addEventListener("click", () => void loadPreflight(true));
+  $("preflight-close").addEventListener("click", () => setPreflightMode(false));
+  $("preflight-list").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-preflight-action]");
+    if (!button) return;
+    void handlePreflightAction(button.dataset.preflightAction, button.dataset.preflightId, button);
+  });
   $("review-toggle").addEventListener("click", () => setReviewMode(!state.reviewMode));
   $("review-refresh").addEventListener("click", loadReview);
   $("review-list").addEventListener("click", (event) => {
@@ -1110,6 +1234,11 @@ function bindEvents() {
     }
   });
   $("diagnostics-toggle").addEventListener("click", () => setDiagnosticsMode(!state.diagnosticsMode));
+  $("diagnostics-host").addEventListener("click", (event) => {
+    if (!event.target.closest("button[data-diagnostics-action=preflight]")) return;
+    setPreflightMode(true);
+    void loadPreflight(true);
+  });
   $("update-check-button").addEventListener("click", () => void checkForUpdates());
   $("filter-input").addEventListener("input", renderRows);
   $("fleet-list").addEventListener("mouseenter", beginFleetOrderFreeze);
@@ -1193,6 +1322,7 @@ async function start() {
   } catch (error) {
     showToast(`Event stream unavailable: ${error}`);
   }
+  await loadPreflight();
   await Promise.all([loadSnapshot(), loadPresets()]);
   setInterval(() => {
     renderRows();

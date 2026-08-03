@@ -34,6 +34,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   metadata, explicit selection state and real per-row action buttons.
 - Fleet status announcements now coalesce actionable transitions for two seconds, while sorting
   pauses during list interaction and exposes an Apply control for pending priority moves.
+- The desktop shell now opens even when the daemon is unavailable and presents a first-run
+  preflight panel for agent versions, managed hooks, daemon reachability and the Start-Menu app ID,
+  with local Fix and Recheck actions that remain reachable from Diagnostics.
 - `terminalai-core::grid::TerminalGrid` now parses each session's ANSI output into a bounded Rust
   grid with cursor motion, scrolling, alternate-screen restore and split UTF-8 coverage. Only the
   focused session (and future pinned panes) receives live output events; background sessions keep

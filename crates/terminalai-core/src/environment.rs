@@ -262,7 +262,9 @@ fn shell_command(command_line: &str) -> Command {
     }
 }
 
-fn configure_command_environment(command: &mut Command, extra: &[(String, String)]) {
+/// Apply the same secret-free environment baseline to direct helper commands
+/// as the supervised PTY and environment hooks.
+pub fn configure_command_environment(command: &mut Command, extra: &[(String, String)]) {
     command.env_clear();
     for key in safe_environment_keys() {
         if let Some(value) = std::env::var_os(key) {

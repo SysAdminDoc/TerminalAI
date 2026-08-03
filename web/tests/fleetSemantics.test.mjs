@@ -37,3 +37,14 @@ test("fleet updates announce actionable transitions and defer priority reorderin
   assert.match(main, /addEventListener\("mouseenter", beginFleetOrderFreeze\)/);
   assert.match(main, /addEventListener\("focusin", beginFleetOrderFreeze\)/);
 });
+
+test("preflight remains reachable when daemon state is unavailable", () => {
+  assert.match(html, /id="preflight-view"/);
+  assert.match(html, /id="preflight-list"/);
+  assert.match(html, /id="preflight-toggle"/);
+  assert.match(main, /data-preflight-action/);
+  assert.match(main, /invoke\("preflight_report"\)/);
+  assert.match(main, /invoke\("preflight_fix"/);
+  assert.match(main, /state\.preflightMode = true/);
+  assert.match(main, /data-diagnostics-action="preflight"/);
+});
