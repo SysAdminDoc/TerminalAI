@@ -182,9 +182,14 @@ pub struct Session {
     /// Bounded evidence for why the supervisor assigned each status.
     #[serde(default)]
     pub status_history: Vec<StatusDiagnostic>,
-    /// Operator acknowledgement for the current review snapshot.
+    /// Operator acknowledgement, bound to the diff state it was made against.
+    ///
+    /// A bare boolean was write-once: a session stayed marked reviewed while the
+    /// agent kept changing files, which is exactly the "already handled" false
+    /// negative a review queue exists to prevent. Holding the digest instead
+    /// means the mark expires by itself the moment the tree moves.
     #[serde(default)]
-    pub reviewed: bool,
+    pub reviewed_digest: Option<String>,
 }
 
 impl Session {
@@ -221,7 +226,7 @@ impl Session {
             unread: false,
             pinned: false,
             status_history: Vec::new(),
-            reviewed: false,
+            reviewed_digest: None,
         };
         session.record_status_transition(None, SessionStatus::Starting, StatusSource::Launch, now);
         session
@@ -586,13 +591,13 @@ mod tests {
         value.as_object_mut().unwrap().remove("ports");
         value.as_object_mut().unwrap().remove("tool_progress");
         value.as_object_mut().unwrap().remove("status_history");
-        value.as_object_mut().unwrap().remove("reviewed");
+        value.as_object_mut().unwrap().remove("reviewed_digest");
         let restored: Session = serde_json::from_value(value).unwrap();
         assert_eq!(restored.branch, None);
         assert!(restored.ports.is_empty());
         assert_eq!(restored.tool_progress, None);
         assert!(restored.status_history.is_empty());
-        assert!(!restored.reviewed);
+        assert_eq!(restored.reviewed_digest, None);
     }
 
     #[test]

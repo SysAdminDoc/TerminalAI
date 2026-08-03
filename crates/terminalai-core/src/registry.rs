@@ -145,6 +145,8 @@ pub enum RegistryError {
     WorkerSpawn { phase: &'static str, cause: String },
     #[error("session is no longer running: {0}")]
     NotRunning(SessionId),
+    #[error("cannot record a review for {0}: its working tree could not be read")]
+    ReviewStateUnavailable(SessionId),
 }
 
 struct Entry {
@@ -702,8 +704,28 @@ impl SessionRegistry {
         self.update(id, |session| session.unread = false)
     }
 
+    /// Record that the operator has reviewed this session *as it stands now*.
+    ///
+    /// The current diff state is fingerprinted at mark time and stored with the
+    /// mark, so the acknowledgement retires by itself as soon as the agent
+    /// touches another file. Marking a session whose repository cannot be read
+    /// yields an empty digest, which never matches — an unreadable tree stays
+    /// unreviewed rather than becoming permanently acknowledged.
     pub fn mark_reviewed(&self, id: &SessionId) -> Result<(), RegistryError> {
-        self.update(id, |session| session.reviewed = true)
+        let session = {
+            let state = lock_state(&self.inner);
+            state
+                .entries
+                .get(id)
+                .map(|entry| entry.session.clone())
+                .ok_or_else(|| RegistryError::Missing(id.clone()))?
+        };
+        // Collected outside the lock: this shells out to Git.
+        let digest = crate::review::collect_review(&session).state_digest;
+        if digest.is_empty() {
+            return Err(RegistryError::ReviewStateUnavailable(id.clone()));
+        }
+        self.update(id, |session| session.reviewed_digest = Some(digest))
     }
 
     /// Apply a normalized Claude/Codex hook to the matching live session.

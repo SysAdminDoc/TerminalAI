@@ -206,13 +206,6 @@ researcher continues from R-88.
   Complexity: M
   — *Supersedes the premise of the v0.3.0 item "Status inference fallback for sessions started outside TerminalAI", which assumed no signal exists. Keep that item's rule — never report idle from absence of signal — and source it from here.*
 
-- [ ] R-74 · P1 — Reset `reviewed` when the diff changes
-  Why: the review surface's only piece of operator state is write-once, so a session marked reviewed stays marked while the agent keeps changing files — the exact "already handled" false negative a review queue exists to prevent.
-  Evidence: `crates/terminalai-core/src/registry.rs:591-593` sets `session.reviewed = true`; grep finds no other writer, and `crates/terminalai-core/src/review.rs:62` copies it into every `ReviewItem`.
-  Touches: `crates/terminalai-core/src/registry.rs`, `review.rs`, `session.rs`
-  Acceptance: the reviewed mark records the diff state it was made against — a hash of the numstat, or HEAD plus a dirty-file digest — and clears automatically when that changes; a test marks a session reviewed, writes a file, and asserts the row returns to unreviewed.
-  Complexity: S
-
 - [ ] R-75 · P1 — Meet the documented row density, or change the documents
   Why: the 28px row is the project's central design claim and the reason it says thirty sessions fit on one screen; the shipped row is nearly twice that, so the headline number is unreachable at the default window size.
   Evidence: `web/src/styles.css:55` — `.fleet-row { min-height: 54px }`, inside `.fleet-list { height: calc(100% - 111px) }` within `calc(100vh - 72px)`. At the configured 1440x900 default (`tauri.conf.json`), that is roughly 13 visible rows. `README.md:22` and `CLAUDE.md:41` both specify about 28px.

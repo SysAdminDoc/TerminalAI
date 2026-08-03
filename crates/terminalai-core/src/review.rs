@@ -4,7 +4,9 @@
 //! snapshot. It never stages, commits, resolves, or otherwise mutates a
 //! repository; conflict markers are returned as data for the operator.
 
+use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeSet;
+use std::hash::{Hash, Hasher};
 use std::io::Read;
 #[cfg(windows)]
 use std::os::windows::io::AsRawHandle;
@@ -37,7 +39,12 @@ pub struct ReviewItem {
     pub review_cost: u64,
     pub conflicts: Vec<String>,
     pub conflict_markers: u32,
+    /// True only while the operator's mark still matches `state_digest`.
     pub reviewed: bool,
+    /// Fingerprint of the diff this item describes. The reviewed mark is stored
+    /// against this value, so any change to the tree retires the mark.
+    #[serde(default)]
+    pub state_digest: String,
     pub diff: String,
     pub diff_truncated: bool,
     #[serde(default)]
@@ -105,7 +112,8 @@ pub fn collect_review(session: &Session) -> ReviewItem {
         review_cost: 0,
         conflicts: Vec::new(),
         conflict_markers: 0,
-        reviewed: session.reviewed,
+        reviewed: false,
+        state_digest: String::new(),
         diff: String::new(),
         diff_truncated: false,
         timed_out: false,
@@ -138,7 +146,39 @@ pub fn collect_review(session: &Session) -> ReviewItem {
         }
         Err(error) => item.error = Some(error.to_string()),
     }
+    item.state_digest = review_state_digest(&item);
+    // A mark only survives while it still describes what is on disk.
+    item.reviewed = session
+        .reviewed_digest
+        .as_deref()
+        .is_some_and(|marked| marked == item.state_digest);
     item
+}
+
+/// Fingerprint the reviewed state of a working tree.
+///
+/// Built from the numstat totals plus every changed and conflicted path, which
+/// `collect_review` already has — so this costs no extra Git process. A digest
+/// that cannot be computed (an errored or timed-out collection) is empty, and an
+/// empty digest never matches a stored mark, so an unreadable repository degrades
+/// to unreviewed rather than to a stale acknowledgement.
+fn review_state_digest(item: &ReviewItem) -> String {
+    if item.error.is_some() || item.timed_out {
+        return String::new();
+    }
+    let mut hasher = DefaultHasher::new();
+    item.files_changed.hash(&mut hasher);
+    item.additions.hash(&mut hasher);
+    item.deletions.hash(&mut hasher);
+    item.conflict_markers.hash(&mut hasher);
+    for conflict in &item.conflicts {
+        conflict.hash(&mut hasher);
+    }
+    // The diff text itself catches edits that leave the line counts unchanged —
+    // a rename, a reordering, or one line swapped for another.
+    item.diff.hash(&mut hasher);
+    item.diff_truncated.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
 
 /// Collect many repositories with a fixed number of workers so one slow Git
@@ -577,6 +617,78 @@ mod tests {
         assert!(item.diff.contains("-before"));
         assert!(item.diff.contains("+after"));
         assert!(root.join(".git").is_dir());
+        std::fs::remove_dir_all(root).expect("remove temporary repository");
+    }
+
+    #[test]
+    fn a_reviewed_mark_expires_when_the_agent_changes_another_file() {
+        let root = std::env::temp_dir().join(format!(
+            "terminalai-review-expiry-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create temporary repository");
+        let run_git = |args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(&root)
+                .output()
+                .expect("start git");
+            assert!(
+                output.status.success(),
+                "git {:?}: {}",
+                args,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        run_git(&["init", "-q"]);
+        run_git(&["config", "user.email", "terminalai-tests@example.invalid"]);
+        run_git(&["config", "user.name", "TerminalAI tests"]);
+        std::fs::write(root.join("README.txt"), "before\n").expect("write baseline");
+        run_git(&["add", "README.txt"]);
+        run_git(&["commit", "-qm", "baseline"]);
+        std::fs::write(root.join("README.txt"), "after\n").expect("write change");
+
+        let spec = crate::launch::spec_for(crate::Agent::Claude, &root);
+        let mut session = Session::new(SessionId::new(1), &spec);
+
+        let before = collect_review(&session);
+        assert!(!before.reviewed, "a fresh session starts unreviewed");
+        assert!(!before.state_digest.is_empty());
+
+        // The operator reviews what they can see.
+        session.reviewed_digest = Some(before.state_digest.clone());
+        let marked = collect_review(&session);
+        assert!(marked.reviewed, "the mark holds while nothing has changed");
+        assert_eq!(marked.state_digest, before.state_digest);
+
+        // The agent keeps working.
+        std::fs::write(root.join("NOTES.txt"), "agent kept going\n").expect("write new file");
+        run_git(&["add", "NOTES.txt"]);
+        let after = collect_review(&session);
+        assert_ne!(
+            after.state_digest, before.state_digest,
+            "a new file must change the reviewed state digest"
+        );
+        assert!(
+            !after.reviewed,
+            "the row must return to unreviewed once the diff moves"
+        );
+
+        // An edit that leaves the line counts identical must still retire the mark.
+        session.reviewed_digest = Some(after.state_digest.clone());
+        assert!(collect_review(&session).reviewed);
+        std::fs::write(root.join("NOTES.txt"), "agent changed its mind\n").expect("rewrite");
+        let swapped = collect_review(&session);
+        assert_eq!(swapped.additions, after.additions, "same line counts");
+        assert!(
+            !swapped.reviewed,
+            "a same-size edit must still retire the mark"
+        );
+
         std::fs::remove_dir_all(root).expect("remove temporary repository");
     }
 }

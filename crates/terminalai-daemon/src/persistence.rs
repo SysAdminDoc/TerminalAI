@@ -332,7 +332,7 @@ mod tests {
         let written = SessionStoreSnapshot::read(&path)
             .expect("read sustained snapshot")
             .expect("snapshot exists");
-        assert!(written.sessions[0].session.reviewed);
+        assert!(written.sessions[0].session.reviewed_digest.is_some());
         let _ = fs::remove_dir_all(dir);
     }
 }
