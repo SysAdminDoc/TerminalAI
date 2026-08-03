@@ -127,6 +127,12 @@ cargo deny --target x86_64-pc-windows-msvc check advisories
 cargo tauri build --ci --no-sign --bundles nsis,msi -- --manifest-path Cargo.toml
 ```
 
+Note that plain `cargo build --release` is only for the probe, daemon and tests: the
+`terminalai.exe` it produces is a development shell that navigates to the Vite dev server
+(`http://127.0.0.1:5173`) and shows `ERR_CONNECTION_REFUSED` when no dev server is running. The
+shippable app binary comes from `cargo tauri build`, which enables Tauri's `custom-protocol`
+feature and embeds the built frontend.
+
 The Tauri build runs the Vite frontend build automatically. The installer is written to
 `target/release/bundle/nsis/` and `target/release/bundle/msi/`; both artifacts are intentionally
 unsigned. Windows SmartScreen may warn on first launch: choose **More info**, then **Run anyway**
