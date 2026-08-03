@@ -55,7 +55,7 @@ pub use registry::{
     AdmissionConfig, AdmissionSnapshot, RegistryError, RegistryEvent, SessionRegistry,
     DEFAULT_MAX_LIVE_SESSIONS, DEFAULT_SESSION_BUDGET_USD,
 };
-pub use review::{collect_review, ReviewItem, MAX_REVIEW_DIFF_BYTES};
+pub use review::{collect_review, ReviewItem, MAX_REVIEW_DIFF_BYTES, REVIEW_REPOSITORY_TIMEOUT};
 pub use session::{
     RestartDecision, Session, SessionHealth, SessionId, SessionPhase, SessionStatus, ToolProgress,
     MAX_RESTARTS, RESTART_BACKOFF_BASE, RESTART_BACKOFF_MAX,

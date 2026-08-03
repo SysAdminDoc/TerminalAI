@@ -5,12 +5,24 @@
 //! repository; conflict markers are returned as data for the operator.
 
 use std::collections::BTreeSet;
+use std::io::Read;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
+#[cfg(windows)]
+use crate::process_tree::ProcessJob;
 use crate::{Agent, Session, SessionId};
 
 pub const MAX_REVIEW_DIFF_BYTES: usize = 128 * 1024;
+pub const REVIEW_REPOSITORY_TIMEOUT: Duration = Duration::from_secs(5);
+const REVIEW_WORKER_COUNT: usize = 4;
+const REVIEW_COMMAND_OUTPUT_BYTES: usize = MAX_REVIEW_DIFF_BYTES;
+const REVIEW_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ReviewItem {
@@ -28,6 +40,8 @@ pub struct ReviewItem {
     pub reviewed: bool,
     pub diff: String,
     pub diff_truncated: bool,
+    #[serde(default)]
+    pub timed_out: bool,
     pub error: Option<String>,
 }
 
@@ -37,6 +51,10 @@ enum ReviewError {
     Spawn(#[from] std::io::Error),
     #[error("git {command} failed: {message}")]
     Command { command: String, message: String },
+    #[error("git process could not be contained: {0}")]
+    Containment(String),
+    #[error("git command wait failed: {0}")]
+    Wait(String),
 }
 
 #[derive(Debug, Default)]
@@ -44,6 +62,34 @@ struct DiffStats {
     paths: BTreeSet<String>,
     additions: u64,
     deletions: u64,
+}
+
+#[derive(Debug, Default)]
+struct ReviewData {
+    stats: DiffStats,
+    conflicts: Vec<String>,
+    conflict_markers: u32,
+    diff: String,
+    diff_truncated: bool,
+    timed_out: bool,
+    timed_out_command: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct CappedOutput {
+    bytes: Vec<u8>,
+    truncated: bool,
+}
+
+#[derive(Debug, Default)]
+struct GitOutput {
+    stdout: CappedOutput,
+    stderr: CappedOutput,
+}
+
+enum GitOutcome {
+    Completed(GitOutput),
+    TimedOut(GitOutput),
 }
 
 /// Collect one session's current working-tree diff, including staged changes.
@@ -62,56 +108,301 @@ pub fn collect_review(session: &Session) -> ReviewItem {
         reviewed: session.reviewed,
         diff: String::new(),
         diff_truncated: false,
+        timed_out: false,
         error: None,
     };
 
-    let result = collect_git_review(&session.cwd);
+    let result = collect_git_review(&session.cwd, REVIEW_REPOSITORY_TIMEOUT);
     match result {
-        Ok((stats, conflicts, conflict_markers, diff, diff_truncated)) => {
-            item.files_changed = stats.paths.len().max(conflicts.len());
-            item.additions = stats.additions;
-            item.deletions = stats.deletions;
-            item.conflicts = conflicts;
-            item.conflict_markers = conflict_markers;
+        Ok(data) => {
+            item.files_changed = data.stats.paths.len().max(data.conflicts.len());
+            item.additions = data.stats.additions;
+            item.deletions = data.stats.deletions;
+            item.conflicts = data.conflicts;
+            item.conflict_markers = data.conflict_markers;
             item.review_cost = (item.files_changed as u64 * 10)
                 .saturating_add(item.additions)
                 .saturating_add(item.deletions)
                 .saturating_add(u64::from(item.conflict_markers) * 1_000);
-            item.diff = diff;
-            item.diff_truncated = diff_truncated;
+            item.diff = data.diff;
+            item.diff_truncated = data.diff_truncated;
+            item.timed_out = data.timed_out;
+            if data.timed_out {
+                let command = data.timed_out_command.unwrap_or_else(|| "git".into());
+                item.error = Some(format!(
+                    "Review timed out after {} seconds while running git {}; partial results shown",
+                    REVIEW_REPOSITORY_TIMEOUT.as_secs(),
+                    command
+                ));
+            }
         }
         Err(error) => item.error = Some(error.to_string()),
     }
     item
 }
 
-fn collect_git_review(
-    cwd: &Path,
-) -> Result<(DiffStats, Vec<String>, u32, String, bool), ReviewError> {
-    let numstat = git(cwd, &["diff", "HEAD", "--no-renames", "--numstat", "--"])?;
-    let diff = git(cwd, &["diff", "HEAD", "--no-ext-diff", "--unified=3", "--"])?;
-    let status = git(cwd, &["status", "--porcelain=v1", "--untracked-files=no"])?;
-    let stats = parse_numstat(&String::from_utf8_lossy(&numstat));
-    let conflicts = parse_conflicts(&String::from_utf8_lossy(&status));
-    let conflict_markers = count_conflict_markers(&String::from_utf8_lossy(&diff));
-    let (diff, diff_truncated) = truncate_diff(&diff);
-    Ok((stats, conflicts, conflict_markers, diff, diff_truncated))
+/// Collect many repositories with a fixed number of workers so one slow Git
+/// process cannot turn every session into another simultaneous subprocess.
+pub(crate) fn collect_reviews(sessions: Vec<Session>) -> Vec<ReviewItem> {
+    if sessions.is_empty() {
+        return Vec::new();
+    }
+
+    let worker_count = sessions.len().min(REVIEW_WORKER_COUNT);
+    let (job_sender, job_receiver) = mpsc::sync_channel(sessions.len());
+    let job_receiver = Arc::new(Mutex::new(job_receiver));
+    let (result_sender, result_receiver) = mpsc::channel();
+    let mut workers = Vec::with_capacity(worker_count);
+
+    for _ in 0..worker_count {
+        let job_receiver = Arc::clone(&job_receiver);
+        let result_sender = result_sender.clone();
+        workers.push(thread::spawn(move || loop {
+            let session = {
+                let receiver = job_receiver.lock().expect("review worker queue lock");
+                receiver.recv().ok()
+            };
+            let Some(session) = session else {
+                break;
+            };
+            let item = collect_review(&session);
+            if result_sender.send(item).is_err() {
+                break;
+            }
+        }));
+    }
+    drop(result_sender);
+
+    for session in sessions {
+        if job_sender.send(session).is_err() {
+            break;
+        }
+    }
+    drop(job_sender);
+
+    let reviews: Vec<_> = result_receiver
+        .into_iter()
+        .filter(|item| item.files_changed > 0 || item.error.is_some())
+        .collect();
+    for worker in workers {
+        let _ = worker.join();
+    }
+    reviews
 }
 
-fn git(cwd: &Path, args: &[&str]) -> Result<Vec<u8>, ReviewError> {
-    let output = Command::new("git").args(args).current_dir(cwd).output()?;
-    if !output.status.success() {
-        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+fn collect_git_review(cwd: &Path, timeout: Duration) -> Result<ReviewData, ReviewError> {
+    let deadline = Instant::now() + timeout;
+    let mut data = ReviewData::default();
+    let numstat_args = ["diff", "HEAD", "--no-renames", "--numstat", "--"];
+    let numstat = git(cwd, &numstat_args, deadline)?;
+    match numstat {
+        GitOutcome::Completed(output) => {
+            data.stats = parse_numstat(&String::from_utf8_lossy(&output.stdout.bytes));
+        }
+        GitOutcome::TimedOut(output) => {
+            data.stats = parse_numstat(&String::from_utf8_lossy(&output.stdout.bytes));
+            mark_timed_out(&mut data, &numstat_args);
+            return Ok(data);
+        }
+    }
+
+    let diff_args = ["diff", "HEAD", "--no-ext-diff", "--unified=3", "--"];
+    let diff = git(cwd, &diff_args, deadline)?;
+    match diff {
+        GitOutcome::Completed(output) => {
+            data.diff_truncated = output.stdout.truncated;
+            data.diff = bounded_diff(output.stdout);
+            data.conflict_markers = count_conflict_markers(&data.diff);
+        }
+        GitOutcome::TimedOut(output) => {
+            data.diff_truncated = output.stdout.truncated;
+            data.diff = bounded_diff(output.stdout);
+            data.conflict_markers = count_conflict_markers(&data.diff);
+            mark_timed_out(&mut data, &diff_args);
+            return Ok(data);
+        }
+    }
+
+    let status_args = ["status", "--porcelain=v1", "--untracked-files=no"];
+    let status = git(cwd, &status_args, deadline)?;
+    match status {
+        GitOutcome::Completed(output) => {
+            data.conflicts = parse_conflicts(&String::from_utf8_lossy(&output.stdout.bytes));
+        }
+        GitOutcome::TimedOut(output) => {
+            data.conflicts = parse_conflicts(&String::from_utf8_lossy(&output.stdout.bytes));
+            mark_timed_out(&mut data, &status_args);
+            return Ok(data);
+        }
+    }
+    Ok(data)
+}
+
+fn mark_timed_out(data: &mut ReviewData, args: &[&str]) {
+    data.timed_out = true;
+    data.timed_out_command = Some(args.join(" "));
+}
+
+fn git(cwd: &Path, args: &[&str], deadline: Instant) -> Result<GitOutcome, ReviewError> {
+    run_git_program("git", cwd, args, deadline)
+}
+
+fn run_git_program(
+    program: &str,
+    cwd: &Path,
+    args: &[&str],
+    deadline: Instant,
+) -> Result<GitOutcome, ReviewError> {
+    let command = std::iter::once(program)
+        .chain(args.iter().copied())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if Instant::now() >= deadline {
+        return Ok(GitOutcome::TimedOut(GitOutput::default()));
+    }
+
+    let mut child = Command::new(program)
+        .args(args)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    #[cfg(windows)]
+    let job = match ProcessJob::assign(child.as_raw_handle()) {
+        Ok(job) => job,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(ReviewError::Containment(error));
+        }
+    };
+
+    let stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            #[cfg(windows)]
+            terminate_child(&mut child, &job);
+            #[cfg(not(windows))]
+            terminate_child(&mut child);
+            return Err(ReviewError::Spawn(std::io::Error::other(
+                "git stdout pipe missing",
+            )));
+        }
+    };
+    let stderr = match child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            #[cfg(windows)]
+            terminate_child(&mut child, &job);
+            #[cfg(not(windows))]
+            terminate_child(&mut child);
+            return Err(ReviewError::Spawn(std::io::Error::other(
+                "git stderr pipe missing",
+            )));
+        }
+    };
+    let stdout_reader = spawn_capture(stdout);
+    let stderr_reader = spawn_capture(stderr);
+
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    #[cfg(windows)]
+                    terminate_child(&mut child, &job);
+                    #[cfg(not(windows))]
+                    terminate_child(&mut child);
+                    #[cfg(windows)]
+                    drop(job);
+                    let output = GitOutput {
+                        stdout: join_capture(stdout_reader),
+                        stderr: join_capture(stderr_reader),
+                    };
+                    return Ok(GitOutcome::TimedOut(output));
+                }
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                thread::sleep(remaining.min(REVIEW_POLL_INTERVAL));
+            }
+            Err(error) => {
+                #[cfg(windows)]
+                terminate_child(&mut child, &job);
+                #[cfg(not(windows))]
+                terminate_child(&mut child);
+                #[cfg(windows)]
+                drop(job);
+                let _ = join_capture(stdout_reader);
+                let _ = join_capture(stderr_reader);
+                return Err(ReviewError::Wait(error.to_string()));
+            }
+        }
+    };
+
+    #[cfg(windows)]
+    drop(job);
+    let output = GitOutput {
+        stdout: join_capture(stdout_reader),
+        stderr: join_capture(stderr_reader),
+    };
+    if !status.success() {
+        let message = String::from_utf8_lossy(&output.stderr.bytes)
+            .trim()
+            .to_string();
         return Err(ReviewError::Command {
-            command: args.join(" "),
+            command,
             message: if message.is_empty() {
-                format!("exit status {}", output.status)
+                format!("exit status {status}")
             } else {
                 message
             },
         });
     }
-    Ok(output.stdout)
+    Ok(GitOutcome::Completed(output))
+}
+
+fn spawn_capture<R>(mut reader: R) -> JoinHandle<CappedOutput>
+where
+    R: Read + Send + 'static,
+{
+    thread::spawn(move || {
+        let mut output = CappedOutput {
+            bytes: Vec::with_capacity(REVIEW_COMMAND_OUTPUT_BYTES.min(8 * 1024)),
+            truncated: false,
+        };
+        let mut buffer = [0_u8; 8 * 1024];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => {
+                    let remaining = REVIEW_COMMAND_OUTPUT_BYTES.saturating_sub(output.bytes.len());
+                    let retained = read.min(remaining);
+                    output.bytes.extend_from_slice(&buffer[..retained]);
+                    output.truncated |= retained < read;
+                }
+                Err(_) => break,
+            }
+        }
+        output
+    })
+}
+
+fn join_capture(reader: JoinHandle<CappedOutput>) -> CappedOutput {
+    reader.join().unwrap_or_default()
+}
+
+#[cfg(windows)]
+fn terminate_child(child: &mut Child, job: &ProcessJob) {
+    let _ = job.terminate();
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[cfg(not(windows))]
+fn terminate_child(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 fn parse_numstat(text: &str) -> DiffStats {
@@ -152,22 +443,27 @@ fn parse_conflicts(text: &str) -> Vec<String> {
 }
 
 fn count_conflict_markers(diff: &str) -> u32 {
-    diff.lines()
-        .filter(|line| {
-            line.starts_with("+<<<<<<<")
-                || line.starts_with("+=======")
-                || line.starts_with("+>>>>>>>")
-        })
-        .count() as u32
+    let mut stage = 0_u8;
+    let mut complete_blocks = 0_u32;
+    for line in diff.lines() {
+        if line.starts_with("+<<<<<<<") {
+            stage = 1;
+        } else if stage == 1 && line.starts_with("+=======") {
+            stage = 2;
+        } else if stage == 2 && line.starts_with("+>>>>>>>") {
+            complete_blocks = complete_blocks.saturating_add(1);
+            stage = 0;
+        }
+    }
+    complete_blocks.saturating_mul(3)
 }
 
-fn truncate_diff(bytes: &[u8]) -> (String, bool) {
-    if bytes.len() <= MAX_REVIEW_DIFF_BYTES {
-        return (String::from_utf8_lossy(bytes).into_owned(), false);
+fn bounded_diff(output: CappedOutput) -> String {
+    let mut diff = String::from_utf8_lossy(&output.bytes).into_owned();
+    if output.truncated {
+        diff.push_str("\n\n[diff truncated at 128 KiB]\n");
     }
-    let mut diff = String::from_utf8_lossy(&bytes[..MAX_REVIEW_DIFF_BYTES]).into_owned();
-    diff.push_str("\n\n[diff truncated at 128 KiB]\n");
-    (diff, true)
+    diff
 }
 
 #[cfg(test)]
@@ -190,14 +486,53 @@ mod tests {
             count_conflict_markers("+<<<<<<< HEAD\n+=======\n+>>>>>>> theirs\n"),
             3
         );
+        assert_eq!(count_conflict_markers("+=======\n"), 0);
+        assert_eq!(count_conflict_markers("+<<<<<<< HEAD\n+=======\n"), 0);
     }
 
     #[test]
     fn large_diffs_are_bounded_for_the_control_plane() {
-        let (diff, truncated) = truncate_diff(&vec![b'x'; MAX_REVIEW_DIFF_BYTES + 1]);
-        assert!(truncated);
+        let diff = bounded_diff(CappedOutput {
+            bytes: vec![b'x'; MAX_REVIEW_DIFF_BYTES],
+            truncated: true,
+        });
         assert!(diff.len() < MAX_REVIEW_DIFF_BYTES + 64);
         assert!(diff.contains("diff truncated"));
+    }
+
+    #[test]
+    fn command_capture_caps_output_while_draining_the_pipe() {
+        let reader = std::io::Cursor::new(vec![b'x'; MAX_REVIEW_DIFF_BYTES + 1]);
+        let captured = join_capture(spawn_capture(reader));
+        assert_eq!(captured.bytes.len(), MAX_REVIEW_DIFF_BYTES);
+        assert!(captured.truncated);
+    }
+
+    #[test]
+    fn git_command_timeout_returns_a_bounded_partial_result() {
+        let root = std::env::temp_dir().join(format!(
+            "terminalai-review-timeout-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create timeout directory");
+
+        #[cfg(windows)]
+        let (program, args) = ("cmd", vec!["/C", "ping", "127.0.0.1", "-n", "10"]);
+        #[cfg(not(windows))]
+        let (program, args) = ("sh", vec!["-c", "while true; do :; done"]);
+        let outcome = run_git_program(
+            program,
+            &root,
+            &args,
+            Instant::now() + Duration::from_millis(100),
+        )
+        .expect("start timeout command");
+        assert!(matches!(outcome, GitOutcome::TimedOut(_)));
+        std::fs::remove_dir_all(root).expect("remove timeout directory");
     }
 
     #[test]

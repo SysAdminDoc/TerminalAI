@@ -22,7 +22,7 @@ use crate::hooks::{HookEvent, HookNotification, HookSignal};
 use crate::launch::{LaunchError, LaunchSpec, ResolvedCommand, Resume};
 use crate::notification::{NotificationCenter, NotificationChange, NotificationEvent};
 use crate::pty::{PtyError, PtySession, PtySize};
-use crate::review::{collect_review, ReviewItem};
+use crate::review::{collect_reviews, ReviewItem};
 use crate::session::{
     fleet_order, RestartDecision, Session, SessionId, SessionPhase, SessionStatus,
 };
@@ -410,11 +410,7 @@ impl SessionRegistry {
                 .map(|entry| entry.session.clone())
                 .collect()
         };
-        let mut reviews: Vec<_> = sessions
-            .iter()
-            .map(collect_review)
-            .filter(|item| item.files_changed > 0 || item.error.is_some())
-            .collect();
+        let mut reviews = collect_reviews(sessions);
         reviews.sort_by(|a, b| {
             b.review_cost
                 .cmp(&a.review_cost)

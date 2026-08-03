@@ -286,7 +286,8 @@ function renderReview() {
   const entries = Array.isArray(state.reviews) ? state.reviews : [];
   const pending = entries.filter((entry) => !entry.reviewed).length;
   const conflicts = entries.filter((entry) => (entry.conflicts?.length ?? 0) > 0 || reviewNumber(entry.conflict_markers) > 0).length;
-  $("review-summary").textContent = entries.length + " session" + (entries.length === 1 ? "" : "s") + " · " + pending + " pending · " + conflicts + " with conflicts";
+  const timedOut = entries.filter((entry) => entry.timed_out === true).length;
+  $("review-summary").textContent = entries.length + " session" + (entries.length === 1 ? "" : "s") + " · " + pending + " pending · " + conflicts + " with conflicts" + (timedOut ? " · " + timedOut + " timed out" : "");
   $("review-empty").classList.toggle("view-hidden", entries.length > 0);
   $("review-list").innerHTML = entries.map(renderReviewEntry).join("");
 }
@@ -299,7 +300,7 @@ function renderReviewEntry(entry) {
   const files = reviewNumber(entry.files_changed);
   const reviewCost = reviewNumber(entry.review_cost);
   const agent = entry.agent === "codex" ? "Codex" : "Claude Code";
-  const status = entry.reviewed ? "Reviewed" : "Pending";
+  const status = entry.timed_out ? "Timed out" : (entry.reviewed ? "Reviewed" : "Pending");
   const conflictDetails = conflicts.length
     ? "<ul>" + conflicts.map((path) => "<li><code>" + escapeHtml(path) + "</code></li>").join("") + "</ul>"
     : "";
@@ -315,7 +316,7 @@ function renderReviewEntry(entry) {
     : entry.error
       ? ""
       : '<button type="button" class="button button-secondary review-mark" data-review-action="mark-reviewed" data-review-id="' + escapeHtml(entry.session_id) + '">Mark reviewed</button>';
-  return '<article class="review-entry' + (entry.reviewed ? " review-entry-reviewed" : "") + '" role="listitem">' +
+  return '<article class="review-entry' + (entry.reviewed ? " review-entry-reviewed" : "") + (entry.timed_out ? " review-entry-timeout" : "") + '" role="listitem">' +
     '<div class="review-entry-heading"><div><h3>' + escapeHtml(entry.name) + '</h3><div class="review-repo"><span>' + escapeHtml(folderLabel(entry.cwd)) + '</span><span>' + escapeHtml(agent) + '</span><code>' + escapeHtml(entry.session_id) + '</code></div></div><div class="review-entry-action">' + actionMarkup + "</div></div>" +
     '<div class="review-metrics"><span><b>' + files + "</b> file" + (files === 1 ? "" : "s") + '</span><span class="review-additions">+' + additions + '</span><span class="review-deletions">−' + deletions + '</span><span>cost ' + reviewCost + '</span><span class="review-state">' + status + "</span></div>" +
     conflictMarkup + errorMarkup + diffMarkup + "</article>";
