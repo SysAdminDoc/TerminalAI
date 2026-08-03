@@ -19,7 +19,7 @@ use terminalai_core::agent::{self, Agent};
 use terminalai_core::launch::{Effort, LaunchSpec, Permission, ResolvedCommand, Sandbox};
 use terminalai_core::parse_hook;
 use terminalai_core::pty::{self, PtySession};
-use terminalai_daemon::{DaemonClient, Request, Response, PIPE_NAME};
+use terminalai_daemon::{DaemonClient, Request, Response};
 
 const USAGE: &str = "\
 terminalai-probe — machine-facing checks for TerminalAI
@@ -33,6 +33,7 @@ USAGE:
   terminalai-probe stop    <session-id> --json
   terminalai-probe send    <session-id> <text> --json
   terminalai-probe status  <session-id> --json
+  terminalai-probe shutdown
   terminalai-probe hook    <claude|codex>    (read one hook JSON object from stdin)
   terminalai-probe hooks   <status|preview|install|remove> <claude|codex> [options]
   terminalai-probe cpu-idle [--sessions <n>] [--seconds <s>] [--poll]
@@ -68,6 +69,7 @@ fn main() {
         Some("stop") => cmd_stop(&args[1..]),
         Some("send") => cmd_send(&args[1..]),
         Some("status") => cmd_status(&args[1..]),
+        Some("shutdown") => cmd_shutdown(&args[1..]),
         Some("exec") => cmd_exec(&args[1..]),
         Some("cpu-idle") => cmd_cpu_idle(&args[1..]),
         Some("hook") => cmd_hook(&args[1..]),
@@ -148,6 +150,20 @@ fn cmd_status(args: &[String]) -> i32 {
     }
 }
 
+fn cmd_shutdown(args: &[String]) -> i32 {
+    if !args.is_empty() {
+        return control_usage("shutdown takes no arguments");
+    }
+    match control_call(Request::Shutdown) {
+        Ok(Response::Ok) => {
+            println!("TerminalAI daemon shutdown requested");
+            0
+        }
+        Ok(response) => print_control_response(response, false),
+        Err(error) => print_control_error(error, false),
+    }
+}
+
 fn without_json(args: &[String]) -> (bool, Vec<String>) {
     let machine = args.iter().any(|arg| arg == "--json");
     let args = args
@@ -172,7 +188,7 @@ fn control_usage(message: &str) -> i32 {
 
 fn control_call(request: Request) -> Result<Response, String> {
     let timeout = Duration::from_secs(5);
-    let client = DaemonClient::connect_named_with_timeout(PIPE_NAME, timeout)
+    let client = DaemonClient::connect_with_timeout(timeout)
         .map_err(|error| format!("could not connect to TerminalAI daemon: {error}"))?;
     client
         .call_with_timeout(request, timeout)
@@ -235,7 +251,7 @@ fn cmd_hook(args: &[String]) -> i32 {
     };
 
     let timeout = Duration::from_millis(750);
-    let client = match DaemonClient::connect_named_with_timeout(PIPE_NAME, timeout) {
+    let client = match DaemonClient::connect_with_timeout(timeout) {
         Ok(client) => client,
         Err(error) => {
             eprintln!("ignoring hook because TerminalAI is unavailable: {error}");

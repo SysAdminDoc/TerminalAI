@@ -218,6 +218,7 @@ terminalai-probe start claude --cwd . --prompt "run the tests" --json
 terminalai-probe status s0001 --json
 terminalai-probe send s0001 "focus on failing tests first" --json
 terminalai-probe stop s0001 --json
+terminalai-probe shutdown
 
 # What would this launcher choice actually run?
 terminalai-probe preview claude --model opus --effort xhigh --permission plan
@@ -240,6 +241,11 @@ terminalai-probe hooks status claude --executable .\target\release\terminalai.ex
 terminalai-probe hooks install claude --executable .\target\release\terminalai.exe
 terminalai-probe hooks remove claude --executable .\target\release\terminalai.exe
 ```
+
+`shutdown` asks the daemon to tear down its owned sessions and exit cleanly. The daemon also
+handles Windows console-close and shutdown signals. Protocol compatibility is negotiated on the
+stable local endpoint, so an older running daemon is reported with its PID instead of causing the
+desktop shell to start a second owner of the fleet.
 
 Hook installation is opt-in and only owns entries carrying `--terminalai-managed`; unrelated
 Claude handlers and Codex `notify` commands are preserved. Use `--config <path>` to inspect or

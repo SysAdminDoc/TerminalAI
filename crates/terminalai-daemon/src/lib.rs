@@ -31,14 +31,15 @@ pub mod app_server;
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use interprocess::local_socket::{
-    prelude::*, GenericNamespaced, ListenerOptions, Name, RecvHalf, SendHalf,
+    prelude::*, GenericNamespaced, ListenerNonblockingMode, ListenerOptions, Name, RecvHalf,
+    SendHalf,
 };
 use serde::{Deserialize, Serialize};
 use terminalai_core::agent::{self, Agent, Origin};
@@ -52,7 +53,11 @@ use terminalai_core::{
 use persistence::StoreWriter;
 
 pub const PROTOCOL_VERSION: u16 = 2;
-pub const PIPE_NAME: &str = "terminalai.control.v2";
+/// Stable control-plane name. Protocol compatibility is negotiated in the
+/// first frame, so changing the socket name would strand an older daemon that
+/// still owns live sessions before the newer client can report the skew.
+pub const PIPE_NAME: &str = "terminalai.control";
+const LEGACY_PIPE_NAME: &str = "terminalai.control.v2";
 const OUTGOING_QUEUE_CAPACITY: usize = 256;
 /// Largest control frame either end will read.
 ///
@@ -121,8 +126,14 @@ pub enum IpcError {
     Poisoned(&'static str),
     #[error("daemon rejected the request: {0}")]
     Remote(String),
-    #[error("incompatible control protocol: daemon={daemon}, client={client}")]
-    VersionMismatch { daemon: u16, client: u16 },
+    #[error(
+        "incompatible control protocol: running daemon PID {daemon_pid} speaks v{daemon}, client speaks v{client}; stop it with `Stop-Process -Id {daemon_pid}` on Windows, then retry"
+    )]
+    VersionMismatch {
+        daemon: u16,
+        client: u16,
+        daemon_pid: u32,
+    },
     #[error("control peer identity mismatch: expected process {expected}, got {actual:?}")]
     PeerMismatch { expected: u32, actual: Option<u32> },
     #[error("invalid control message: {0}")]
@@ -131,6 +142,14 @@ pub enum IpcError {
     Store(String),
     #[error("invalid admission configuration: {0}")]
     Configuration(String),
+}
+
+impl IpcError {
+    fn is_version_mismatch(&self) -> bool {
+        matches!(self, Self::VersionMismatch { .. })
+            || matches!(self, Self::Remote(message) if message
+                .starts_with("incompatible control protocol:"))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,6 +162,8 @@ pub enum Request {
     Subscribe,
     Ping,
     Close,
+    /// Ask the daemon to tear down owned sessions and leave its accept loop.
+    Shutdown,
     Snapshot,
     ReviewSnapshot,
     /// Sessions running outside this supervisor, read from the agent's own
@@ -290,6 +311,7 @@ pub struct DaemonServer {
     registry: SessionRegistry,
     store_writer: Option<StoreWriter>,
     store_quarantine: Option<String>,
+    shutdown: Arc<AtomicBool>,
 }
 
 impl Drop for DaemonServer {
@@ -337,14 +359,18 @@ impl DaemonServer {
             options = options.security_descriptor(current_user_pipe_descriptor()?);
         }
         // Interprocess sets FILE_FLAG_FIRST_PIPE_INSTANCE for the initial
-        // Windows named-pipe instance. It also rejects remote clients by
+        // Windows named-pipe instance. Disable name reclamation as well so a
+        // second daemon cannot replace the first one on Unix or in a future
+        // alternate local-socket backend. Remote clients remain rejected by
         // default; the DACL below narrows local access to SYSTEM and the owner.
+        options = options.reclaim_name(false).try_overwrite(false);
         let listener = options.create_sync()?;
         Ok(Self {
             listener,
             registry,
             store_writer,
             store_quarantine,
+            shutdown: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -352,37 +378,55 @@ impl DaemonServer {
         Self::bind_named_with_state(name, registry, None, None)
     }
 
-    /// Serve connections until the daemon process is terminated.
+    /// Serve connections until a client requests shutdown or the console
+    /// handler marks the process for teardown.
     pub fn serve(self) -> Result<(), IpcError> {
         if let Some(writer) = self.store_writer.clone() {
             bridge_store(self.registry.clone(), writer);
         }
-        for connection in self.listener.incoming() {
-            match connection {
-                Ok(stream) => {
-                    let registry = self.registry.clone();
-                    let store_quarantine = self.store_quarantine.clone();
-                    thread::Builder::new()
-                        .name("terminalai-daemon-client".into())
-                        .spawn(move || {
-                            if let Err(error) =
-                                handle_connection(stream, registry, store_quarantine)
-                            {
-                                eprintln!("terminalai-daemon client: {error}");
-                            }
-                        })
-                        // A transient spawn failure used to end serve() outright,
-                        // abandoning every live agent with no UI. One refused
-                        // client is not a reason to drop the fleet.
-                        .unwrap_or_else(|error| {
-                            eprintln!(
-                                "terminalai-daemon: could not start a client thread,                                  dropping this connection: {error}"
-                            );
-                            thread::spawn(|| {})
-                        });
-                }
-                Err(error) => eprintln!("terminalai-daemon accept: {error}"),
+        self.listener
+            .set_nonblocking(ListenerNonblockingMode::Accept)?;
+        let shutdown = self.shutdown.clone();
+        loop {
+            if shutdown.load(Ordering::Acquire) || console_shutdown_requested() {
+                break;
             }
+            let connection = match self.listener.incoming().next() {
+                Some(Ok(stream)) => stream,
+                Some(Err(error)) if error.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(25));
+                    continue;
+                }
+                Some(Err(error)) => {
+                    if shutdown.load(Ordering::Acquire) || console_shutdown_requested() {
+                        break;
+                    }
+                    eprintln!("terminalai-daemon accept: {error}");
+                    continue;
+                }
+                None => break,
+            };
+            let registry = self.registry.clone();
+            let store_quarantine = self.store_quarantine.clone();
+            let shutdown = shutdown.clone();
+            thread::Builder::new()
+                .name("terminalai-daemon-client".into())
+                .spawn(move || {
+                    if let Err(error) =
+                        handle_connection(connection, registry, store_quarantine, shutdown)
+                    {
+                        eprintln!("terminalai-daemon client: {error}");
+                    }
+                })
+                // A transient spawn failure used to end serve() outright,
+                // abandoning every live agent with no UI. One refused
+                // client is not a reason to drop the fleet.
+                .unwrap_or_else(|error| {
+                    eprintln!(
+                        "terminalai-daemon: could not start a client thread,                                  dropping this connection: {error}"
+                    );
+                    thread::spawn(|| {})
+                });
         }
         Ok(())
     }
@@ -394,7 +438,12 @@ impl DaemonServer {
             .incoming()
             .next()
             .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "listener closed"))??;
-        handle_connection(stream, self.registry.clone(), self.store_quarantine.clone())
+        handle_connection(
+            stream,
+            self.registry.clone(),
+            self.store_quarantine.clone(),
+            self.shutdown.clone(),
+        )
     }
 }
 
@@ -416,13 +465,61 @@ fn bridge_store(registry: SessionRegistry, writer: StoreWriter) {
 
 pub fn run() -> Result<(), IpcError> {
     install_panic_hook();
+    install_console_handler();
     DaemonServer::bind()?.serve()
+}
+
+#[cfg(windows)]
+static CONSOLE_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+#[cfg(windows)]
+fn install_console_handler() {
+    use windows_sys::Win32::System::Console::{
+        SetConsoleCtrlHandler, CTRL_CLOSE_EVENT, CTRL_C_EVENT, CTRL_LOGOFF_EVENT,
+        CTRL_SHUTDOWN_EVENT,
+    };
+
+    CONSOLE_SHUTDOWN.store(false, Ordering::Release);
+    let installed = unsafe { SetConsoleCtrlHandler(Some(console_ctrl_handler), 1) };
+    if installed == 0 {
+        // The packaged daemon is normally launched without a console. That is
+        // expected; named-pipe shutdown remains available in that mode.
+        eprintln!(
+            "terminalai-daemon: console shutdown handler unavailable; use `terminalai-probe shutdown`"
+        );
+    }
+
+    unsafe extern "system" fn console_ctrl_handler(ctrl_type: u32) -> i32 {
+        if matches!(
+            ctrl_type,
+            CTRL_C_EVENT | CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT | CTRL_SHUTDOWN_EVENT
+        ) {
+            CONSOLE_SHUTDOWN.store(true, Ordering::Release);
+            1
+        } else {
+            0
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn install_console_handler() {}
+
+#[cfg(windows)]
+fn console_shutdown_requested() -> bool {
+    CONSOLE_SHUTDOWN.load(Ordering::Acquire)
+}
+
+#[cfg(not(windows))]
+fn console_shutdown_requested() -> bool {
+    false
 }
 
 fn handle_connection(
     stream: LocalSocketStream,
     registry: SessionRegistry,
     store_quarantine: Option<String>,
+    shutdown: Arc<AtomicBool>,
 ) -> Result<(), IpcError> {
     let peer_pid = stream.peer_creds()?.pid();
     let (receive, send) = stream.split();
@@ -496,12 +593,12 @@ fn handle_connection(
                     send_response(
                         &outgoing_tx,
                         id,
-                        Response::Error {
-                            message: IpcError::VersionMismatch {
-                                daemon: PROTOCOL_VERSION,
-                                client: protocol,
-                            }
-                            .to_string(),
+                        // Keep the daemon identity in a typed handshake so a
+                        // newer client can explain the skew and refuse to
+                        // launch a second daemon over the live one.
+                        Response::Hello {
+                            protocol: PROTOCOL_VERSION,
+                            daemon_pid: std::process::id(),
                         },
                     )?;
                     break;
@@ -535,6 +632,11 @@ fn handle_connection(
             match request {
                 Request::Close => {
                     send_response(&outgoing_tx, id, Response::Ok)?;
+                    break;
+                }
+                Request::Shutdown => {
+                    send_response(&outgoing_tx, id, Response::Ok)?;
+                    shutdown.store(true, Ordering::Release);
                     break;
                 }
                 Request::Subscribe => {
@@ -644,6 +746,7 @@ fn dispatch_with_quarantine(
             message: "Subscribe is handled by the connection".into(),
         },
         Request::Close => Response::Ok,
+        Request::Shutdown => Response::Ok,
         Request::Ping => Response::Pong,
         Request::Snapshot => Response::Snapshot {
             sessions: registry.snapshot(),
@@ -833,6 +936,7 @@ fn request_requires_registry(request: &Request) -> bool {
             | Request::Subscribe
             | Request::Ping
             | Request::Close
+            | Request::Shutdown
             | Request::Resolve { .. }
             | Request::Preview { .. }
     )
@@ -860,7 +964,20 @@ pub struct DaemonClient {
 
 impl DaemonClient {
     pub fn connect() -> Result<Self, IpcError> {
-        Self::connect_named(PIPE_NAME)
+        Self::connect_with_timeout(Duration::from_secs(30))
+    }
+
+    /// Connect to the stable endpoint, falling back once to the v2 endpoint
+    /// so an upgrade can still attach to a daemon from the pre-stable-name
+    /// release instead of starting a second owner of the fleet.
+    pub fn connect_with_timeout(timeout: Duration) -> Result<Self, IpcError> {
+        match Self::connect_named_with_timeout(PIPE_NAME, timeout) {
+            Ok(client) => Ok(client),
+            Err(error) if !error.is_version_mismatch() => {
+                Self::connect_named_with_timeout(LEGACY_PIPE_NAME, timeout).or(Err(error))
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub fn connect_named(name: &str) -> Result<Self, IpcError> {
@@ -887,9 +1004,13 @@ impl DaemonClient {
             timeout,
         )? {
             Response::Hello { protocol, .. } if protocol == PROTOCOL_VERSION => Ok(client),
-            Response::Hello { protocol, .. } => Err(IpcError::VersionMismatch {
+            Response::Hello {
+                protocol,
+                daemon_pid,
+            } => Err(IpcError::VersionMismatch {
                 daemon: protocol,
                 client: PROTOCOL_VERSION,
+                daemon_pid,
             }),
             Response::Error { message } => Err(IpcError::Remote(message)),
             other => Err(IpcError::InvalidMessage(format!(
@@ -936,6 +1057,16 @@ impl DaemonClient {
             Response::Error { message } => Err(IpcError::Remote(message)),
             other => Err(IpcError::InvalidMessage(format!(
                 "unexpected subscribe response: {other:?}"
+            ))),
+        }
+    }
+
+    pub fn shutdown(&self) -> Result<(), IpcError> {
+        match self.call(Request::Shutdown)? {
+            Response::Ok => Ok(()),
+            Response::Error { message } => Err(IpcError::Remote(message)),
+            other => Err(IpcError::InvalidMessage(format!(
+                "unexpected shutdown response: {other:?}"
             ))),
         }
     }
@@ -1201,6 +1332,56 @@ mod tests {
             .join()
             .expect("server thread")
             .expect("serve client");
+    }
+
+    #[test]
+    fn shutdown_request_ends_the_accept_loop() {
+        let name = format!(
+            "terminalai-shutdown-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        );
+        let server = DaemonServer::bind_named(&name).expect("bind shutdown socket");
+        let server_thread = thread::spawn(move || server.serve());
+        let client = DaemonClient::connect_named(&name).expect("connect shutdown socket");
+        client.shutdown().expect("request daemon shutdown");
+        drop(client);
+        server_thread
+            .join()
+            .expect("server thread")
+            .expect("serve after shutdown");
+    }
+
+    #[test]
+    fn a_second_server_cannot_replace_the_first_binding() {
+        let name = format!(
+            "terminalai-single-instance-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        );
+        let first = DaemonServer::bind_named(&name).expect("first server binds");
+        let second = DaemonServer::bind_named(&name);
+        assert!(second.is_err(), "second daemon replaced the first binding");
+        drop(first);
+    }
+
+    #[test]
+    fn protocol_skew_names_the_running_daemon_and_stop_action() {
+        let message = IpcError::VersionMismatch {
+            daemon: 2,
+            client: 3,
+            daemon_pid: 4242,
+        }
+        .to_string();
+        assert!(message.contains("PID 4242"));
+        assert!(message.contains("v2"));
+        assert!(message.contains("Stop-Process -Id 4242"));
     }
 
     #[cfg(windows)]

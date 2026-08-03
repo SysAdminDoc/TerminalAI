@@ -3,6 +3,16 @@
 All notable changes to TerminalAI are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- The daemon now has a graceful `terminalai-probe shutdown` control request, Windows console
+  teardown handling, and a single-instance binding guard. Protocol skew reports the running daemon
+  PID and a concrete stop command; the desktop shell refuses to spawn a second daemon in that case.
+- The control endpoint now has a stable name with a legacy v2 fallback, so protocol negotiation can
+  detect upgrades without stranding a daemon that still owns live sessions.
+
 ## [0.2.0] — 2026-08-03
 
 ### Added

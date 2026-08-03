@@ -18,7 +18,7 @@ use terminalai_core::launch::LaunchSpec;
 use terminalai_core::{
     parse_hook, AdmissionSnapshot, RegistryEvent, ReviewItem, Session, SessionId,
 };
-use terminalai_daemon::{DaemonClient, Request, Response, PROTOCOL_VERSION};
+use terminalai_daemon::{DaemonClient, IpcError, Request, Response, PROTOCOL_VERSION};
 
 struct AppState {
     client: Mutex<Option<DaemonClient>>,
@@ -508,10 +508,7 @@ fn install_preflight_hooks() -> Result<(), String> {
 }
 
 fn preflight_daemon() -> PreflightCheck {
-    match DaemonClient::connect_named_with_timeout(
-        terminalai_daemon::PIPE_NAME,
-        PREFLIGHT_DAEMON_TIMEOUT,
-    ) {
+    match DaemonClient::connect_with_timeout(PREFLIGHT_DAEMON_TIMEOUT) {
         Ok(_) => PreflightCheck {
             id: "daemon".into(),
             label: "Daemon reachable".into(),
@@ -770,8 +767,15 @@ fn create_start_menu_shortcut() -> Result<(), String> {
 }
 
 fn connect_or_start_daemon() -> Result<DaemonClient, String> {
-    if let Ok(client) = DaemonClient::connect() {
-        return Ok(client);
+    match DaemonClient::connect() {
+        Ok(client) => return Ok(client),
+        Err(error @ IpcError::VersionMismatch { .. }) => {
+            return Err(error.to_string());
+        }
+        Err(IpcError::Remote(message)) if message.starts_with("incompatible control protocol:") => {
+            return Err(message);
+        }
+        Err(_) => {}
     }
 
     let executable = std::env::current_exe()
@@ -802,6 +806,12 @@ fn connect_or_start_daemon() -> Result<DaemonClient, String> {
     while Instant::now() < deadline {
         match DaemonClient::connect() {
             Ok(client) => return Ok(client),
+            Err(error @ IpcError::VersionMismatch { .. }) => return Err(error.to_string()),
+            Err(IpcError::Remote(message))
+                if message.starts_with("incompatible control protocol:") =>
+            {
+                return Err(message);
+            }
             Err(error) => last_error = error.to_string(),
         }
         thread::sleep(Duration::from_millis(50));
@@ -1014,14 +1024,13 @@ fn run_hook_cli(args: &[String]) -> i32 {
         }
     };
     let timeout = Duration::from_millis(750);
-    let client =
-        match DaemonClient::connect_named_with_timeout(terminalai_daemon::PIPE_NAME, timeout) {
-            Ok(client) => client,
-            Err(error) => {
-                eprintln!("ignoring hook because TerminalAI is unavailable: {error}");
-                return 0;
-            }
-        };
+    let client = match DaemonClient::connect_with_timeout(timeout) {
+        Ok(client) => client,
+        Err(error) => {
+            eprintln!("ignoring hook because TerminalAI is unavailable: {error}");
+            return 0;
+        }
+    };
     match client.call_with_timeout(Request::Hook { event }, timeout) {
         Ok(Response::Hook { .. }) | Ok(Response::Ok) => {}
         Ok(other) => eprintln!("ignoring unexpected hook response: {other:?}"),
