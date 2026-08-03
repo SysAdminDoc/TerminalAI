@@ -8,9 +8,9 @@
 A control surface for running many Claude Code and Codex sessions at once.
 
 Pick the agent, model, effort, permission mode and project folder from a GUI; TerminalAI
-launches the real CLI on a pseudo-console and puts it in a dense fleet list. Thirty tracked
-sessions fit on one screen because only the ones you are actually looking at get a terminal
-grid — the rest are a status row.
+launches the real CLI on a pseudo-console and puts it in a dense fleet list. Twenty-nine tracked
+sessions fit on one screen at the default 1440x900 window because only the ones you are actually
+looking at get a terminal grid — the rest are a status row.
 
 ## Why another one
 
@@ -24,6 +24,12 @@ Every multiplexer in this space renders **panes**. Panes do not stack: four xter
 
 You only ever type into one session at a time, so only one session pays for a renderer
 (plus any you pin). Everything else is a row.
+
+The compact row is measured, not aspirational: 28px exactly, carrying the status glyph, session
+name, repository, agent, tool progress, restart count, dwell time and last output line on one
+line. Measured 2026-08-03 in WebView2's engine at the default 1440x900 window, that is 29 fully
+visible rows. **Wide** adds a second line with model, reasoning effort, cost, branch, ports and
+the spelled-out status, at 50px.
 
 Thirty is a tracked-session target, not a promise to keep thirty agent processes hot. Local
 measurements on 2026-08-02 showed roughly 509 MB RSS for Claude Code and 322 MB for Codex per
@@ -96,9 +102,10 @@ cap and `TERMINALAI_DEFAULT_BUDGET_USD` to change the default Claude `--max-budg
 disable it). The fleet header shows live/queued counts and the aggregate reported spend.
 
 The fleet header also shows counts for every session state. Compact rows keep the status glyph,
-agent, repository/branch, dwell time, tool progress, restart count and last output line in view;
-use **Wide** to reveal model, reasoning effort and reported cost. Press `/` anywhere outside a text
-field to focus the fleet filter.
+session name, repository, agent, tool progress, restart count, dwell time and last output line on
+one 28px line; use **Wide** to reveal model, reasoning effort, cost, branch, ports and the
+spelled-out status on a second line. Press `/` anywhere outside a text field to focus the fleet
+filter.
 
 Each launch can reserve a deterministic block of service ports and run optional setup and teardown
 hooks from the project directory. Hooks and the agent receive `TERMINALAI_SESSION_ID`,

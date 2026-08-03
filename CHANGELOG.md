@@ -140,6 +140,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   laid out below it.
 - Closing the launcher, or pressing Enter in any launcher field, no longer spawns an agent —
   every dialog control is an explicit button and the form refuses submission outright.
+- The compact fleet row now meets its documented 28px, down from 54px, putting the status glyph,
+  name, repository, agent, tool progress, restart count, dwell and last output line on one line
+  and moving branch, ports and the spelled-out status into Wide. Measured in WebView2's engine at
+  the default 1440x900 window: 29 fully visible rows against 13 before.
+- Blocks carrying the `hidden` attribute are hidden again. An author `display: grid`/`flex`
+  declaration outranks the user-agent `[hidden]` rule, so the Wide metadata and inline reply
+  blocks were rendering on every row regardless.
 - A session marked reviewed now returns to unreviewed as soon as its diff changes. The mark
   records a fingerprint of the diff it was made against instead of a write-once boolean, so a
   session no longer stays acknowledged while the agent keeps editing files. Marking a session
