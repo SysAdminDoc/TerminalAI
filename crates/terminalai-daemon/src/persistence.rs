@@ -159,7 +159,9 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
     use terminalai_core::store::{ArchivedSession, StoredSession};
-    use terminalai_core::{Agent, LaunchSpec, ResolvedCommand, Session, SessionId};
+    use terminalai_core::{
+        Agent, LaunchSpec, ResolvedCommand, SESSION_STORE_MAGIC, Session, SessionId,
+    };
 
     static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -173,15 +175,20 @@ mod tests {
         dir
     }
 
+    fn fixture(name: &str) -> &'static str {
+        match name {
+            "truncated" => include_str!("../tests/fixtures/store/truncated.json"),
+            "schema-0" => include_str!("../tests/fixtures/store/schema-0.json"),
+            "schema-1" => include_str!("../tests/fixtures/store/schema-1.json"),
+            "schema-999" => include_str!("../tests/fixtures/store/schema-999.json"),
+            _ => panic!("unknown fixture"),
+        }
+    }
+
     fn assert_fixture_is_quarantined(name: &str) {
         let dir = test_dir();
         let path = dir.join("sessions.json");
-        let fixture = match name {
-            "truncated" => include_str!("../tests/fixtures/store/truncated.json"),
-            "schema-0" => include_str!("../tests/fixtures/store/schema-0.json"),
-            "schema-999" => include_str!("../tests/fixtures/store/schema-999.json"),
-            _ => panic!("unknown fixture"),
-        };
+        let fixture = fixture(name);
         fs::write(&path, fixture).expect("seed store");
 
         let loaded = load(&path).expect("load should recover");
@@ -202,14 +209,41 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    fn assert_fixture_is_migrated(name: &str, version: u32) {
+        let dir = test_dir();
+        let path = dir.join("sessions.json");
+        let fixture = fixture(name);
+        fs::write(&path, fixture).expect("seed legacy store");
+
+        let loaded = load(&path).expect("load should migrate");
+        assert!(loaded.quarantined_path.is_none());
+        assert_eq!(loaded.snapshot.magic, SESSION_STORE_MAGIC);
+        assert_eq!(
+            loaded.snapshot.schema_version,
+            terminalai_core::store::SESSION_STORE_SCHEMA_VERSION
+        );
+        assert_eq!(
+            fs::read_to_string(dir.join(format!("sessions.v{version}.bak")))
+                .expect("migration backup"),
+            fixture
+        );
+        assert!(path.is_file());
+        let _ = fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn truncated_store_is_quarantined_and_loads_empty() {
         assert_fixture_is_quarantined("truncated");
     }
 
     #[test]
-    fn old_store_schema_is_quarantined_and_loads_empty() {
-        assert_fixture_is_quarantined("schema-0");
+    fn schema_zero_is_migrated_and_backed_up() {
+        assert_fixture_is_migrated("schema-0", 0);
+    }
+
+    #[test]
+    fn schema_one_is_migrated_and_backed_up() {
+        assert_fixture_is_migrated("schema-1", 1);
     }
 
     #[test]
@@ -229,6 +263,7 @@ mod tests {
         };
         let session = Session::new(SessionId::new(1), &spec);
         let registry = SessionRegistry::from_store(SessionStoreSnapshot {
+            magic: SESSION_STORE_MAGIC.to_owned(),
             schema_version: terminalai_core::store::SESSION_STORE_SCHEMA_VERSION,
             sessions: vec![StoredSession {
                 session,
@@ -247,6 +282,7 @@ mod tests {
                 cwd: spec.cwd.clone(),
                 command: "codex.exe".into(),
             }],
+            extra: Default::default(),
         });
         let writer = StoreWriter::spawn(path.clone(), registry);
         writer.update();
@@ -276,6 +312,7 @@ mod tests {
         };
         let id = SessionId::new(1);
         let registry = SessionRegistry::from_store(SessionStoreSnapshot {
+            magic: SESSION_STORE_MAGIC.to_owned(),
             schema_version: terminalai_core::store::SESSION_STORE_SCHEMA_VERSION,
             sessions: vec![StoredSession {
                 session: Session::new(id.clone(), &spec),
@@ -288,6 +325,7 @@ mod tests {
                 scrollback: Vec::new(),
             }],
             archives: Vec::new(),
+            extra: Default::default(),
         });
         let writer = StoreWriter::spawn(path.clone(), registry.clone());
         let started = Instant::now();

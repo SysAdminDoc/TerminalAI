@@ -7,6 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Session persistence now carries a `TerminalAI.session-store` magic string and schema 2. Legacy
+  schema 0 and 1 files migrate atomically after a `sessions.v<old>.bak` copy, future versions are
+  still refused, and unknown top-level fields survive through `serde(flatten)` and registry writes.
 - The contrast audit now keeps small text on WCAG-AA tokens in both dark and OS light palettes,
   uses `surface0` for selected rows, and treats overlay/surface tokens as decoration only. The
   focused terminal has an opt-in xterm screen-reader toggle with its right-click behavior called

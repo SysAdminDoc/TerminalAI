@@ -5,6 +5,7 @@
 //! bounded by the registry before it reaches this type, so a daemon restart
 //! can replay the same tail into a newly attached renderer.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -13,21 +14,28 @@ use crate::atomic_file::write_atomic;
 use crate::launch::{LaunchSpec, ResolvedCommand};
 use crate::session::{Session, SessionId};
 
-pub const SESSION_STORE_SCHEMA_VERSION: u32 = 1;
+pub const SESSION_STORE_MAGIC: &str = "TerminalAI.session-store";
+pub const SESSION_STORE_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SessionStoreSnapshot {
+    #[serde(default)]
+    pub magic: String,
     pub schema_version: u32,
     pub sessions: Vec<StoredSession>,
     pub archives: Vec<ArchivedSession>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 impl Default for SessionStoreSnapshot {
     fn default() -> Self {
         Self {
+            magic: SESSION_STORE_MAGIC.to_owned(),
             schema_version: SESSION_STORE_SCHEMA_VERSION,
             sessions: Vec::new(),
             archives: Vec::new(),
+            extra: BTreeMap::new(),
         }
     }
 }
@@ -72,6 +80,8 @@ pub enum SessionStoreError {
     Json(#[from] serde_json::Error),
     #[error("session store schema {found} is not supported (current schema: {supported})")]
     UnsupportedVersion { found: u32, supported: u32 },
+    #[error("session store magic {found:?} is not recognized")]
+    InvalidMagic { found: String },
 }
 
 impl SessionStoreSnapshot {
@@ -82,13 +92,25 @@ impl SessionStoreSnapshot {
             Err(error) => return Err(error.into()),
         };
         let mut snapshot: Self = serde_json::from_str(&text)?;
-        if snapshot.schema_version != SESSION_STORE_SCHEMA_VERSION {
+        if !snapshot.magic.is_empty() && snapshot.magic != SESSION_STORE_MAGIC {
+            return Err(SessionStoreError::InvalidMagic {
+                found: snapshot.magic,
+            });
+        }
+        if snapshot.schema_version > SESSION_STORE_SCHEMA_VERSION {
             return Err(SessionStoreError::UnsupportedVersion {
                 found: snapshot.schema_version,
                 supported: SESSION_STORE_SCHEMA_VERSION,
             });
         }
         load_sidecars(path, &mut snapshot)?;
+        if snapshot.schema_version < SESSION_STORE_SCHEMA_VERSION || snapshot.magic.is_empty() {
+            let old_version = snapshot.schema_version;
+            backup_legacy(path, old_version)?;
+            snapshot.magic = SESSION_STORE_MAGIC.to_owned();
+            snapshot.schema_version = SESSION_STORE_SCHEMA_VERSION;
+            snapshot.write(path)?;
+        }
         Ok(Some(snapshot))
     }
 
@@ -97,6 +119,11 @@ impl SessionStoreSnapshot {
             return Err(SessionStoreError::UnsupportedVersion {
                 found: self.schema_version,
                 supported: SESSION_STORE_SCHEMA_VERSION,
+            });
+        }
+        if self.magic != SESSION_STORE_MAGIC {
+            return Err(SessionStoreError::InvalidMagic {
+                found: self.magic.clone(),
             });
         }
         if let Some(parent) = path.parent() {
@@ -108,6 +135,26 @@ impl SessionStoreSnapshot {
         write_atomic(path, text.as_bytes(), true)?;
         Ok(())
     }
+}
+
+fn backup_legacy(path: &Path, version: u32) -> Result<PathBuf, std::io::Error> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("sessions");
+    let mut candidate = parent.join(format!("{stem}.v{version}.bak"));
+    for suffix in 1..1000 {
+        if !candidate.exists() {
+            fs::copy(path, &candidate)?;
+            return Ok(candidate);
+        }
+        candidate = parent.join(format!("{stem}.v{version}.{suffix}.bak"));
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not choose a unique session-store backup path",
+    ))
 }
 
 fn sidecar_dir(path: &Path) -> PathBuf {
@@ -203,6 +250,7 @@ mod tests {
         let spec = spec_for(Agent::Claude, &cwd);
         let session = Session::new(SessionId::new(1), &spec);
         let snapshot = SessionStoreSnapshot {
+            magic: SESSION_STORE_MAGIC.to_owned(),
             schema_version: SESSION_STORE_SCHEMA_VERSION,
             sessions: vec![StoredSession {
                 session,
@@ -215,11 +263,14 @@ mod tests {
                 scrollback: b"hello\x1b[2J".to_vec(),
             }],
             archives: Vec::new(),
+            extra: BTreeMap::from([("future_field".into(), serde_json::json!({"retained": true}))]),
         };
         snapshot.write(&path).expect("write");
         let text = fs::read_to_string(&path).expect("read");
-        assert!(text.contains("\n  \"schema_version\": 1,"));
+        assert!(text.contains("\n  \"magic\": \"TerminalAI.session-store\","));
+        assert!(text.contains("\n  \"schema_version\": 2,"));
         assert!(!text.contains("\"scrollback\""));
+        assert!(text.contains("\"future_field\""));
         assert!(sidecar_path(&path, &SessionId::new(1)).is_file());
         assert_eq!(
             SessionStoreSnapshot::read(&path)
@@ -229,6 +280,30 @@ mod tests {
                 .scrollback,
             b"hello\x1b[2J"
         );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn legacy_schema_is_migrated_and_unknown_fields_survive() {
+        let dir = test_dir();
+        let path = dir.join("sessions.json");
+        let legacy =
+            r#"{"schema_version":1,"sessions":[],"archives":[],"future_field":{"retained":true}}"#;
+        fs::write(&path, legacy).expect("seed legacy store");
+
+        let snapshot = SessionStoreSnapshot::read(&path)
+            .expect("migrate legacy store")
+            .expect("snapshot");
+        assert_eq!(snapshot.magic, SESSION_STORE_MAGIC);
+        assert_eq!(snapshot.schema_version, SESSION_STORE_SCHEMA_VERSION);
+        assert_eq!(snapshot.extra["future_field"]["retained"], true);
+        assert_eq!(
+            fs::read_to_string(dir.join("sessions.v1.bak")).expect("backup"),
+            legacy
+        );
+        let migrated = fs::read_to_string(&path).expect("migrated store");
+        assert!(migrated.contains("\"magic\": \"TerminalAI.session-store\""));
+        assert!(migrated.contains("\"future_field\""));
         let _ = fs::remove_dir_all(dir);
     }
 

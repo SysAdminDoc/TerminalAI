@@ -195,6 +195,7 @@ struct State {
     focused: Option<SessionId>,
     entries: BTreeMap<SessionId, Entry>,
     archives: Vec<ArchivedSession>,
+    extra: BTreeMap<String, serde_json::Value>,
     queue: VecDeque<SessionId>,
     admission: AdmissionConfig,
     notifications: NotificationCenter,
@@ -288,6 +289,7 @@ impl SessionRegistry {
                 focused: None,
                 entries: BTreeMap::new(),
                 archives: Vec::new(),
+                extra: BTreeMap::new(),
                 queue: VecDeque::new(),
                 admission,
                 notifications: NotificationCenter::default(),
@@ -317,11 +319,13 @@ impl SessionRegistry {
     ) -> Self {
         let registry = Self::with_admission(admission);
         let mut state = lock_state(&registry.inner);
+        let extra = snapshot.extra;
         let archives = snapshot.archives;
         for archive in &archives {
             state.next_id = state.next_id.max(next_sequence(&archive.id));
         }
         state.archives = archives;
+        state.extra = extra;
         for stored in snapshot.sessions {
             let StoredSession {
                 mut session,
@@ -406,6 +410,7 @@ impl SessionRegistry {
     pub fn store_snapshot(&self) -> SessionStoreSnapshot {
         let state = lock_state(&self.inner);
         SessionStoreSnapshot {
+            magic: crate::store::SESSION_STORE_MAGIC.to_owned(),
             schema_version: crate::store::SESSION_STORE_SCHEMA_VERSION,
             sessions: state
                 .entries
@@ -418,6 +423,7 @@ impl SessionRegistry {
                 })
                 .collect(),
             archives: state.archives.clone(),
+            extra: state.extra.clone(),
         }
     }
 
@@ -2175,6 +2181,7 @@ mod tests {
         let mut session = Session::new(SessionId::new(7), &spec);
         session.resume_id = Some("native-1".into());
         let snapshot = SessionStoreSnapshot {
+            magic: crate::store::SESSION_STORE_MAGIC.to_owned(),
             schema_version: crate::store::SESSION_STORE_SCHEMA_VERSION,
             sessions: vec![StoredSession {
                 session,
@@ -2187,6 +2194,10 @@ mod tests {
                 scrollback: b"restored\r\n".to_vec(),
             }],
             archives: Vec::new(),
+            extra: BTreeMap::from([(
+                "future_field".into(),
+                serde_json::json!({"retained": true}),
+            )]),
         };
 
         let registry = SessionRegistry::from_store(snapshot);
@@ -2195,6 +2206,10 @@ mod tests {
         assert_eq!(session.phase, SessionPhase::Resurrectable);
         assert_eq!(session.status, SessionStatus::Exited);
         assert!(session.pid.is_none());
+        assert_eq!(
+            registry.store_snapshot().extra["future_field"]["retained"],
+            true
+        );
         assert_eq!(
             registry.scrollback(&SessionId::new(7)).expect("scrollback"),
             b"restored\r\n"

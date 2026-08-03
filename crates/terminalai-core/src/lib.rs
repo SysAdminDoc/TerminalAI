@@ -66,7 +66,7 @@ pub use session::{
 };
 pub use store::{
     ArchivedSession, SessionStoreError, SessionStoreSnapshot, StoredSession,
-    SESSION_STORE_SCHEMA_VERSION,
+    SESSION_STORE_MAGIC, SESSION_STORE_SCHEMA_VERSION,
 };
 pub use transcript::{
     PricingTable, TokenRates, TranscriptAccumulator, TranscriptError, UsageTotals,

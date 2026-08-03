@@ -97,14 +97,6 @@ From `RESEARCH.md`. IDs R-01…R-63; the next researcher continues from R-64.
 
 ### P2
 
-- [ ] R-29 · P2 — Versioned session store with a migration path
-  Why: session state will outlive its schema, and a daemon that survives GUI upgrades will meet older files.
-  Evidence: Zellij versions its session-info directory by release; RESEARCH.md "Architecture".
-  Touches: `store.rs`, `terminalai-daemon/src/persistence.rs`, test fixtures
-  Acceptance: the file carries a magic string plus an integer version (SQLite `application_id`/`user_version` shape); older versions are copied to `sessions.v<old>.bak` before migrating; unknown fields survive a round-trip via `#[serde(flatten)]`; one fixture per historical version asserts migration to the current shape.
-  Complexity: S
-  — *2026-08-02 research: depends on R-34 (atomic writes) and R-36 (quarantine). As written this item assumes the failure paths work; today a version mismatch is indistinguishable from corruption and both brick the daemon, so do those first. Chrome's `Last Version` is the precedent for refusing unknown-newer loudly rather than best-effort parsing.*
-
 ### P3
 
 - [ ] R-31 · P3 — `AgentDomain` trait for non-local sessions
