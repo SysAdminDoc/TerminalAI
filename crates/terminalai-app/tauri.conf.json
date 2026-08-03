@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "TerminalAI",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "identifier": "com.sysadmindoc.terminalai",
   "build": {
     "beforeBuildCommand": { "script": "pwsh -NoProfile -File scripts/prebuild.ps1", "cwd": "../.." },

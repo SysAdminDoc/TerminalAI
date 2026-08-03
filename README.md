@@ -1,6 +1,6 @@
 # TerminalAI
 
-[![version](https://img.shields.io/badge/version-0.4.0-blue.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.5.0-blue.svg)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#requirements)
 [![rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
@@ -45,7 +45,7 @@ when waiting on the handle.
 
 ## Status
 
-**v0.4.0 — core and desktop shell built, installed, and verified end to end.**
+**v0.5.0 — core and desktop shell built, installed, and verified end to end.**
 
 Working today (`terminalai-probe`, headless):
 
@@ -74,16 +74,28 @@ Working today (`terminalai-probe`, headless):
   config, a docker compose project prefix and a Postgres database cloned per session
 - Exposes the fleet to an MCP client over stdio, read-only unless a write token and opted-in
   sessions are supplied
-- 280 default Rust tests over agent identification and resolution against an injected filesystem,
+- Keeps a bounded in-memory ring per session over a rotating on-disk log, so history outlives the
+  ring and survives a daemon restart
+- Gives a session its own Git worktree and branch on request, cleaned up with the row and never at
+  the cost of unmerged commits
+- Breaks fleet spend down by agent, project folder and session, counting unpriced sessions apart
+  rather than as zero
+- Sends one prompt to many sessions, reporting each separately and refusing those waiting on a
+  permission decision
+- Reads launch templates a repository declares about itself (`.terminalai/templates.toml`)
+- 326 default Rust tests over agent identification and resolution against an injected filesystem,
   the flag mapping, real-pty boundary and blocking exit wait, supervision state machine, registry,
   diagnostics, review aggregation and reviewed-mark expiry, the land gate against real
   repositories, environment leases, transcript tailing, the MCP boundary, cost model and vendored
   price table, external-session discovery, daemon protocol and frame bounds, presets, launch golden
   fixtures, atomic file recovery, corrupt-store quarantine, deterministic fleet ordering, prompt
-  safety and fleet-row model; 282 with the opt-in app-server transport enabled, plus 83 frontend
-  tests (`npm --prefix web test`)
+  safety and fleet-row model, per-session worktrees against real repositories, the two-tier
+  scrollback store, repository-declared templates and the broadcast eligibility rule; 328 with the
+  opt-in app-server transport enabled, plus 132 frontend tests (`npm --prefix web test`)
 
-Not built yet: scrollback spilling to disk, a git worktree per session, and prompt broadcast. The
+Not built yet: the v0.6.0 project-factory work — a registered master project folder, a roadmap
+scanner across projects, a per-session prompt queue, and an automated queue that runs a stored
+prompt against every project with open roadmap items. The
 experimental
 Codex app-server adapter is available only when the daemon is built with the explicit
 `codex-app-server` feature; the default daemon continues to use hooks and the PTY path. The named-pipe
