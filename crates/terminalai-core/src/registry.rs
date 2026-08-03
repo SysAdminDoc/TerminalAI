@@ -29,6 +29,7 @@ use crate::store::{ArchivedSession, SessionStoreSnapshot, StoredSession};
 /// Maximum output retained per session in memory. The future daemon can spill
 /// older bytes to disk without changing the registry-facing API.
 pub const MAX_SCROLLBACK_BYTES: usize = 512 * 1024;
+const MAX_LAST_LINE_BYTES: usize = 8 * 1024;
 pub const DEFAULT_MAX_LIVE_SESSIONS: usize = 3;
 pub const DEFAULT_SESSION_BUDGET_USD: f64 = 5.0;
 
@@ -1344,13 +1345,29 @@ impl RingBuffer {
     }
 
     fn last_line(&self) -> Option<String> {
-        let bytes = self.to_vec();
-        let text = String::from_utf8_lossy(&bytes);
-        text.split(['\r', '\n'])
-            .rev()
-            .find(|line| !line.trim().is_empty())
-            .map(str::to_owned)
+        let mut candidate_reversed = Vec::with_capacity(MAX_LAST_LINE_BYTES.min(self.bytes.len()));
+        for byte in self.bytes.iter().rev().take(MAX_LAST_LINE_BYTES) {
+            if matches!(byte, b'\r' | b'\n') {
+                if let Some(line) = decode_last_line_candidate(&mut candidate_reversed) {
+                    return Some(line);
+                }
+            } else {
+                candidate_reversed.push(*byte);
+            }
+        }
+        decode_last_line_candidate(&mut candidate_reversed)
     }
+}
+
+fn decode_last_line_candidate(candidate_reversed: &mut Vec<u8>) -> Option<String> {
+    if candidate_reversed.is_empty() {
+        return None;
+    }
+    candidate_reversed.reverse();
+    let text = String::from_utf8_lossy(candidate_reversed);
+    let line = (!text.trim().is_empty()).then(|| text.into_owned());
+    candidate_reversed.clear();
+    line
 }
 
 #[cfg(test)]
@@ -1373,6 +1390,32 @@ mod tests {
         let mut ring = RingBuffer::default();
         ring.push(b"first\r\nlast\r\n");
         assert_eq!(ring.last_line().as_deref(), Some("last"));
+    }
+
+    #[test]
+    fn ring_buffer_finds_last_line_across_chunks() {
+        let mut ring = RingBuffer::default();
+        ring.push(b"first\r");
+        ring.push(b"\npart");
+        ring.push(b"ial");
+        assert_eq!(ring.last_line().as_deref(), Some("partial"));
+    }
+
+    #[test]
+    fn ring_buffer_finds_partial_line_without_a_newline() {
+        let mut ring = RingBuffer::default();
+        ring.push(b"still typing");
+        assert_eq!(ring.last_line().as_deref(), Some("still typing"));
+    }
+
+    #[test]
+    fn ring_buffer_bounds_last_line_scan() {
+        let mut ring = RingBuffer::default();
+        ring.push(&vec![b'x'; MAX_LAST_LINE_BYTES + 1]);
+        assert_eq!(
+            ring.last_line().as_deref(),
+            Some("x".repeat(MAX_LAST_LINE_BYTES).as_str())
+        );
     }
 
     #[test]
