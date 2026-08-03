@@ -1,6 +1,6 @@
 # TerminalAI
 
-[![version](https://img.shields.io/badge/version-0.3.0-blue.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.4.0-blue.svg)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#requirements)
 [![rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
@@ -45,7 +45,7 @@ when waiting on the handle.
 
 ## Status
 
-**v0.3.0 — core and desktop shell built, installed, and verified end to end.**
+**v0.4.0 — core and desktop shell built, installed, and verified end to end.**
 
 Working today (`terminalai-probe`, headless):
 
@@ -66,15 +66,25 @@ Working today (`terminalai-probe`, headless):
 - Ships an installer that actually starts: the NSIS and MSI bundles carry the daemon and probe as
   sidecars, and `scripts/verify-installer.ps1` installs into a scratch prefix, launches the
   installed binary on an isolated display, asserts the window and the daemon pipe, then uninstalls
-- 164 default Rust tests over agent identification, the flag mapping, real-pty boundary and
-  blocking exit wait, supervision state machine, registry, diagnostics, review aggregation and
-  reviewed-mark expiry, cost model and vendored price table, external-session discovery, daemon
-  protocol and frame bounds, presets, launch golden fixtures, atomic file recovery, corrupt-store
-  quarantine, deterministic fleet ordering, prompt safety and fleet-row model; 166 with the opt-in
-  app-server transport enabled, plus 28 frontend tests (`npm --prefix web test`)
+- Tails each live session's transcript for its own session id, last message and real cost, reading
+  only the bytes appended since the last poll
+- Lands a session's work into its repository through a serialised gate that refuses whole — naming
+  the specific condition — rather than half-applying
+- Reads a per-repository environment lease (`.terminalai/environment.toml`) covering untracked
+  config, a docker compose project prefix and a Postgres database cloned per session
+- Exposes the fleet to an MCP client over stdio, read-only unless a write token and opted-in
+  sessions are supplied
+- 280 default Rust tests over agent identification and resolution against an injected filesystem,
+  the flag mapping, real-pty boundary and blocking exit wait, supervision state machine, registry,
+  diagnostics, review aggregation and reviewed-mark expiry, the land gate against real
+  repositories, environment leases, transcript tailing, the MCP boundary, cost model and vendored
+  price table, external-session discovery, daemon protocol and frame bounds, presets, launch golden
+  fixtures, atomic file recovery, corrupt-store quarantine, deterministic fleet ordering, prompt
+  safety and fleet-row model; 282 with the opt-in app-server transport enabled, plus 83 frontend
+  tests (`npm --prefix web test`)
 
-Not built yet: transcript file tailing, so no session reports a cost yet — the model and the price
-table that will compute it are in place and tested. The experimental
+Not built yet: scrollback spilling to disk, a git worktree per session, and prompt broadcast. The
+experimental
 Codex app-server adapter is available only when the daemon is built with the explicit
 `codex-app-server` feature; the default daemon continues to use hooks and the PTY path. The named-pipe
 daemon keeps live sessions independent of the window; see
@@ -111,9 +121,11 @@ when the agent proceeds, and quiet during startup or the first seconds of a tool
 
 The daemon admits three live processes by default. Set `TERMINALAI_MAX_LIVE_SESSIONS` to change the
 cap and `TERMINALAI_DEFAULT_BUDGET_USD` to change the default Claude `--max-budget-usd` (or `none` to
-disable it). The fleet header shows live/queued counts. Spend renders an em dash until a session
-reports a cost — nothing derives cost from transcripts yet, and a computed-looking `$0.00` would
-be worse than saying so — and its tooltip names the price table any figure was computed against.
+disable it). The fleet header shows live/queued counts, how many sessions a provider is currently
+rate limiting, and when the soonest quota window reopens. Spend is derived from each session's
+transcript and renders an em dash until at least one session reports one — a computed-looking
+`$0.00` would be worse than saying so — with a tooltip naming the price table it was computed
+against.
 
 Prices come from a commit-pinned snapshot of LiteLLM's `model_prices_and_context_window.json`
 (MIT), vendored at `crates/terminalai-core/pricing/model-prices.json` and embedded in the binary.
