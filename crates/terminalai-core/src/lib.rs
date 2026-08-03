@@ -31,6 +31,7 @@ pub mod pty;
 pub mod registry;
 pub mod review;
 pub mod session;
+pub mod tail;
 pub mod store;
 pub mod transcript;
 

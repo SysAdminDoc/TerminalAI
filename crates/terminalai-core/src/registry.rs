@@ -203,6 +203,9 @@ struct Entry {
 }
 
 struct State {
+    /// One transcript reader per session. Kept on the state rather than the
+    /// entry so a poll can walk every session under one lock acquisition.
+    tails: crate::tail::TranscriptTails,
     next_id: u64,
     focused: Option<SessionId>,
     entries: BTreeMap<SessionId, Entry>,
@@ -312,6 +315,7 @@ impl SessionRegistry {
         let (restart_tx, restart_rx) = mpsc::channel();
         let inner = Arc::new(Inner {
             state: Mutex::new(State {
+                tails: crate::tail::TranscriptTails::default(),
                 next_id: 1,
                 focused: None,
                 entries: BTreeMap::new(),
@@ -1586,6 +1590,90 @@ impl SessionRegistry {
             }
         }
         failures
+    }
+
+    /// Read whatever each live session's transcript has appended, and fold the
+    /// result into its row.
+    ///
+    /// Called on a timer rather than driven by a filesystem watcher: both CLIs
+    /// append continuously during a turn, so a watcher would fire hundreds of
+    /// times per response for the same three fields. Each read is incremental —
+    /// only the bytes since the last poll — so the cost is proportional to what
+    /// the agent wrote, not to how large the transcript has grown.
+    ///
+    /// Returns how many rows changed.
+    pub fn poll_transcripts(&self, home: &std::path::Path) -> usize {
+        // Snapshot the work under the lock, then read files without holding it:
+        // a slow disk must not stall status ingestion.
+        let targets: Vec<(SessionId, crate::Agent, std::path::PathBuf, SystemTime)> = {
+            let state = lock_state(&self.inner);
+            state
+                .entries
+                .values()
+                .filter(|entry| entry.session.status.is_live())
+                .map(|entry| {
+                    (
+                        entry.session.id.clone(),
+                        entry.session.agent,
+                        entry.session.cwd.clone(),
+                        entry.session.started_at,
+                    )
+                })
+                .collect()
+        };
+        if targets.is_empty() {
+            return 0;
+        }
+
+        let mut updated = Vec::new();
+        {
+            let mut state = lock_state(&self.inner);
+            for (id, agent, cwd, started_at) in targets {
+                let update = state.tails.poll(&id.0, agent, home, &cwd, started_at);
+                if !update.changed {
+                    continue;
+                }
+                let Some(entry) = state.entries.get_mut(&id) else {
+                    continue;
+                };
+                let mut changed = false;
+                // The agent's own id is what `--resume` takes. Never overwrite
+                // one the hooks already reported with something read later.
+                if entry.session.resume_id.is_none() {
+                    if let Some(native) = update.native_session_id {
+                        entry.session.resume_id = Some(native);
+                        changed = true;
+                    }
+                }
+                if let Some(message) = update.last_message {
+                    if entry.session.last_message.as_deref() != Some(message.as_str()) {
+                        entry.session.last_message = Some(message);
+                        changed = true;
+                    }
+                }
+                // Zero requests means nothing was read, which is not the same as
+                // a session that cost nothing — leave the row unpriced so the
+                // header keeps saying the spend is unknown.
+                if update.totals.requests > 0 && entry.session.cost_usd != Some(update.cost_usd) {
+                    entry.session.cost_usd = Some(update.cost_usd);
+                    changed = true;
+                }
+                if changed {
+                    updated.push(entry.session.clone());
+                }
+            }
+        }
+
+        let count = updated.len();
+        for session in updated {
+            self.emit(RegistryEvent::SessionUpdated { session });
+        }
+        count
+    }
+
+    /// Drop a finished session's transcript reader.
+    pub fn forget_transcript(&self, id: &SessionId) {
+        lock_state(&self.inner).tails.forget(&id.0);
     }
 
     fn runtime_environment(

@@ -443,6 +443,7 @@ impl DaemonServer {
         if let Some(writer) = self.store_writer.clone() {
             bridge_store(self.registry.clone(), writer);
         }
+        spawn_transcript_poller(self.registry.clone(), self.shutdown.clone());
         self.listener
             .set_nonblocking(ListenerNonblockingMode::Accept)?;
         let shutdown = self.shutdown.clone();
@@ -1393,6 +1394,37 @@ fn current_user_pipe_sddl() -> Result<String, IpcError> {
 fn land_queue() -> &'static LandQueue {
     static QUEUE: OnceLock<LandQueue> = OnceLock::new();
     QUEUE.get_or_init(LandQueue::new)
+}
+
+/// How often each live session's transcript is re-read.
+///
+/// Both CLIs append continuously during a turn, so a filesystem watcher would
+/// fire hundreds of times per response for the same three fields. Two seconds
+/// is well under the time it takes an operator to look at a row and far above
+/// the rate at which a re-read would cost anything: each poll reads only the
+/// bytes appended since the last one.
+const TRANSCRIPT_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+fn spawn_transcript_poller(registry: SessionRegistry, shutdown: Arc<AtomicBool>) {
+    let Some(home) = dirs::home_dir() else {
+        // Without a home directory there is nowhere to look. Say so once rather
+        // than starting a thread that can never find anything.
+        eprintln!("terminalai-daemon: no home directory; transcript tailing is disabled");
+        return;
+    };
+    let spawned = thread::Builder::new()
+        .name("terminalai-transcripts".to_owned())
+        .spawn(move || {
+            while !shutdown.load(Ordering::Acquire) {
+                registry.poll_transcripts(&home);
+                thread::sleep(TRANSCRIPT_POLL_INTERVAL);
+            }
+        });
+    if let Err(error) = spawned {
+        // Cost and resume ids simply will not appear. That is a visible
+        // degradation, so it is reported rather than left to be inferred.
+        eprintln!("terminalai-daemon: transcript tailing unavailable: {error}");
+    }
 }
 
 #[cfg(test)]

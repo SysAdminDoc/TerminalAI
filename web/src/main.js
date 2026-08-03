@@ -55,6 +55,18 @@ const PREFLIGHT_META = {
 const RELEASES_ENDPOINT = "https://api.github.com/repos/SysAdminDoc/TerminalAI/releases/latest";
 const FALLBACK_APP_VERSION = "0.1.0";
 
+/// What the row shows as "the last thing that happened".
+///
+/// The transcript message wins when it exists: `last_line` is the tail of a
+/// rendered TUI, so a redraw leaves box-drawing characters and cursor moves in
+/// it. Falls back to the pty tail while the transcript has not been read yet,
+/// because an empty row is worse than an ugly one.
+function lastActivity(session) {
+  const message = session?.last_message;
+  if (typeof message === "string" && message.trim()) return message;
+  return session?.last_line || t("empty-no-output");
+}
+
 function lifecycleLabel(session) {
   if (session?.phase === "preparing") return t("status-preparing");
   if (session?.phase === "tearing-down") return t("status-tearing-down");
@@ -607,7 +619,7 @@ function renderRows() {
   const desiredSessions = sortedSessions().filter((session) => {
     if (state.attentionOnly && !isAttention(session)) return false;
     if (!filter) return true;
-    return [session.name, session.cwd, folderLabel(session.cwd), session.branch, session.agent, session.model, session.status, session.phase, lifecycleLabel(session), session.last_line, toolProgress(session.tool_progress), session.restarts, ports(session.ports)]
+    return [session.name, session.cwd, folderLabel(session.cwd), session.branch, session.agent, session.model, session.status, session.phase, lifecycleLabel(session), lastActivity(session), toolProgress(session.tool_progress), session.restarts, ports(session.ports)]
       .filter(Boolean)
       .join(" ")
       .toLowerCase()
@@ -786,7 +798,7 @@ function updateFleetRow(row, session, position = 1, setSize = 1, rovingId = stat
   const branch = session.branch || "—";
   const progress = toolProgress(session.tool_progress);
   const restartCount = Number.isInteger(Number(session.restarts)) ? Number(session.restarts) : 0;
-  const lastLine = session.last_line || t("empty-no-output");
+  const lastLine = lastActivity(session);
   const pinLabel = session.pinned ? t("action-unpin") : t("action-pin");
   const sessionLabel = `${session.name}, ${label}, ${repo}, ${branch}, ${t("action-tool-progress")} ${progress}, ${restartCount} ${t("action-restart-count")}, ${t("action-allocated-ports")} ${ports(session.ports)}`;
 
@@ -906,7 +918,7 @@ function renderRow(session) {
   const branch = session.branch || "—";
   const progress = toolProgress(session.tool_progress);
   const restartCount = Number.isInteger(Number(session.restarts)) ? Number(session.restarts) : 0;
-  const lastLine = session.last_line || t("empty-no-output");
+  const lastLine = lastActivity(session);
   const pinLabel = session.pinned ? t("action-unpin") : t("action-pin");
   const reviveHidden = session.status === "exited" && session.resume_id ? "" : " hidden";
   const archiveHidden = session.status === "exited" ? "" : " hidden";

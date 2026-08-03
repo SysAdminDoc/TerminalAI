@@ -261,8 +261,14 @@ pub struct TranscriptAccumulator {
     seen_request_ids: HashSet<String>,
     /// Insertion order for `seen_request_ids`, so the oldest id can be evicted.
     request_id_order: VecDeque<String>,
-    totals: UsageTotals,
-    cost_usd: f64,
+    /// Usage summed from records that carry a request id, deduped by it.
+    incremental: UsageTotals,
+    incremental_cost_usd: f64,
+    /// The latest cumulative figure from a source that reports session totals
+    /// rather than per-request deltas. Replaced, never summed.
+    cumulative: Usage,
+    cumulative_requests: u64,
+    cumulative_cost_usd: f64,
 }
 
 impl TranscriptAccumulator {
@@ -271,8 +277,11 @@ impl TranscriptAccumulator {
             pricing,
             seen_request_ids: HashSet::new(),
             request_id_order: VecDeque::new(),
-            totals: UsageTotals::default(),
-            cost_usd: 0.0,
+            incremental: UsageTotals::default(),
+            incremental_cost_usd: 0.0,
+            cumulative: Usage::default(),
+            cumulative_requests: 0,
+            cumulative_cost_usd: 0.0,
         }
     }
 
@@ -285,12 +294,30 @@ impl TranscriptAccumulator {
         &self.pricing.version
     }
 
+    /// Combined usage: per-request records summed, plus the latest cumulative
+    /// figure. The two sources never describe the same tokens — one agent
+    /// reports request ids and the other reports session totals — so adding
+    /// them is correct and neither double-counts within itself.
     pub fn totals(&self) -> UsageTotals {
-        self.totals
+        let mut totals = self.incremental;
+        if self.cumulative_requests > 0 {
+            totals.requests = totals.requests.saturating_add(1);
+            totals.input_tokens = totals.input_tokens.saturating_add(self.cumulative.input_tokens);
+            totals.output_tokens = totals
+                .output_tokens
+                .saturating_add(self.cumulative.output_tokens);
+            totals.cache_read_input_tokens = totals
+                .cache_read_input_tokens
+                .saturating_add(self.cumulative.cache_read_input_tokens);
+            totals.cache_creation_input_tokens = totals
+                .cache_creation_input_tokens
+                .saturating_add(self.cumulative.cache_creation_input_tokens);
+        }
+        totals
     }
 
     pub fn cost_usd(&self) -> f64 {
-        self.cost_usd
+        self.incremental_cost_usd + self.cumulative_cost_usd
     }
 
     /// Ingest one JSONL record. Returns `true` only when it changed totals.
@@ -299,23 +326,52 @@ impl TranscriptAccumulator {
         let Some(record) = find_usage(&value, None, None) else {
             return Ok(false);
         };
-        if let Some(request_id) = &record.request_id {
-            if !self.seen_request_ids.insert(request_id.clone()) {
-                return Ok(false);
-            }
-            self.request_id_order.push_back(request_id.clone());
-            while self.request_id_order.len() > MAX_TRACKED_REQUEST_IDS {
-                if let Some(evicted) = self.request_id_order.pop_front() {
-                    self.seen_request_ids.remove(&evicted);
-                }
+        let Some(request_id) = &record.request_id else {
+            // No request id means Codex, whose rollout reports the session's
+            // *cumulative* usage on every turn. Adding those would multiply the
+            // total by the number of turns, so a cumulative record replaces
+            // rather than accumulates.
+            return Ok(self.absorb_cumulative(record));
+        };
+        if !self.seen_request_ids.insert(request_id.clone()) {
+            return Ok(false);
+        }
+        self.request_id_order.push_back(request_id.clone());
+        while self.request_id_order.len() > MAX_TRACKED_REQUEST_IDS {
+            if let Some(evicted) = self.request_id_order.pop_front() {
+                self.seen_request_ids.remove(&evicted);
             }
         }
-        self.totals.add(record.usage);
-        self.cost_usd += self
+        self.incremental.add(record.usage);
+        self.incremental_cost_usd += self
             .pricing
             .rates_for(record.model.as_deref())
             .cost(&record.usage);
         Ok(true)
+    }
+
+    /// Replace the running cumulative figure, if this record advances it.
+    ///
+    /// A cumulative counter only ever grows within one session. A record that
+    /// reports *less* than the last one is either a replay of an earlier line or
+    /// a different session's file, and taking it would silently walk the total
+    /// backwards — so the larger figure wins.
+    fn absorb_cumulative(&mut self, record: UsageRecord) -> bool {
+        let total = record.usage.input_tokens.saturating_add(record.usage.output_tokens);
+        let seen = self
+            .cumulative
+            .input_tokens
+            .saturating_add(self.cumulative.output_tokens);
+        if total <= seen && self.cumulative_requests > 0 {
+            return false;
+        }
+        self.cumulative = record.usage;
+        self.cumulative_requests = self.cumulative_requests.saturating_add(1);
+        self.cumulative_cost_usd = self
+            .pricing
+            .rates_for(record.model.as_deref())
+            .cost(&record.usage);
+        true
     }
 }
 
@@ -459,7 +515,12 @@ mod tests {
     }
 
     #[test]
-    fn records_without_request_id_are_not_silently_dropped() {
+    fn records_without_request_id_are_treated_as_cumulative_not_summed() {
+        // A record with no request id is Codex-shaped, and Codex reports the
+        // session's *running total* on every turn. This used to sum them, which
+        // multiplied the real figure by the number of turns; the later figure
+        // now replaces the earlier one. Still absorbed, never dropped: both
+        // calls report that they changed something.
         let mut accumulator = TranscriptAccumulator::new(pricing());
         assert!(accumulator
             .ingest_line(r#"{"usage":{"input_tokens":3}}"#)
@@ -467,8 +528,24 @@ mod tests {
         assert!(accumulator
             .ingest_line(r#"{"usage":{"input_tokens":4}}"#)
             .unwrap());
+        assert_eq!(accumulator.totals().input_tokens, 4, "4, not 3 + 4");
+        assert_eq!(accumulator.totals().requests, 1);
+    }
+
+    #[test]
+    fn a_cumulative_record_and_a_per_request_record_both_count() {
+        // The two sources never describe the same tokens: one agent reports
+        // request ids, the other reports session totals. A fleet running both
+        // must show the sum of the two, not whichever arrived last.
+        let mut accumulator = TranscriptAccumulator::new(pricing());
+        assert!(accumulator
+            .ingest_line(r#"{"requestId":"a","usage":{"input_tokens":10}}"#)
+            .unwrap());
+        assert!(accumulator
+            .ingest_line(r#"{"usage":{"input_tokens":100}}"#)
+            .unwrap());
+        assert_eq!(accumulator.totals().input_tokens, 110);
         assert_eq!(accumulator.totals().requests, 2);
-        assert_eq!(accumulator.totals().input_tokens, 7);
     }
 
     /// The exact shape of a record from `~/.claude/projects/<slug>/<uuid>.jsonl`

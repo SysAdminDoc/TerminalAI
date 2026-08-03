@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Transcript tailing. Each live session's JSONL is followed incrementally — only the bytes appended
+  since the last poll — for the three things the pty cannot carry: the agent's own session id (what
+  `--resume` takes), the last thing it actually said, and what the run cost. `Session.cost_usd` and
+  the fleet's aggregate are now real numbers instead of a computed-looking zero; measured live at
+  $0.98 for one session against its own transcript. A half-written record is left for the next poll,
+  a truncated file restarts rather than splicing two records together, and a deleted one is
+  rediscovered. Only `text` blocks become the row label, so a tool call's arguments never do.
+- `Session.last_message` carries the transcript's text and the row prefers it over `last_line`,
+  which is the tail of a rendered TUI and carries whatever escape sequences the last redraw left.
+
 - `terminalai-probe mcp` exposes the fleet to an MCP client over stdio. Read tools — list sessions
   (both supervised and external), read one session's status, read the tail of its terminal output,
   read fleet cost — are ungated. Mutating tools require *both* an out-of-band write token and a
@@ -17,6 +27,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   advertised tools across two different fleets — because tool poisoning is only possible when
   metadata comes from somewhere mutable. Terminal output is stripped of escape sequences before it
   leaves the process.
+
+### Fixed
+
+- A session launched into a folder that already held transcripts bound to the newest existing one
+  on its first poll, reporting an earlier run's cost, token totals and resume id as its own —
+  observed live before the fix. Discovery now ignores transcripts older than the session.
+- Records without a `requestId` were summed. Codex reports the session's *cumulative* usage on
+  every turn, so summing multiplied the real figure by the number of turns; a cumulative record now
+  replaces rather than accumulates, and never walks backwards.
 
 ## [0.3.0] — 2026-08-03
 

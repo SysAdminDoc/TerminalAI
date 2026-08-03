@@ -219,8 +219,18 @@ pub struct Session {
     pub backoff_until: Option<SystemTime>,
     pub state_since: SystemTime,
     pub pid: Option<u32>,
-    /// Last line of agent output, trimmed for the row.
+    /// Last line of agent output, trimmed for the row. Raw pty bytes, so it
+    /// carries whatever escape sequences the TUI last drew.
     pub last_line: String,
+    /// The last thing the agent actually said, read from its transcript.
+    ///
+    /// Distinct from `last_line` because they come from different places and
+    /// one is strictly better: the pty carries a rendered TUI, where a redraw
+    /// leaves box-drawing characters and cursor moves in the tail. The row
+    /// prefers this when it exists and falls back to `last_line` when the
+    /// transcript has not been read yet.
+    #[serde(default)]
+    pub last_message: Option<String>,
     /// Optional countable tool-plan progress for the fleet row.
     #[serde(default)]
     pub tool_progress: Option<ToolProgress>,
@@ -285,6 +295,7 @@ impl Session {
             started_at: now,
             status_since: now,
             cost_usd: None,
+            last_message: None,
             rate_limit: None,
             unread: false,
             pinned: false,

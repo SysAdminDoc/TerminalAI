@@ -4,19 +4,6 @@ Single task tracker for this repo. Newest phase at the top; completed items are 
 
 ## v0.3.0 — knowing what the fleet is doing
 
-- [ ] Transcript tailing — `~/.claude/projects/<slug>/*.jsonl` and Codex session rollouts, for
-      last message, native session id, token and cost accounting
-      — *2026-08-02 research: slug = cwd with `\`, `:`, `.` → `-`; filename stem IS the session UUID. Use
-      `ai-title` for the row label and `last-prompt` for context. Codex rollouts live at
-      `~/.codex/sessions/YYYY/MM/DD/rollout-<ISO>-<uuid>.jsonl`. Cost is NOT in the JSONL — derive it, and
-      dedupe on `requestId` first (see R-10).*
-      — *2026-08-02 research: `TranscriptAccumulator` is exported at `lib.rs:65` and used nowhere, so
-      `Session.cost_usd` is never assigned and `AdmissionSnapshot.aggregate_cost_usd` is always 0 — the fleet
-      header reports a computed-looking zero. Before wiring it, fix three defects: `find_usage` recurses a
-      `serde_json::Map` (a `BTreeMap` without `preserve_order`) so nested `usage` objects resolve
-      alphabetically rather than document-first; records lacking `requestId` are summed unconditionally, which
-      double-counts Codex's cumulative per-turn usage; and `seen_request_ids` grows unbounded. No pricing data
-      ships. agent-deck v1.11.0 shipped this on 2026-08-01, so it is now parity work, not a differentiator.*
 - [ ] Pin up to three sessions to keep live grids; split view
 - [ ] Windows toast on `NeedsYou`, with click-to-focus
       — *2026-08-02 research: an unpackaged Win32 app cannot raise a toast without a Start Menu shortcut carrying
@@ -86,29 +73,3 @@ Single task tracker for this repo. Newest phase at the top; completed items are 
       store must hold multi-KB text and deliver it as a pty write, never as an argv argument or a
       shell-interpolated string — see the native-binary resolution decision in `CLAUDE.md` for why
       `cmd.exe` quoting is not an option.*
-
-## Research-Driven Additions
-
-From `RESEARCH.md`. IDs R-01…R-63; the next researcher continues from R-64.
-
-### P0
-
-### P1
-
-### P2
-
-### P3
-
-## Research-Driven Additions — external survey, 2026-08-02
-
-From the same-day external research pass in `RESEARCH.md` (competitors, community signal, agent-platform APIs,
-dependency and CVE review). IDs R-64…R-87 do not overlap R-34…R-63, which came from the internal code audit; the next
-researcher continues from R-88.
-
-### P0
-
-### P1
-
-### P2
-
-### P3
