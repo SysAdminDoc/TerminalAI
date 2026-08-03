@@ -56,6 +56,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   continuous output, and always snapshots the latest registry state.
 - Row summaries now scan a bounded tail of each ring buffer instead of copying and decoding the
   full 512 KiB scrollback for every output chunk.
+- Background grids now honor DECSTBM scroll margins, saved-line erase, terminal resize, custom tab
+  stops, automatic wrapping, and Unicode wide-character cell widths, with recorded CLI reference
+  streams and arbitrary-byte parser coverage.
 - R-16 adds lifecycle-aware attention notifications with stable dedup keys, repository grouping,
   automatic retraction on progress, and startup/long-tool grace suppression. The shell consumes
   raised notifications as deduplicated, click-to-focus in-app alerts.

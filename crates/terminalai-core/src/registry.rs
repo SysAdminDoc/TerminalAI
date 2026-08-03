@@ -526,7 +526,14 @@ impl SessionRegistry {
 
     pub fn resize(&self, id: &SessionId, size: PtySize) -> Result<(), RegistryError> {
         let pty = self.pty(id)?;
-        pty.resize(size).map_err(RegistryError::from)
+        pty.resize(size).map_err(RegistryError::from)?;
+        let mut state = self.inner.state.lock().expect("registry poisoned");
+        let entry = state
+            .entries
+            .get_mut(id)
+            .ok_or_else(|| RegistryError::Missing(id.clone()))?;
+        entry.grid.resize(size.rows, size.cols);
+        Ok(())
     }
 
     pub fn kill(&self, id: &SessionId) -> Result<(), RegistryError> {
