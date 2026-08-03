@@ -140,6 +140,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   laid out below it.
 - Closing the launcher, or pressing Enter in any launcher field, no longer spawns an agent —
   every dialog control is an explicit button and the form refuses submission outright.
+- The control protocol enforces a 1 MiB frame limit on read, so a peer that sends bytes without a
+  newline can no longer exhaust memory on either end. Oversized `Write` payloads are refused whole
+  with a typed error rather than truncated — half a prompt reaching an agent is worse than none.
+- A malformed control frame now returns an error and keeps the connection, instead of tearing it
+  down with no reply, and a transient thread-spawn failure in the accept loop drops that one
+  connection instead of ending `serve()` and abandoning every live agent.
 - The daemon restricts library loading to System32 before any pseudo-console is created.
   `portable-pty` asks for `conpty.dll` by bare name and no such file exists in System32 on this
   OS build, so the search reached the application and working directories — both writable by a

@@ -54,6 +54,16 @@ use persistence::StoreWriter;
 pub const PROTOCOL_VERSION: u16 = 2;
 pub const PIPE_NAME: &str = "terminalai.control.v2";
 const OUTGOING_QUEUE_CAPACITY: usize = 256;
+/// Largest control frame either end will read.
+///
+/// A peer that sends bytes without a newline would otherwise grow a `String`
+/// until the process is out of memory — and this is a local control plane, so
+/// the peer is a program, not a person. The cap is generously above the largest
+/// legitimate frame: a `Write` carrying a multi-kilobyte prompt.
+pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
+/// Largest `Write` payload accepted for one session. Rejected, never truncated:
+/// half a prompt reaching an agent is worse than none.
+pub const MAX_WRITE_BYTES: usize = 256 * 1024;
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Sessions the supervisor did not start, reconciled from the agent's own
@@ -75,6 +85,24 @@ fn external_sessions() -> Vec<terminalai_core::ExternalSession> {
         .ok()
         .and_then(|binary| terminalai_core::external::enumerate_via_cli(&binary.path))
         .unwrap_or_default()
+}
+
+/// Read one newline-delimited frame, refusing anything over [`MAX_FRAME_BYTES`].
+///
+/// `BufRead::read_line` has no upper bound, so a peer that never sends a newline
+/// can exhaust memory on either side of this protocol.
+fn read_frame<R: BufRead>(reader: &mut R, line: &mut String) -> Result<usize, IpcError> {
+    line.clear();
+    // One byte over the limit is enough to prove the frame is too long without
+    // buffering the rest of it.
+    let mut limited = std::io::Read::take(&mut *reader, MAX_FRAME_BYTES as u64 + 1);
+    let read = limited.read_line(line)?;
+    if read > MAX_FRAME_BYTES {
+        return Err(IpcError::InvalidMessage(format!(
+            "control frame exceeded {MAX_FRAME_BYTES} bytes"
+        )));
+    }
+    Ok(read)
 }
 
 pub fn install_panic_hook() {
@@ -343,7 +371,15 @@ impl DaemonServer {
                                 eprintln!("terminalai-daemon client: {error}");
                             }
                         })
-                        .map_err(IpcError::Io)?;
+                        // A transient spawn failure used to end serve() outright,
+                        // abandoning every live agent with no UI. One refused
+                        // client is not a reason to drop the fleet.
+                        .unwrap_or_else(|error| {
+                            eprintln!(
+                                "terminalai-daemon: could not start a client thread,                                  dropping this connection: {error}"
+                            );
+                            thread::spawn(|| {})
+                        });
                 }
                 Err(error) => eprintln!("terminalai-daemon accept: {error}"),
             }
@@ -405,12 +441,31 @@ fn handle_connection(
     let mut event_thread = None;
     let result = (|| -> Result<(), IpcError> {
         loop {
-            line.clear();
-            if reader.read_line(&mut line)? == 0 {
-                break;
+            match read_frame(&mut reader, &mut line) {
+                Ok(0) => break,
+                Ok(_) => {}
+                // An oversized frame is the peer's fault, not ours, and the
+                // connection may still carry sane traffic afterwards only if the
+                // stream is resynchronized - which it cannot be mid-frame. Say
+                // why and close.
+                Err(error) => return Err(error),
             }
-            let message: WireMessage = serde_json::from_str(&line)
-                .map_err(|error| IpcError::InvalidMessage(error.to_string()))?;
+            let message = match serde_json::from_str::<WireMessage>(&line) {
+                Ok(message) => message,
+                // A malformed frame used to tear down the connection with no
+                // reply, so a client saw a disconnect where it had made a
+                // mistake. Answer and keep serving.
+                Err(error) => {
+                    send_response(
+                        &outgoing_tx,
+                        0,
+                        Response::Error {
+                            message: format!("malformed control frame: {error}"),
+                        },
+                    )?;
+                    continue;
+                }
+            };
             let WireMessage::Request { id, request } = message else {
                 send_response(
                     &outgoing_tx,
@@ -681,12 +736,25 @@ fn dispatch_with_quarantine(
                 },
             }
         }
-        Request::Write { id, data } => match registry.write(&id, data.as_bytes()) {
-            Ok(()) => Response::Ok,
-            Err(error) => Response::Error {
-                message: error.to_string(),
-            },
-        },
+        Request::Write { id, data } => {
+            // Rejected whole, never truncated: half a prompt reaching an agent is
+            // worse than none, because the agent would act on the fragment.
+            if data.len() > MAX_WRITE_BYTES {
+                Response::Error {
+                    message: format!(
+                        "write payload of {} bytes exceeds the {MAX_WRITE_BYTES}-byte limit",
+                        data.len()
+                    ),
+                }
+            } else {
+                match registry.write(&id, data.as_bytes()) {
+                    Ok(()) => Response::Ok,
+                    Err(error) => Response::Error {
+                        message: error.to_string(),
+                    },
+                }
+            }
+        }
         Request::Resize {
             id,
             rows,
@@ -897,12 +965,9 @@ fn spawn_reader(
         .spawn(move || {
             let mut reader = BufReader::new(receive);
             let mut line = String::new();
-            loop {
-                line.clear();
-                let read = match reader.read_line(&mut line) {
-                    Ok(read) => read,
-                    Err(_) => break,
-                };
+            // Ends on EOF or on any framing error: an oversized frame leaves the
+            // stream desynchronized, and the daemon should never send one anyway.
+            while let Ok(read) = read_frame(&mut reader, &mut line) {
                 if read == 0 {
                     break;
                 }
@@ -959,6 +1024,78 @@ fn current_user_pipe_descriptor(
 mod tests {
     use super::*;
     use terminalai_core::AppServerEvent;
+
+    #[test]
+    fn an_endless_frame_is_refused_instead_of_exhausting_memory() {
+        // A peer that never sends a newline used to grow a String until the
+        // process died — and both ends of this protocol are programs.
+        let flood = vec![b'x'; MAX_FRAME_BYTES + 4096];
+        let mut reader = BufReader::new(io::Cursor::new(flood));
+        let mut line = String::new();
+        let error = read_frame(&mut reader, &mut line).expect_err("oversized frame");
+        assert!(
+            matches!(&error, IpcError::InvalidMessage(message) if message.contains("exceeded")),
+            "expected a typed size error, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn a_frame_at_the_limit_still_reads() {
+        // The bound must reject what is over it and nothing else.
+        let mut body = vec![b'x'; MAX_FRAME_BYTES - 1];
+        body.push(b'\n');
+        let mut reader = BufReader::new(io::Cursor::new(body));
+        let mut line = String::new();
+        assert_eq!(
+            read_frame(&mut reader, &mut line).expect("frame at the limit"),
+            MAX_FRAME_BYTES
+        );
+    }
+
+    #[test]
+    fn frames_are_read_one_at_a_time_and_eof_is_zero() {
+        let mut reader = BufReader::new(io::Cursor::new(b"{\"a\":1}\n{\"b\":2}\n".to_vec()));
+        let mut line = String::new();
+        assert_eq!(read_frame(&mut reader, &mut line).unwrap(), 8);
+        assert_eq!(line, "{\"a\":1}\n");
+        assert_eq!(read_frame(&mut reader, &mut line).unwrap(), 8);
+        assert_eq!(line, "{\"b\":2}\n");
+        assert_eq!(read_frame(&mut reader, &mut line).unwrap(), 0);
+    }
+
+    #[test]
+    fn an_oversized_write_is_refused_whole_and_never_truncated() {
+        let registry = SessionRegistry::new();
+        let response = dispatch(
+            Request::Write {
+                id: SessionId::new(1),
+                data: "x".repeat(MAX_WRITE_BYTES + 1),
+            },
+            &registry,
+        );
+        match response {
+            Response::Error { message } => {
+                assert!(message.contains("exceeds"), "unhelpful refusal: {message}");
+            }
+            other => panic!("an oversized write must be refused, got {other:?}"),
+        }
+        // At the limit it is still the session lookup that decides, not the size.
+        let response = dispatch(
+            Request::Write {
+                id: SessionId::new(1),
+                data: "x".repeat(MAX_WRITE_BYTES),
+            },
+            &registry,
+        );
+        match response {
+            Response::Error { message } => assert!(
+                !message.contains("exceeds"),
+                "a payload at the limit must not be refused for size: {message}"
+            ),
+            Response::Ok => {}
+            other => panic!("unexpected response {other:?}"),
+        }
+    }
 
     #[test]
     fn request_envelope_is_tagged_and_round_trips() {
