@@ -89,8 +89,10 @@ Session metadata persists after a 200 ms quiet period and at least once per seco
 output, so a busy fleet cannot indefinitely delay its newest durable state.
 
 Each session retains the latest 64 status transitions with their timestamp and source, and the
-terminal panel's diagnostics view explains why the focused row is in its current state. Daemon or
-desktop-shell panics append structured JSON records to %LOCALAPPDATA%\TerminalAI\crash.log.
+terminal panel's diagnostics view explains why the focused row is in its current state. Daemon and
+desktop-shell panics enter the structured rolling log under
+`%LOCALAPPDATA%\TerminalAI\logs\`; fourteen daily files are retained, and the
+focused terminal's log panel keeps the latest 256 records in memory.
 
 Fleet rows expose every status with a distinct glyph and visible text label, remain keyboard
 navigable, announce live status changes to screen readers, and use high-contrast tokens in both

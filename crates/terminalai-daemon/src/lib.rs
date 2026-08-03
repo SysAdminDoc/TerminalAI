@@ -33,7 +33,10 @@ compile_error!(
      dead code. Remove `panic = \"abort\"` from the active cargo profile."
 );
 
+mod logging;
 mod persistence;
+
+pub use logging::{init_logging, log_directory, LogHub, LoggingGuard, MAX_LOG_FILES};
 
 #[cfg(feature = "codex-app-server")]
 pub mod app_server;
@@ -56,8 +59,8 @@ use terminalai_core::agent::{self, Agent, Origin};
 use terminalai_core::launch::LaunchSpec;
 use terminalai_core::pty::PtySize;
 use terminalai_core::{
-    AdmissionConfig, AdmissionSnapshot, AgentEvent, HookEvent, RegistryEvent, ReviewItem, Session,
-    SessionId, SessionRegistry,
+    AdmissionConfig, AdmissionSnapshot, AgentEvent, HookEvent, LogEntry, RegistryEvent, ReviewItem,
+    Session, SessionId, SessionRegistry,
 };
 
 use persistence::StoreWriter;
@@ -325,6 +328,7 @@ pub struct DaemonServer {
     registry: SessionRegistry,
     store_writer: Option<StoreWriter>,
     store_quarantine: Option<String>,
+    log_hub: Option<LogHub>,
     shutdown: Arc<AtomicBool>,
 }
 
@@ -336,6 +340,10 @@ impl Drop for DaemonServer {
 
 impl DaemonServer {
     pub fn bind() -> Result<Self, IpcError> {
+        Self::bind_with_log_hub(None)
+    }
+
+    pub fn bind_with_log_hub(log_hub: Option<LogHub>) -> Result<Self, IpcError> {
         let admission = AdmissionConfig::from_environment().map_err(IpcError::Configuration)?;
         let (registry, store_writer, store_quarantine) = match persistence::default_path() {
             Some(path) => {
@@ -352,11 +360,11 @@ impl DaemonServer {
             }
             None => (SessionRegistry::with_admission(admission), None, None),
         };
-        Self::bind_named_with_state(PIPE_NAME, registry, store_writer, store_quarantine)
+        Self::bind_named_with_state(PIPE_NAME, registry, store_writer, store_quarantine, log_hub)
     }
 
     pub fn bind_named(name: &str) -> Result<Self, IpcError> {
-        Self::bind_named_with_state(name, SessionRegistry::new(), None, None)
+        Self::bind_named_with_state(name, SessionRegistry::new(), None, None, None)
     }
 
     fn bind_named_with_state(
@@ -364,6 +372,7 @@ impl DaemonServer {
         registry: SessionRegistry,
         store_writer: Option<StoreWriter>,
         store_quarantine: Option<String>,
+        log_hub: Option<LogHub>,
     ) -> Result<Self, IpcError> {
         let name = socket_name(name)?;
         let mut options = ListenerOptions::new().name(name);
@@ -384,12 +393,13 @@ impl DaemonServer {
             registry,
             store_writer,
             store_quarantine,
+            log_hub,
             shutdown: Arc::new(AtomicBool::new(false)),
         })
     }
 
     pub fn with_registry(name: &str, registry: SessionRegistry) -> Result<Self, IpcError> {
-        Self::bind_named_with_state(name, registry, None, None)
+        Self::bind_named_with_state(name, registry, None, None, None)
     }
 
     /// Serve connections until a client requests shutdown or the console
@@ -422,12 +432,13 @@ impl DaemonServer {
             };
             let registry = self.registry.clone();
             let store_quarantine = self.store_quarantine.clone();
+            let log_hub = self.log_hub.clone();
             let shutdown = shutdown.clone();
             thread::Builder::new()
                 .name("terminalai-daemon-client".into())
                 .spawn(move || {
                     if let Err(error) =
-                        handle_connection(connection, registry, store_quarantine, shutdown)
+                        handle_connection(connection, registry, store_quarantine, log_hub, shutdown)
                     {
                         eprintln!("terminalai-daemon client: {error}");
                     }
@@ -456,6 +467,7 @@ impl DaemonServer {
             stream,
             self.registry.clone(),
             self.store_quarantine.clone(),
+            self.log_hub.clone(),
             self.shutdown.clone(),
         )
     }
@@ -478,9 +490,15 @@ fn bridge_store(registry: SessionRegistry, writer: StoreWriter) {
 }
 
 pub fn run() -> Result<(), IpcError> {
+    run_with_log_hub(None)
+}
+
+pub fn run_with_log_hub(log_hub: Option<LogHub>) -> Result<(), IpcError> {
     install_panic_hook();
     install_console_handler();
-    DaemonServer::bind()?.serve()
+    let server = DaemonServer::bind_with_log_hub(log_hub)?;
+    tracing::info!(pipe = PIPE_NAME, "daemon control plane ready");
+    server.serve()
 }
 
 #[cfg(windows)]
@@ -533,9 +551,11 @@ fn handle_connection(
     stream: LocalSocketStream,
     registry: SessionRegistry,
     store_quarantine: Option<String>,
+    log_hub: Option<LogHub>,
     shutdown: Arc<AtomicBool>,
 ) -> Result<(), IpcError> {
     let peer_pid = stream.peer_creds()?.pid();
+    tracing::debug!(peer_pid = ?peer_pid, "control connection accepted");
     let (receive, send) = stream.split();
     let (outgoing_tx, outgoing_rx) = mpsc::sync_channel::<WireMessage>(OUTGOING_QUEUE_CAPACITY);
     let writer = thread::Builder::new()
@@ -604,6 +624,11 @@ fn handle_connection(
                     break;
                 };
                 if protocol != PROTOCOL_VERSION {
+                    tracing::warn!(
+                        client_protocol = protocol,
+                        daemon_protocol = PROTOCOL_VERSION,
+                        "control protocol mismatch"
+                    );
                     send_response(
                         &outgoing_tx,
                         id,
@@ -635,6 +660,7 @@ fn handle_connection(
                     break;
                 }
                 authenticated = true;
+                tracing::info!(peer_pid = ?peer_pid, "control client authenticated");
                 send_response(
                     &outgoing_tx,
                     id,
@@ -652,12 +678,14 @@ fn handle_connection(
                     break;
                 }
                 Request::Shutdown => {
+                    tracing::info!("daemon shutdown requested");
                     send_response(&outgoing_tx, id, Response::Ok)?;
                     shutdown.store(true, Ordering::Release);
                     break;
                 }
                 Request::Subscribe => {
                     if !subscribed {
+                        tracing::debug!("control client subscribed to events");
                         let stop = event_stop_rx
                             .take()
                             .expect("event stop receiver only used once");
@@ -665,6 +693,7 @@ fn handle_connection(
                             registry.subscribe(),
                             outgoing_tx.clone(),
                             registry.clone(),
+                            log_hub.as_ref().map(LogHub::subscribe),
                             stop,
                         )?);
                         subscribed = true;
@@ -718,11 +747,15 @@ fn bridge_events(
     events: Receiver<RegistryEvent>,
     outgoing: SyncSender<WireMessage>,
     registry: SessionRegistry,
+    mut logs: Option<Receiver<LogEntry>>,
     stop: Receiver<()>,
 ) -> Result<thread::JoinHandle<()>, IpcError> {
     thread::Builder::new()
         .name("terminalai-daemon-events".into())
         .spawn(move || loop {
+            if !drain_log_events(&mut logs, &outgoing, &registry) {
+                break;
+            }
             match stop.try_recv() {
                 Ok(()) | Err(mpsc::TryRecvError::Disconnected) => break,
                 Err(mpsc::TryRecvError::Empty) => {}
@@ -738,6 +771,29 @@ fn bridge_events(
             }
         })
         .map_err(IpcError::Io)
+}
+
+fn drain_log_events(
+    logs: &mut Option<Receiver<LogEntry>>,
+    outgoing: &SyncSender<WireMessage>,
+    registry: &SessionRegistry,
+) -> bool {
+    let Some(logs) = logs.as_ref() else {
+        return true;
+    };
+    loop {
+        match logs.try_recv() {
+            Ok(entry) => match outgoing.try_send(WireMessage::Event {
+                event: RegistryEvent::Log { entry },
+            }) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => registry.record_dropped_event(),
+                Err(TrySendError::Disconnected(_)) => return false,
+            },
+            Err(mpsc::TryRecvError::Empty) => return true,
+            Err(mpsc::TryRecvError::Disconnected) => return true,
+        }
+    }
 }
 
 #[cfg(test)]

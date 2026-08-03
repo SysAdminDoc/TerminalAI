@@ -1,6 +1,10 @@
 fn main() {
     harden_dll_search_path();
-    if let Err(error) = terminalai_daemon::run() {
+    // Keep this guard in the process entry point. The nonblocking tracing
+    // writer must outlive every worker, including the panic hook's final event.
+    let logging = terminalai_daemon::init_logging();
+    let log_hub = logging.as_ref().map(|logging| logging.hub());
+    if let Err(error) = terminalai_daemon::run_with_log_hub(log_hub) {
         eprintln!("terminalai-daemon: {error}");
         std::process::exit(1);
     }

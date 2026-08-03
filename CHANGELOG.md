@@ -7,6 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Added structured daemon and desktop-shell logging under `%LOCALAPPDATA%\TerminalAI\logs\`
+  with fourteen daily files, a bounded in-app log panel, per-session tracing fields, and panic
+  records that drain through the process-held worker guard.
 - The Windows pipe ACL now grants the current interactive user's explicit SID
   (plus `SYSTEM`) instead of the elevation-sensitive owner-rights alias. PID
   mismatches are reported as diagnostics, and setup/teardown hooks are clearly

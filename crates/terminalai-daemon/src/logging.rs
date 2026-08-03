@@ -1,0 +1,226 @@
+use std::collections::{BTreeMap, VecDeque};
+use std::fs::create_dir_all;
+use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
+use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
+
+use terminalai_core::{LogEntry, MAX_LOG_ENTRIES};
+use tracing::{span, Event, Subscriber};
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_subscriber::layer::{Context, Layer};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::registry::LookupSpan;
+
+pub const MAX_LOG_FILES: usize = 14;
+
+#[derive(Clone, Default)]
+pub struct LogHub {
+    inner: Arc<Mutex<LogState>>,
+}
+
+#[derive(Default)]
+struct LogState {
+    entries: VecDeque<LogEntry>,
+    subscribers: Vec<SyncSender<LogEntry>>,
+}
+
+impl LogHub {
+    pub(crate) fn subscribe(&self) -> Receiver<LogEntry> {
+        let (sender, receiver) = mpsc::sync_channel(MAX_LOG_ENTRIES);
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for entry in &state.entries {
+            let _ = sender.try_send(entry.clone());
+        }
+        state.subscribers.push(sender);
+        receiver
+    }
+
+    fn push(&self, entry: LogEntry) {
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.entries.push_back(entry.clone());
+        while state.entries.len() > MAX_LOG_ENTRIES {
+            let _ = state.entries.pop_front();
+        }
+        state
+            .subscribers
+            .retain(|subscriber| match subscriber.try_send(entry.clone()) {
+                Ok(()) | Err(TrySendError::Full(_)) => true,
+                Err(TrySendError::Disconnected(_)) => false,
+            });
+    }
+}
+
+/// The file guard must live until the process is done so the nonblocking
+/// writer drains its final records, including the panic hook's tail.
+pub struct LoggingGuard {
+    hub: LogHub,
+    _worker_guard: WorkerGuard,
+}
+
+impl LoggingGuard {
+    pub fn hub(&self) -> LogHub {
+        self.hub.clone()
+    }
+}
+
+pub fn log_directory() -> Option<PathBuf> {
+    dirs::data_local_dir().map(|root| root.join("TerminalAI").join("logs"))
+}
+
+pub fn init_logging() -> Option<LoggingGuard> {
+    let directory = log_directory()?;
+    if create_dir_all(&directory).is_err() {
+        return None;
+    }
+    let appender = RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix("terminalai")
+        .filename_suffix("log")
+        .max_log_files(MAX_LOG_FILES)
+        .build(&directory)
+        .ok()?;
+    let (writer, worker_guard) = tracing_appender::non_blocking(appender);
+    let hub = LogHub::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(writer),
+        )
+        .with(HubLayer { hub: hub.clone() });
+    tracing::subscriber::set_global_default(subscriber).ok()?;
+    Some(LoggingGuard {
+        hub,
+        _worker_guard: worker_guard,
+    })
+}
+
+struct HubLayer {
+    hub: LogHub,
+}
+
+impl<S> Layer<S> for HubLayer
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    fn on_new_span(&self, attrs: &span::Attributes<'_>, id: &span::Id, context: Context<'_, S>) {
+        let mut visitor = FieldVisitor::default();
+        attrs.record(&mut visitor);
+        if let Some(span) = context.span(id) {
+            span.extensions_mut().insert(SpanFields(visitor.fields));
+        }
+    }
+
+    fn on_event(&self, event: &Event<'_>, context: Context<'_, S>) {
+        let mut visitor = FieldVisitor::default();
+        let mut fields = BTreeMap::new();
+        if let Some(scope) = context.event_scope(event) {
+            for span in scope {
+                if let Some(span_fields) = span.extensions().get::<SpanFields>() {
+                    fields.extend(span_fields.0.clone());
+                }
+            }
+        }
+        event.record(&mut visitor);
+        let message = visitor.message.take().unwrap_or_default();
+        fields.extend(visitor.fields);
+        self.hub.push(LogEntry {
+            at: SystemTime::now(),
+            level: event.metadata().level().to_string(),
+            target: event.metadata().target().to_owned(),
+            message,
+            fields,
+        });
+    }
+}
+
+struct SpanFields(BTreeMap<String, String>);
+
+#[derive(Default)]
+struct FieldVisitor {
+    message: Option<String>,
+    fields: BTreeMap<String, String>,
+}
+
+impl FieldVisitor {
+    fn record_value(&mut self, name: &str, value: String) {
+        let value = value.trim_matches('"').to_owned();
+        if name == "message" {
+            self.message = Some(value);
+        } else {
+            self.fields.insert(name.to_owned(), value);
+        }
+    }
+}
+
+impl tracing::field::Visit for FieldVisitor {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        self.record_value(field.name(), format!("{value:?}"));
+    }
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        self.record_value(field.name(), value.to_owned());
+    }
+
+    fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
+        self.record_value(field.name(), value.to_string());
+    }
+
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        self.record_value(field.name(), value.to_string());
+    }
+
+    fn record_i128(&mut self, field: &tracing::field::Field, value: i128) {
+        self.record_value(field.name(), value.to_string());
+    }
+
+    fn record_u128(&mut self, field: &tracing::field::Field, value: u128) {
+        self.record_value(field.name(), value.to_string());
+    }
+
+    fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
+        self.record_value(field.name(), value.to_string());
+    }
+
+    fn record_f64(&mut self, field: &tracing::field::Field, value: f64) {
+        self.record_value(field.name(), value.to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_hub_replays_only_a_bounded_tail() {
+        let hub = LogHub::default();
+        for index in 0..(MAX_LOG_ENTRIES + 2) {
+            hub.push(LogEntry {
+                at: SystemTime::UNIX_EPOCH,
+                level: "INFO".into(),
+                target: "test".into(),
+                message: index.to_string(),
+                fields: BTreeMap::new(),
+            });
+        }
+        let receiver = hub.subscribe();
+        let entries: Vec<_> = receiver.try_iter().collect();
+        assert_eq!(entries.len(), MAX_LOG_ENTRIES);
+        assert_eq!(
+            entries.first().map(|entry| entry.message.as_str()),
+            Some("2")
+        );
+        assert_eq!(
+            entries.last().map(|entry| entry.message.as_str()),
+            Some("257")
+        );
+    }
+}

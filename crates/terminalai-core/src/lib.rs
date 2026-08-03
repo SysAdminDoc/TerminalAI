@@ -34,12 +34,14 @@ pub use app_server::{
     AppServerMessage, AppServerNotification, AppServerParseError, AppServerRequest,
     AppServerResponse, AppServerThreadStatus, AppServerTokenUsage, RpcId,
 };
-pub use diagnostics::{StatusDiagnostic, StatusSource, MAX_STATUS_HISTORY};
-pub use external::{claude_sessions, ExternalSession, ExternalState};
+pub use diagnostics::{
+    LogEntry, StatusDiagnostic, StatusSource, MAX_LOG_ENTRIES, MAX_STATUS_HISTORY,
+};
 pub use environment::{
     EnvironmentError, EnvironmentSpec, DEFAULT_PORT_BASE, DEFAULT_PORT_COUNT, MAX_PORT_COUNT,
     PORT_BLOCK_STRIDE,
 };
+pub use external::{claude_sessions, ExternalSession, ExternalState};
 pub use grid::{TerminalGrid, TerminalGridSnapshot, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS};
 pub use hook_config::{
     command_for as hook_command, config_path as hook_config_path, install_at as install_hooks_at,

@@ -97,13 +97,6 @@ From `RESEARCH.md`. IDs R-01…R-63; the next researcher continues from R-64.
 
 ### P2
 
-- [ ] R-63 · P2 — Structured logging with bounded retention
-  Why: the diagnostics timeline explains one session, but nothing records what the daemon did across sessions, and the crash log grows without limit.
-  Evidence: `crates/terminalai-daemon/src/persistence.rs:48-51` appends to `crash.log` with no rotation; there is no `tracing` subscriber anywhere in the workspace, so a status misattribution — the dominant bug class in this field — leaves no trail beyond the in-memory timeline.
-  Touches: `terminalai-daemon`, `terminalai-core`, GUI log panel
-  Acceptance: `tracing` with one span per session carrying `session_id`/`agent`/`cwd`; `tracing-appender` with `Daily` rotation and `max_log_files` (there is no size-based rotation — tokio-rs/tracing#1940) writing under `%LOCALAPPDATA%\TerminalAI\logs\`; the `WorkerGuard` is held in `main` so the tail including panics is not lost; an in-app panel reads from a bounded `VecDeque` and is pushed to the WebView in batches on a ≥100 ms timer, never per event; `std::panic::set_hook` is installed before any thread spawns and covers PTY reader threads.
-  Complexity: M
-
 - [ ] R-62 · P2 — Finish the contrast and forced-colors work R-27 did not cover
   Why: R-27 was closed after the keyboard and labelling changes landed, but the measured contrast failures and high-contrast support were never addressed, so the acceptance criterion "contrast meets WCAG AA" is still unmet.
   Evidence: measured 2026-08-02 on Catppuccin Mocha — `overlay1` on `base` = 4.44 (fails AA by 0.06); `overlay0` (#6c7086) on `base` ≈3.8 and is still used for 9–10px text in `.row-folder`, `.eyebrow`, `.terminal-statusbar`, `.terminal-path`, `.empty-state p`, `.diagnostics-heading p` (`web/src/styles.css:39,57,61,63,71`); `--surface2` is used as text in `.terminal-grid` and `.terminal-placeholder small` (≈2.8:1); accents on `surface1` = 3.94–4.49, so selected rows must use `surface0`. No `@media (forced-colors: active)` or `prefers-reduced-motion` block exists anywhere in the stylesheet; `-ms-high-contrast` is dead as of Edge 138 and WebView2 is Chromium, so colour-only status vanishes in High Contrast.

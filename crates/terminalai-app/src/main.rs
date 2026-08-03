@@ -1,6 +1,6 @@
 mod preset;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::mpsc::RecvTimeoutError;
@@ -16,7 +16,8 @@ use tauri::{Emitter, Manager, State};
 use terminalai_core::agent::Agent;
 use terminalai_core::launch::LaunchSpec;
 use terminalai_core::{
-    parse_hook, AdmissionSnapshot, RegistryEvent, ReviewItem, Session, SessionId,
+    parse_hook, AdmissionSnapshot, LogEntry, RegistryEvent, ReviewItem, Session, SessionId,
+    MAX_LOG_ENTRIES,
 };
 use terminalai_daemon::{DaemonClient, IpcError, Request, Response, PROTOCOL_VERSION};
 
@@ -839,6 +840,7 @@ fn install_daemon_client(
 }
 
 const OUTPUT_BATCH_INTERVAL: Duration = Duration::from_millis(12);
+const LOG_BATCH_INTERVAL: Duration = Duration::from_millis(100);
 
 fn bridge_daemon_events(
     app: &tauri::AppHandle,
@@ -851,9 +853,14 @@ fn bridge_daemon_events(
         .name("terminalai-ui-events".into())
         .spawn(move || {
             let mut pending = HashMap::<SessionId, Vec<u8>>::new();
-            let mut next_flush = Instant::now() + OUTPUT_BATCH_INTERVAL;
+            let mut pending_logs = VecDeque::<LogEntry>::new();
+            let mut next_output_flush = Instant::now() + OUTPUT_BATCH_INTERVAL;
+            let mut next_log_flush = Instant::now() + LOG_BATCH_INTERVAL;
             loop {
-                let timeout = next_flush.saturating_duration_since(Instant::now());
+                let now = Instant::now();
+                let timeout = next_output_flush
+                    .saturating_duration_since(now)
+                    .min(next_log_flush.saturating_duration_since(now));
                 let received = receiver
                     .lock()
                     .ok()
@@ -862,24 +869,45 @@ fn bridge_daemon_events(
                     Some(Ok(RegistryEvent::Output { id, data })) => {
                         pending.entry(id).or_default().extend(data);
                     }
+                    Some(Ok(RegistryEvent::Log { entry })) => {
+                        pending_logs.push_back(entry);
+                        while pending_logs.len() > MAX_LOG_ENTRIES {
+                            let _ = pending_logs.pop_front();
+                        }
+                    }
                     Some(Ok(event)) => {
                         flush_output_batches(&mut pending, &output_channels);
-                        next_flush = Instant::now() + OUTPUT_BATCH_INTERVAL;
+                        next_output_flush = Instant::now() + OUTPUT_BATCH_INTERVAL;
                         if app.emit("terminalai:event", event).is_err() {
                             break;
                         }
                     }
                     Some(Err(RecvTimeoutError::Timeout)) => {
                         flush_output_batches(&mut pending, &output_channels);
-                        next_flush = Instant::now() + OUTPUT_BATCH_INTERVAL;
+                        next_output_flush = Instant::now() + OUTPUT_BATCH_INTERVAL;
                     }
                     Some(Err(RecvTimeoutError::Disconnected)) | None => {
                         flush_output_batches(&mut pending, &output_channels);
+                        let _ = flush_log_batches(&mut pending_logs, &app);
                         break;
                     }
                 }
+                if Instant::now() >= next_log_flush {
+                    if !flush_log_batches(&mut pending_logs, &app) {
+                        break;
+                    }
+                    next_log_flush = Instant::now() + LOG_BATCH_INTERVAL;
+                }
             }
         });
+}
+
+fn flush_log_batches(pending: &mut VecDeque<LogEntry>, app: &tauri::AppHandle) -> bool {
+    if pending.is_empty() {
+        return true;
+    }
+    let batch: Vec<_> = pending.drain(..).collect();
+    app.emit("terminalai:logs", batch).is_ok()
 }
 
 fn flush_output_batches(
@@ -1040,6 +1068,7 @@ fn run_hook_cli(args: &[String]) -> i32 {
 }
 
 fn main() {
+    let _logging = terminalai_daemon::init_logging();
     terminalai_daemon::install_panic_hook();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if is_hook_invocation(&args) {

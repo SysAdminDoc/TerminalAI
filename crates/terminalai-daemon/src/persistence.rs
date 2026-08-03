@@ -1,5 +1,4 @@
-use std::fs::{self, create_dir_all, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::thread;
@@ -18,43 +17,15 @@ pub(crate) struct LoadResult {
 pub(crate) fn install_panic_hook() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        write_crash_record(info);
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        tracing::error!(
+            thread = std::thread::current().name().unwrap_or("unnamed"),
+            panic = %info,
+            backtrace = %backtrace,
+            "worker panic"
+        );
         previous(info);
     }));
-}
-
-fn crash_log_path() -> Option<PathBuf> {
-    dirs::data_local_dir().map(|root| root.join("TerminalAI").join("crash.log"))
-}
-
-fn write_crash_record(info: &std::panic::PanicHookInfo<'_>) {
-    let Some(path) = crash_log_path() else {
-        return;
-    };
-    let Some(parent) = path.parent() else {
-        return;
-    };
-    if create_dir_all(parent).is_err() {
-        return;
-    }
-    let timestamp_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or_default();
-    let record = serde_json::json!({
-        "timestamp_ms": timestamp_ms,
-        "process_id": std::process::id(),
-        "thread": std::thread::current().name().unwrap_or("unnamed"),
-        "panic": info.to_string(),
-        "backtrace": std::backtrace::Backtrace::force_capture().to_string(),
-    });
-    let Ok(encoded) = serde_json::to_string(&record) else {
-        return;
-    };
-    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
-        return;
-    };
-    let _ = writeln!(file, "{encoded}");
 }
 
 #[derive(Clone)]

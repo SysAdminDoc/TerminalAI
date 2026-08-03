@@ -70,6 +70,8 @@ const state = {
   reviewMode: false,
   reviews: [],
   diagnosticsMode: false,
+  logsMode: false,
+  logs: [],
   appVersion: null,
   storeQuarantine: null,
   storeQuarantineDismissed: false,
@@ -289,19 +291,60 @@ function renderDiagnostics() {
     '<ol class="diagnostics-timeline">' + timeline + '</ol>';
 }
 
+function logTime(value) {
+  const time = systemTimeMs(value);
+  return Number.isFinite(time) ? new Date(time).toISOString().replace(".000Z", "Z").replace("T", " ") : "unknown time";
+}
+
+function renderLogs() {
+  const host = $("logs-host");
+  if (!state.logs.length) {
+    host.innerHTML = '<div class="logs-empty">No daemon records have arrived yet.</div>';
+    return;
+  }
+  const rows = [...state.logs].reverse().map((entry) => {
+    const fields = Object.entries(entry.fields ?? {})
+      .filter(([key]) => ["session_id", "agent", "cwd"].includes(key))
+      .map(([key, value]) => `<span>${escapeHtml(key)}=${escapeHtml(value)}</span>`)
+      .join("");
+    return `<li class="log-event"><div class="log-event-heading"><b>${escapeHtml(entry.level ?? "INFO")}</b><span>${escapeHtml(entry.target ?? "terminalai")}</span><time>${escapeHtml(logTime(entry.at))}</time></div><p>${escapeHtml(entry.message ?? "")}</p>${fields ? `<div class="log-event-fields">${fields}</div>` : ""}</li>`;
+  }).join("");
+  host.innerHTML = '<div class="logs-heading"><div><span class="eyebrow">CONTROL-PLANE LOG</span><h2>Daemon records</h2><p>Latest 256 records · daily files are retained under LocalAppData</p></div><span class="status-glyph tone-sapphire" aria-hidden="true">≋</span></div><ol class="logs-list">' + rows + '</ol>';
+}
+
 function syncDiagnosticsVisibility() {
-  const active = state.diagnosticsMode;
-  $("terminal-host").classList.toggle("view-hidden", active);
-  $("diagnostics-host").classList.toggle("view-hidden", !active);
-  $("diagnostics-toggle").setAttribute("aria-pressed", String(active));
-  $("diagnostics-toggle").classList.toggle("row-action-active", active);
-  $("diagnostics-toggle").textContent = active ? "▣" : "?";
-  if (active) renderDiagnostics();
+  const diagnostics = state.diagnosticsMode;
+  const logs = state.logsMode;
+  $("terminal-host").classList.toggle("view-hidden", diagnostics || logs);
+  $("diagnostics-host").classList.toggle("view-hidden", !diagnostics);
+  $("logs-host").classList.toggle("view-hidden", !logs);
+  $("diagnostics-toggle").setAttribute("aria-pressed", String(diagnostics));
+  $("diagnostics-toggle").classList.toggle("row-action-active", diagnostics);
+  $("diagnostics-toggle").textContent = diagnostics ? "▣" : "?";
+  $("logs-toggle").setAttribute("aria-pressed", String(logs));
+  $("logs-toggle").classList.toggle("row-action-active", logs);
+  $("logs-toggle").textContent = logs ? "▣" : "≋";
+  if (diagnostics) renderDiagnostics();
+  if (logs) renderLogs();
 }
 
 function setDiagnosticsMode(active) {
   state.diagnosticsMode = active;
+  if (active) state.logsMode = false;
   syncDiagnosticsVisibility();
+}
+
+function setLogsMode(active) {
+  state.logsMode = active;
+  if (active) state.diagnosticsMode = false;
+  syncDiagnosticsVisibility();
+}
+
+function appendLogs(entries) {
+  if (!Array.isArray(entries)) return;
+  state.logs.push(...entries);
+  state.logs = state.logs.slice(-256);
+  if (state.logsMode) renderLogs();
 }
 
 function syncPreflightVisibility() {
@@ -320,6 +363,7 @@ function setPreflightMode(active) {
   if (active) {
     state.reviewMode = false;
     state.diagnosticsMode = false;
+    state.logsMode = false;
   }
   syncPreflightVisibility();
   syncReviewVisibility();
@@ -1402,6 +1446,7 @@ function bindEvents() {
     }
   });
   $("diagnostics-toggle").addEventListener("click", () => setDiagnosticsMode(!state.diagnosticsMode));
+  $("logs-toggle").addEventListener("click", () => setLogsMode(!state.logsMode));
   $("diagnostics-host").addEventListener("click", (event) => {
     if (!event.target.closest("button[data-diagnostics-action=preflight]")) return;
     setPreflightMode(true);
@@ -1489,6 +1534,7 @@ async function start() {
   syncAgentFields();
   try {
     await listen("terminalai:event", ({ payload }) => handleDaemonEvent(payload));
+    await listen("terminalai:logs", ({ payload }) => appendLogs(payload));
   } catch (error) {
     showToast(`Event stream unavailable: ${error}`);
   }

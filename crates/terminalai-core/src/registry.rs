@@ -15,7 +15,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use crate::agent::{AgentBinary, Origin};
 use crate::app_server::{AgentEvent, AppServerEvent};
-use crate::diagnostics::StatusSource;
+use crate::diagnostics::{LogEntry, StatusSource};
 use crate::environment::{self, EnvironmentError, EnvironmentSpec};
 use crate::grid::{TerminalGrid, TerminalGridSnapshot};
 use crate::hooks::{HookEvent, HookNotification, HookSignal};
@@ -38,6 +38,19 @@ const SUBSCRIBER_QUEUE_CAPACITY: usize = 256;
 const BRANCH_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 pub const DEFAULT_MAX_LIVE_SESSIONS: usize = 3;
 pub const DEFAULT_SESSION_BUDGET_USD: f64 = 5.0;
+
+fn session_span(
+    id: &SessionId,
+    agent: crate::agent::Agent,
+    cwd: &std::path::Path,
+) -> tracing::Span {
+    tracing::info_span!(
+        "terminalai.session",
+        session_id = %id,
+        agent = agent.command_name(),
+        cwd = %cwd.display(),
+    )
+}
 
 /// Admission limits are owned by the daemon but kept in the registry so every
 /// process launch, including automatic restarts, observes the same cap.
@@ -127,6 +140,7 @@ pub enum RegistryEvent {
     SessionUpdated { session: Session },
     Notification { event: NotificationEvent },
     AgentEvent { event: AgentEvent },
+    Log { entry: LogEntry },
     Output { id: SessionId, data: Vec<u8> },
     SessionRemoved { id: SessionId },
 }
@@ -170,6 +184,7 @@ struct Entry {
     generation: u64,
     stop_requested: bool,
     teardown_done: bool,
+    span: tracing::Span,
     /// When the branch was last read from Git. Hooks fire per tool call, so the
     /// lookup is rate limited rather than run on every event.
     branch_checked: Option<Instant>,
@@ -202,6 +217,7 @@ struct TeardownTask {
     cwd: std::path::PathBuf,
     spec: EnvironmentSpec,
     ports: Vec<u16>,
+    span: tracing::Span,
 }
 
 impl Ord for RestartTask {
@@ -327,6 +343,7 @@ impl SessionRegistry {
             let mut grid = TerminalGrid::default();
             grid.advance(&bytes);
             state.next_id = state.next_id.max(next_sequence(&id));
+            let span = session_span(&id, session.agent, &session.cwd);
             state.entries.insert(
                 id,
                 Entry {
@@ -340,6 +357,7 @@ impl SessionRegistry {
                     stop_requested: false,
                     branch_checked: None,
                     teardown_done: true,
+                    span,
                 },
             );
         }
@@ -482,6 +500,8 @@ impl SessionRegistry {
             } else {
                 session.mark_preparing();
             }
+            let span = session_span(&id, session.agent, &session.cwd);
+            tracing::info!(parent: &span, queued, "session launch admitted");
             state.entries.insert(
                 id.clone(),
                 Entry {
@@ -495,6 +515,7 @@ impl SessionRegistry {
                     stop_requested: false,
                     branch_checked,
                     teardown_done: true,
+                    span,
                 },
             );
             (id, queued)
@@ -1078,11 +1099,13 @@ impl SessionRegistry {
     ) -> Result<Arc<PtySession>, RegistryError> {
         let weak = Arc::downgrade(&self.inner);
         let callback_id = id.clone();
+        let span = self.span_for(id);
         let pty = PtySession::spawn_with_environment(
             command,
             crate::pty::default_size(),
             environment,
             move |chunk| {
+                let _entered = span.enter();
                 if let Some(inner) = weak.upgrade() {
                     handle_output(&inner, &callback_id, generation, chunk);
                 }
@@ -1117,9 +1140,11 @@ impl SessionRegistry {
     ) -> Result<(), RegistryError> {
         let registry = self.clone();
         let worker_id = id.clone();
+        let span = self.span_for(id);
         thread::Builder::new()
             .name(format!("terminalai-environment-{id}"))
             .spawn(move || {
+                let _entered = span.enter();
                 if let Err(error) = registry.prepare_and_start(&worker_id, &command, generation) {
                     registry.finish_start_failure(&worker_id, generation, error);
                 }
@@ -1138,6 +1163,7 @@ impl SessionRegistry {
         generation: u64,
     ) -> Result<(), RegistryError> {
         let (cwd, environment_spec, ports) = self.runtime_environment(id)?;
+        tracing::debug!("preparing session environment");
         let environment = environment::variables(&id.0, &ports);
         if let Err(error) = environment::run_setup(&environment_spec, &id.0, &cwd, &ports) {
             let _ = environment::run_teardown(&environment_spec, &id.0, &cwd, &ports);
@@ -1176,12 +1202,15 @@ impl SessionRegistry {
             let _ = environment::run_teardown(&environment_spec, &id.0, &cwd, &ports);
             return Err(RegistryError::NotRunning(id.clone()));
         }
+        tracing::info!(pid = ?pty.pid(), "session process started");
         self.emit_session(id);
-        self.spawn_monitor(id.clone(), pty, generation);
+        self.spawn_monitor(id.clone(), pty, generation, self.span_for(id));
         Ok(())
     }
 
     fn finish_start_failure(&self, id: &SessionId, generation: u64, error: RegistryError) {
+        let span = self.span_for(id);
+        tracing::error!(parent: &span, error = %error, "session start failed");
         let (session, notifications) = {
             let mut state = lock_state(&self.inner);
             let Some(entry) = state.entries.get_mut(id) else {
@@ -1339,6 +1368,11 @@ impl SessionRegistry {
             }
             let previous_status = entry.session.status;
             let previous_state_since = entry.session.state_since;
+            tracing::info!(
+                parent: &entry.span,
+                exit_code = ?exit_code,
+                "session process exited"
+            );
             entry.pty = None;
             entry.generation = entry.generation.saturating_add(1);
             let now = SystemTime::now();
@@ -1372,6 +1406,7 @@ impl SessionRegistry {
                     cwd: entry.session.cwd.clone(),
                     spec: entry.spec.environment.clone(),
                     ports: entry.session.ports.clone(),
+                    span: entry.span.clone(),
                 })
             };
             let session = entry.session.clone();
@@ -1399,6 +1434,7 @@ impl SessionRegistry {
             cwd,
             spec,
             ports,
+            span,
         } = task;
         let registry = self.clone();
         let worker_id = id.clone();
@@ -1408,6 +1444,7 @@ impl SessionRegistry {
         let result = thread::Builder::new()
             .name(format!("terminalai-environment-teardown-{id}"))
             .spawn(move || {
+                let _entered = span.enter();
                 let error = environment::run_teardown(
                     &worker_spec,
                     &worker_id.0,
@@ -1437,6 +1474,10 @@ impl SessionRegistry {
         restart: Option<(u64, Duration)>,
         error: Option<String>,
     ) {
+        if let Some(error) = error.as_deref() {
+            let span = self.span_for(id);
+            tracing::error!(parent: &span, error, "session teardown failed");
+        }
         let session = {
             let mut state = lock_state(&self.inner);
             let Some(entry) = state.entries.get_mut(id) else {
@@ -1476,6 +1517,7 @@ impl SessionRegistry {
             if entry.session.status == SessionStatus::Unknown {
                 return;
             }
+            tracing::warn!(parent: &entry.span, "session process state is unknown");
             entry.session.mark_unknown_at(SystemTime::now());
             entry.session.clone()
         };
@@ -1606,11 +1648,18 @@ impl SessionRegistry {
     /// polling was 600 wakeups per second doing nothing. Polling remains only as
     /// the fallback for platforms and failure paths that expose no waitable
     /// handle, and there it runs at the slower error cadence.
-    fn spawn_monitor(&self, id: SessionId, pty: Arc<PtySession>, generation: u64) {
+    fn spawn_monitor(
+        &self,
+        id: SessionId,
+        pty: Arc<PtySession>,
+        generation: u64,
+        span: tracing::Span,
+    ) {
         let registry = self.clone();
         let _ = thread::Builder::new()
             .name(format!("terminalai-session-{id}"))
             .spawn(move || {
+                let _entered = span.enter();
                 if let Ok(status) = pty.wait_for_exit() {
                     registry.mark_process_exit(&id, generation, Some(status));
                     return;
@@ -1638,6 +1687,14 @@ impl SessionRegistry {
                 Ok(None) => thread::sleep(Duration::from_millis(50)),
             }
         }
+    }
+
+    fn span_for(&self, id: &SessionId) -> tracing::Span {
+        lock_state(&self.inner)
+            .entries
+            .get(id)
+            .map(|entry| entry.span.clone())
+            .unwrap_or_else(tracing::Span::none)
     }
 }
 
@@ -1970,6 +2027,7 @@ mod tests {
                 stop_requested: false,
                 teardown_done: true,
                 branch_checked: None,
+                span: tracing::Span::none(),
             },
         );
 
@@ -2037,6 +2095,7 @@ mod tests {
                 stop_requested: false,
                 teardown_done: true,
                 branch_checked: None,
+                span: tracing::Span::none(),
             },
         );
 
@@ -2079,6 +2138,7 @@ mod tests {
                 stop_requested: false,
                 teardown_done: true,
                 branch_checked: None,
+                span: tracing::Span::none(),
             },
         );
 
@@ -2176,6 +2236,7 @@ mod tests {
                     stop_requested: false,
                     branch_checked: None,
                     teardown_done: true,
+                    span: tracing::Span::none(),
                 },
             );
             state.notifications.observe(
@@ -2232,6 +2293,7 @@ mod tests {
                     stop_requested: false,
                     branch_checked: None,
                     teardown_done: true,
+                    span: tracing::Span::none(),
                 },
             );
             state.queue.push_back(id.clone());
@@ -2285,6 +2347,7 @@ mod tests {
                     stop_requested: false,
                     branch_checked: None,
                     teardown_done: true,
+                    span: tracing::Span::none(),
                 },
             );
         }
@@ -2331,6 +2394,7 @@ mod tests {
                 stop_requested: false,
                 teardown_done: true,
                 branch_checked: None,
+                span: tracing::Span::none(),
             },
         );
 
@@ -2391,6 +2455,7 @@ mod tests {
                 stop_requested: false,
                 teardown_done: true,
                 branch_checked: None,
+                span: tracing::Span::none(),
             },
         );
         let events = registry.subscribe();
@@ -2470,6 +2535,7 @@ mod tests {
                 stop_requested: false,
                 teardown_done: true,
                 branch_checked: None,
+                span: tracing::Span::none(),
             },
         );
         let events = registry.subscribe();
@@ -2590,6 +2656,7 @@ mod tests {
                     stop_requested: false,
                     branch_checked: None,
                     teardown_done: true,
+                    span: tracing::Span::none(),
                 },
             );
             state.entries.insert(
@@ -2609,6 +2676,7 @@ mod tests {
                     stop_requested: false,
                     branch_checked: None,
                     teardown_done: true,
+                    span: tracing::Span::none(),
                 },
             );
         }

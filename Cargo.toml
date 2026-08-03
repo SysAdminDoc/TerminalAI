@@ -32,6 +32,9 @@ which = "7"
 interprocess = "2.4.3"
 widestring = "1"
 libc = "0.2"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Security",
