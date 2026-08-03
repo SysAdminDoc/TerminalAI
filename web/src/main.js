@@ -63,6 +63,9 @@ const state = {
   outputChannel: null,
   fitAddon: null,
   previewTimer: null,
+  announcementQueue: new Map(),
+  announcementTimer: null,
+  orderFreeze: null,
   attentionToasts: new Map(),
   admission: { max_live_sessions: 3, live_sessions: 0, queued_sessions: 0, aggregate_cost_usd: 0, dropped_events: 0 },
 };
@@ -372,7 +375,7 @@ function renderRows() {
   syncReviewVisibility();
   renderSummary();
   const filter = $("filter-input").value.trim().toLowerCase();
-  const sessions = sortedSessions().filter((session) => {
+  const desiredSessions = sortedSessions().filter((session) => {
     if (state.attentionOnly && !isAttention(session)) return false;
     if (!filter) return true;
     return [session.name, session.cwd, folderLabel(session.cwd), session.branch, session.agent, session.model, session.status, session.phase, lifecycleLabel(session), session.last_line, toolProgress(session.tool_progress), session.restarts, ports(session.ports)]
@@ -381,6 +384,10 @@ function renderRows() {
       .toLowerCase()
       .includes(filter);
   });
+  const pendingPriorityMoves = pendingPriorityChanges(desiredSessions);
+  if (state.orderFreeze) state.orderFreeze.pending = pendingPriorityMoves;
+  const sessions = applyFrozenOrder(desiredSessions);
+  renderOrderNotice(pendingPriorityMoves);
   const list = $("fleet-list");
   $("empty-state").classList.toggle("empty-state-hidden", state.sessions.length > 0);
   list.classList.toggle("fleet-list-hidden", state.sessions.length === 0);
@@ -404,6 +411,81 @@ function renderRows() {
     (row) => state.sessions.some((session) => session.id === row.dataset.id)
       && (row.contains(document.activeElement) || Boolean(row.querySelector("input[data-reply]")?.value)),
   );
+}
+
+function currentFleetOrder() {
+  return Array.from($("fleet-list").querySelectorAll('[role="option"]'))
+    .filter((row) => !row.hidden)
+    .map((row) => row.dataset.id)
+    .filter(Boolean);
+}
+
+function beginFleetOrderFreeze() {
+  if (state.orderFreeze) return;
+  const ids = currentFleetOrder();
+  if (!ids.length) return;
+  const focusedRow = document.activeElement?.closest?.('#fleet-list [role="option"]');
+  state.orderFreeze = {
+    ids,
+    focusId: focusedRow?.dataset.id ?? state.focused,
+    pending: 0,
+  };
+}
+
+function fleetListIsInteracting() {
+  const list = $("fleet-list");
+  return Boolean(list.matches(":hover") || list.contains(document.activeElement));
+}
+
+function releaseFleetOrderFreeze() {
+  setTimeout(() => {
+    if (fleetListIsInteracting() || !state.orderFreeze || state.orderFreeze.pending) return;
+    state.orderFreeze = null;
+    renderRows();
+  }, 0);
+}
+
+function pendingPriorityChanges(desiredSessions) {
+  if (!state.orderFreeze) return 0;
+  const desiredIds = desiredSessions.map((session) => session.id);
+  const frozenIds = state.orderFreeze.ids;
+  const frozenSet = new Set(frozenIds);
+  const desiredSet = new Set(desiredIds);
+  const desiredCommon = desiredIds.filter((id) => frozenSet.has(id));
+  const frozenCommon = frozenIds.filter((id) => desiredSet.has(id));
+  const desiredIndex = new Map(desiredCommon.map((id, index) => [id, index]));
+  const frozenIndex = new Map(frozenCommon.map((id, index) => [id, index]));
+  let changed = desiredIds.filter((id) => !frozenSet.has(id)).length;
+  for (const id of desiredCommon) {
+    if (desiredIndex.get(id) !== frozenIndex.get(id)) changed += 1;
+  }
+  return changed;
+}
+
+function applyFrozenOrder(desiredSessions) {
+  if (!state.orderFreeze) return desiredSessions;
+  const byId = new Map(desiredSessions.map((session) => [session.id, session]));
+  const frozen = state.orderFreeze.ids.map((id) => byId.get(id)).filter(Boolean);
+  const frozenSet = new Set(frozen.map((session) => session.id));
+  return [...frozen, ...desiredSessions.filter((session) => !frozenSet.has(session.id))];
+}
+
+function renderOrderNotice(changedCount) {
+  const notice = $("fleet-order-notice");
+  const visible = changedCount > 0 && !state.reviewMode;
+  notice.classList.toggle("view-hidden", !visible);
+  if (!visible) return;
+  $("fleet-order-message").textContent = `${changedCount} session${changedCount === 1 ? "" : "s"} changed priority`;
+}
+
+function applyFleetOrder() {
+  const focusId = state.orderFreeze?.focusId;
+  state.orderFreeze = null;
+  renderRows();
+  if (!focusId) return;
+  const row = Array.from($("fleet-list").querySelectorAll('[role="option"]'))
+    .find((candidate) => candidate.dataset.id === focusId);
+  row?.focus({ preventScroll: true });
 }
 
 function createFleetRow(session) {
@@ -555,9 +637,28 @@ function isAttention(session) {
 
 function announceStatusChange(session, previousStatus) {
   if (!previousStatus || previousStatus === session.status) return;
-  const previous = STATUS_META[previousStatus]?.label ?? previousStatus;
-  const current = STATUS_META[session.status]?.label ?? session.status;
-  $("fleet-announcer").textContent = `${session.name} status changed from ${previous} to ${current}.`;
+  if (!isAttention(session)) return;
+  state.announcementQueue.set(session.id, {
+    name: session.name,
+    label: lifecycleLabel(session),
+  });
+  if (state.announcementTimer !== null) return;
+  state.announcementTimer = setTimeout(flushAnnouncements, 2000);
+}
+
+function flushAnnouncements() {
+  state.announcementTimer = null;
+  if (!state.announcementQueue.size) return;
+  const entries = Array.from(state.announcementQueue.values());
+  state.announcementQueue.clear();
+  const message = entries.length === 1
+    ? `${entries[0].name} needs you: ${entries[0].label}.`
+    : `${entries.length} sessions need you: ${entries.map((entry) => entry.name).join(", ")}.`;
+  const announcer = $("fleet-announcer");
+  announcer.textContent = "";
+  setTimeout(() => {
+    announcer.textContent = message;
+  }, 0);
 }
 
 function renderRow(session) {
@@ -1011,6 +1112,11 @@ function bindEvents() {
   $("diagnostics-toggle").addEventListener("click", () => setDiagnosticsMode(!state.diagnosticsMode));
   $("update-check-button").addEventListener("click", () => void checkForUpdates());
   $("filter-input").addEventListener("input", renderRows);
+  $("fleet-list").addEventListener("mouseenter", beginFleetOrderFreeze);
+  $("fleet-list").addEventListener("mouseleave", releaseFleetOrderFreeze);
+  $("fleet-list").addEventListener("focusin", beginFleetOrderFreeze);
+  $("fleet-list").addEventListener("focusout", releaseFleetOrderFreeze);
+  $("apply-fleet-order").addEventListener("click", applyFleetOrder);
   $("wide-toggle").addEventListener("click", () => {
     state.wideMode = !state.wideMode;
     renderRows();

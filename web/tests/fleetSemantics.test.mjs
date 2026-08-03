@@ -24,3 +24,16 @@ test("fleet row actions remain explicit buttons and attention glyphs stay distin
   assert.ok(needsYou);
   assert.notEqual(approval, needsYou);
 });
+
+test("fleet updates announce actionable transitions and defer priority reordering", () => {
+  const summary = html.match(/<div class="fleet-summary"[^>]*>/)?.[0] ?? "";
+  assert.doesNotMatch(summary, /aria-live/);
+  assert.match(html, /id="fleet-order-notice"[^>]*view-hidden/);
+  assert.match(html, /id="apply-fleet-order"/);
+  assert.match(main, /state\.announcementTimer = setTimeout\(flushAnnouncements, 2000\)/);
+  assert.match(main, /announcementQueue/);
+  assert.match(main, /pendingPriorityChanges/);
+  assert.match(main, /applyFleetOrder/);
+  assert.match(main, /addEventListener\("mouseenter", beginFleetOrderFreeze\)/);
+  assert.match(main, /addEventListener\("focusin", beginFleetOrderFreeze\)/);
+});

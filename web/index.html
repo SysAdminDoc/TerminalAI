@@ -16,7 +16,7 @@
             <div class="brand-subtitle">fleet control plane</div>
           </div>
         </div>
-        <div class="fleet-summary" id="fleet-summary" aria-live="polite"></div>
+        <div class="fleet-summary" id="fleet-summary"></div>
         <div class="top-actions">
           <div class="preset-control"><select id="preset-select" aria-label="Saved launcher presets"><option value="">Presets</option></select><button class="button button-quiet" id="launch-preset-button" title="Launch selected preset">▶</button></div>
           <button class="button button-quiet" id="refresh-button" title="Refresh fleet snapshot">↻ <span>Refresh</span></button>
@@ -44,6 +44,7 @@
           <div id="fleet-state-strip" class="fleet-state-strip" role="list" aria-label="Fleet state counts"></div>
           <div class="column-labels" aria-hidden="true"><span>STATUS / REPO · BRANCH</span><span>AGENT · PROGRESS</span><span>DWELL / LAST LINE</span><span></span></div>
           <div id="fleet-list" class="fleet-list" role="listbox" aria-label="Tracked sessions" aria-describedby="fleet-summary" aria-orientation="vertical"></div>
+          <div id="fleet-order-notice" class="fleet-order-notice view-hidden"><span id="fleet-order-message"></span><button type="button" class="button button-secondary" id="apply-fleet-order">Apply</button></div>
           <div id="fleet-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
           <div id="empty-state" class="empty-state">
             <div class="empty-orbit" aria-hidden="true"><span></span><span></span><span></span></div>
