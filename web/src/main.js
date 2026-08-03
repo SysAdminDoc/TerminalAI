@@ -112,6 +112,14 @@ const state = {
   /// fleet hold ~29 rows, and three more would undo that.
   pinnedTimer: null,
   pinnedGrids: new Map(),
+  /// Structured filters, distinct from the free-text box: text matches anything
+  /// on a row, while these are exact dimensions an operator thinks in.
+  agentFilter: "all",
+  statusFilter: "all",
+  /// Grouping reorders the list so members of a group are adjacent and labels
+  /// each row with its group. Headers are deliberately not inserted: the list is
+  /// an ARIA listbox, and a non-option child would break its semantics.
+  groupBy: "none",
   focusGeneration: 0,
   resizeTimer: null,
   lastSentSize: null,
@@ -719,6 +727,84 @@ function startPinnedPolling() {
   state.pinnedTimer = setInterval(() => void refreshPinnedGrids(), PINNED_POLL_MS);
 }
 
+const GROUP_MODES = ["none", "folder", "agent", "status"];
+const STATUS_FILTERS = {
+  all: () => true,
+  attention: (session) => isAttention(session),
+  working: (session) => ["working", "thinking"].includes(session.status),
+  idle: (session) => session.status === "idle",
+  blocked: (session) => session.status === "rate-limited",
+  exited: (session) => session.status === "exited",
+};
+
+/// Which group a session belongs to under the current mode.
+function groupOf(session) {
+  switch (state.groupBy) {
+    case "folder":
+      return folderLabel(session.cwd);
+    case "agent":
+      return session.agent === "codex" ? "Codex" : "Claude Code";
+    case "status":
+      return statusLabel(session.status);
+    default:
+      return "";
+  }
+}
+
+/// Apply the structured filters. Returns true when the session survives.
+function passesFilters(session) {
+  if (state.agentFilter !== "all" && session.agent !== state.agentFilter) return false;
+  const status = STATUS_FILTERS[state.statusFilter] ?? STATUS_FILTERS.all;
+  return status(session);
+}
+
+/// Order sessions so members of a group are adjacent, without disturbing the
+/// attention-first ordering inside each group — a blocked session must not sink
+/// just because its folder sorts late.
+function applyGrouping(sessions) {
+  if (state.groupBy === "none") return sessions;
+  const groups = new Map();
+  for (const session of sessions) {
+    const key = groupOf(session);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(session);
+  }
+  // Groups are ordered by their most urgent member, so the folder holding a
+  // session that needs you appears first.
+  const ranked = [...groups.entries()].sort((left, right) => {
+    const urgency = (entries) => Math.max(...entries.map((s) => STATUS_ORDER[s.status] ?? 0));
+    const delta = urgency(right[1]) - urgency(left[1]);
+    return delta !== 0 ? delta : left[0].localeCompare(right[0]);
+  });
+  return ranked.flatMap(([, entries]) => entries);
+}
+
+function syncFilterControls() {
+  const group = $("group-toggle");
+  group.textContent = t(`group-${state.groupBy}`);
+  group.classList.toggle("wide-toggle-active", state.groupBy !== "none");
+  group.setAttribute("aria-pressed", String(state.groupBy !== "none"));
+  for (const [id, value] of [
+    ["agent-filter", state.agentFilter],
+    ["status-filter", state.statusFilter],
+  ]) {
+    const select = $(id);
+    if (select && select.value !== value) select.value = value;
+  }
+}
+
+/// A chip naming the row's group, shown only while grouping is on.
+///
+/// Group *headers* are deliberately not inserted into the list: it is an ARIA
+/// listbox, and a child that is not an option breaks its semantics and its
+/// keyboard model. Labelling each row keeps both.
+function groupChip(session) {
+  if (state.groupBy === "none") return "";
+  const group = groupOf(session);
+  if (!group) return "";
+  return `<span class="row-group" title="${escapeHtml(t("row-group"))}">${escapeHtml(group)}</span>`;
+}
+
 function renderRows() {
   syncReviewVisibility();
   renderSummary();
@@ -726,6 +812,7 @@ function renderRows() {
   const filter = $("filter-input").value.trim().toLowerCase();
   const desiredSessions = sortedSessions().filter((session) => {
     if (state.attentionOnly && !isAttention(session)) return false;
+    if (!passesFilters(session)) return false;
     if (!filter) return true;
     return [session.name, session.cwd, folderLabel(session.cwd), session.branch, session.agent, session.model, session.status, session.phase, lifecycleLabel(session), lastActivity(session), toolProgress(session.tool_progress), session.restarts, ports(session.ports)]
       .filter(Boolean)
@@ -733,9 +820,11 @@ function renderRows() {
       .toLowerCase()
       .includes(filter);
   });
-  const pendingPriorityMoves = pendingPriorityChanges(desiredSessions);
+  syncFilterControls();
+  const grouped = applyGrouping(desiredSessions);
+  const pendingPriorityMoves = pendingPriorityChanges(grouped);
   if (state.orderFreeze) state.orderFreeze.pending = pendingPriorityMoves;
-  const sessions = applyFrozenOrder(desiredSessions);
+  const sessions = applyFrozenOrder(grouped);
   renderOrderNotice(pendingPriorityMoves);
   const list = $("fleet-list");
   $("empty-state").classList.toggle("empty-state-hidden", state.sessions.length > 0);
@@ -1037,7 +1126,7 @@ function renderRow(session) {
   const portsLabel = ports(session.ports);
   const accessibleLabel = `${session.name}, ${label}, ${repo}, ${branch}, ${t("action-tool-progress")} ${progress}, ${restartCount} ${t("action-restart-count")}, ${t("action-allocated-ports")} ${portsLabel}`;
   return `<article class="fleet-row${escapeHtml(active)}${escapeHtml(unread)}" data-id="${escapeHtml(session.id)}" role="option" tabindex="-1" aria-posinset="1" aria-setsize="1" aria-selected="false" aria-keyshortcuts="Enter Space ArrowUp ArrowDown Home End" aria-label="${escapeHtml(accessibleLabel)}">
-    <div class="row-identity"><span class="status-glyph tone-${escapeHtml(meta.tone)}" title="${escapeHtml(label)}" aria-hidden="true">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name"><span class="row-name-text">${escapeHtml(session.name)}</span>${session.unread ? `<span class="unread-dot" title="${escapeHtml(t("action-unread-attention"))}"></span>` : ""}</div><div class="row-folder"><span class="row-repo" title="${escapeHtml(t("action-repository"))}">${escapeHtml(repo)}</span><span class="row-branch" title="${escapeHtml(t("action-branch"))}">${escapeHtml(branch)}</span><span class="row-status-label">${escapeHtml(label)}</span><span class="row-ports" title="${escapeHtml(t("action-allocated-ports"))}">${escapeHtml(t("action-allocated-ports"))} ${escapeHtml(portsLabel)}</span></div></div></div>
+    <div class="row-identity"><span class="status-glyph tone-${escapeHtml(meta.tone)}" title="${escapeHtml(label)}" aria-hidden="true">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name"><span class="row-name-text">${escapeHtml(session.name)}</span>${session.unread ? `<span class="unread-dot" title="${escapeHtml(t("action-unread-attention"))}"></span>` : ""}</div><div class="row-folder"><span class="row-repo" title="${escapeHtml(t("action-repository"))}">${escapeHtml(repo)}</span><span class="row-branch" title="${escapeHtml(t("action-branch"))}">${escapeHtml(branch)}</span><span class="row-status-label">${escapeHtml(label)}</span>${groupChip(session)}<span class="row-ports" title="${escapeHtml(t("action-allocated-ports"))}">${escapeHtml(t("action-allocated-ports"))} ${escapeHtml(portsLabel)}</span></div></div></div>
     <div class="row-metrics"><span class="agent-badge agent-${escapeHtml(session.agent)}" title="${session.agent === "codex" ? "Codex" : "Claude Code"}" aria-label="${session.agent === "codex" ? "Codex" : "Claude Code"}">${agentLabel}</span><span class="row-progress" title="${escapeHtml(t("action-tool-progress"))}"><small>PROG</small><b>${escapeHtml(progress)}</b></span><span class="row-restarts" title="${escapeHtml(t("action-restart-count"))}">↻ ${restartCount}</span></div>
     <div class="row-dwell"><span>${dwell(session.status_since)}</span><small class="row-last-line" title="${escapeHtml(lastLine)}">${escapeHtml(lastLine)}</small></div>
     <div class="row-actions"><button type="button" data-action="pin" class="row-action ${session.pinned ? "row-action-active" : ""}" title="${escapeHtml(pinLabel)}" aria-label="${escapeHtml(pinLabel)} ${escapeHtml(session.name)}">${session.pinned ? "◆" : "◇"}</button><button type="button" data-action="focus" class="row-action" title="${escapeHtml(t("action-focus-terminal"))}" aria-label="${escapeHtml(t("action-focus-session", { name: session.name }))}">↗</button><button type="button" data-action="revive" class="row-action" title="${escapeHtml(t("action-revive", { name: session.name }))}" aria-label="${escapeHtml(t("action-revive", { name: session.name }))}"${reviveHidden}>↻</button><button type="button" data-action="archive" class="row-action" title="${escapeHtml(t("action-archive-stopped"))}" aria-label="${escapeHtml(t("action-archive", { name: session.name }))}"${archiveHidden}>▣</button><button type="button" data-action="kill" class="row-action row-action-danger" title="${escapeHtml(stopLabel)}" aria-label="${escapeHtml(stopLabel)}"${stopHidden}>×</button></div>
@@ -1822,6 +1911,21 @@ function bindEvents() {
   });
   $("update-check-button").addEventListener("click", () => void checkForUpdates());
   $("filter-input").addEventListener("input", renderRows);
+  $("agent-filter").addEventListener("change", (event) => {
+    state.agentFilter = event.target.value;
+    renderRows();
+  });
+  $("status-filter").addEventListener("change", (event) => {
+    state.statusFilter = event.target.value;
+    renderRows();
+  });
+  $("group-toggle").addEventListener("click", () => {
+    // Cycles rather than opening a menu: four modes is fewer clicks this way,
+    // and the button always states the current one.
+    const next = (GROUP_MODES.indexOf(state.groupBy) + 1) % GROUP_MODES.length;
+    state.groupBy = GROUP_MODES[next];
+    renderRows();
+  });
   $("fleet-list").addEventListener("mouseenter", beginFleetOrderFreeze);
   $("fleet-list").addEventListener("mouseleave", releaseFleetOrderFreeze);
   $("fleet-list").addEventListener("focusin", beginFleetOrderFreeze);

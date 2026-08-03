@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Filter and group the fleet list. Agent and status dropdowns sit alongside the free-text box —
+  text matches anything on a row, while these are exact dimensions an operator thinks in. A group
+  button cycles none → folder → agent → status and always states the mode it is in. Grouping
+  reorders so a group's members are adjacent and labels each row, rather than inserting headers:
+  the list is an ARIA listbox, and a child that is not an option would break its semantics and its
+  keyboard model. A group's position follows its most urgent member, so the folder holding a
+  session that needs you stays at the top.
 - Windows toasts for sessions that want the operator. A session entering `NeedsYou`,
   `NeedsApproval` or `AwaitingInput` raises a toast naming it, why it is blocked, and which repo it
   is in — a toast reading only "Needs you" is useless with thirty sessions. Clicking it focuses

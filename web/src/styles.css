@@ -176,3 +176,5 @@ button { cursor: pointer; }
 .pinned-pane-status { flex: none; font-size: 9px; }
 .pinned-pane-grid { max-height: 190px; margin: 0; padding: 8px 9px; overflow: auto; color: var(--subtext1); font-family: 'Cascadia Code', Consolas, monospace; font-size: 10px; line-height: 1.35; white-space: pre; }
 .pinned-pane-grid-waiting { color: var(--subtext0); font-style: italic; }
+.filter-select select { height: 26px; padding: 0 6px; border: 1px solid rgba(88, 91, 112, .42); border-radius: 6px; background: rgba(24, 24, 37, .7); color: var(--subtext1); font-size: 11px; }
+.row-group { padding: 0 5px; border-radius: 4px; background: rgba(88, 91, 112, .28); color: var(--subtext1); font-size: 9px; }

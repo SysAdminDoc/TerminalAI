@@ -235,3 +235,19 @@ land-unavailable = the repository could not be read: { $detail }
 
 pinned-waiting = Waiting for output…
 label-pinned-split = Pinned session panes
+
+group-none = No grouping
+group-folder = By folder
+group-agent = By agent
+group-status = By status
+button-group-list = Group the list by folder, agent, or status
+label-filter-agent = Filter by agent
+label-filter-status = Filter by status
+filter-agent-all = All agents
+filter-status-all = Any status
+filter-status-attention = Needs you
+filter-status-working = Working
+filter-status-idle = Idle
+filter-status-blocked = Rate limited
+filter-status-exited = Exited
+row-group = Group
