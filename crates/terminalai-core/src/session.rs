@@ -98,8 +98,10 @@ impl SessionStatus {
 #[serde(rename_all = "kebab-case")]
 pub enum SessionPhase {
     Queued,
+    Preparing,
     Unknown,
     Starting,
+    TearingDown,
     Idle,
     Working,
     AwaitingInput,
@@ -343,6 +345,19 @@ impl Session {
         self.pid = None;
         self.backoff_until = None;
         self.set_status_at(SessionStatus::Starting, now, source, true);
+    }
+
+    /// The environment hook worker is preparing the process boundary. Keep
+    /// the public status at Starting while exposing the blocking phase.
+    pub fn mark_preparing(&mut self) {
+        self.phase = SessionPhase::Preparing;
+        self.health = SessionHealth::Starting;
+    }
+
+    /// The agent has exited and its environment teardown is running on a
+    /// worker. The prior terminal phase is restored when the worker completes.
+    pub fn mark_tearing_down(&mut self) {
+        self.phase = SessionPhase::TearingDown;
     }
 
     /// Start an operator-requested native revive and clear automatic restart

@@ -65,6 +65,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   paths, preventing stale badges and toasts.
 - Automatic restarts now share one bounded timer scheduler; admission-blocked attempts consume
   restart backoff and budget, and scheduler failure marks the session failed instead of abandoning it.
+- Environment setup and teardown hooks now run on dedicated workers with visible preparing and
+  teardown phases; Windows hook timeouts terminate the entire descendant process tree.
 - Registry and IPC event delivery now use bounded nonblocking queues with counted drops, and each
   subscribed connection stops and joins its event bridge before the writer thread is joined.
 - R-16 adds lifecycle-aware attention notifications with stable dedup keys, repository grouping,

@@ -12,6 +12,12 @@ use std::time::{Duration, Instant};
 
 use portable_pty::CommandBuilder;
 
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
+
+#[cfg(windows)]
+use crate::process_tree::ProcessJob;
+
 pub const DEFAULT_PORT_BASE: u16 = 42_000;
 pub const DEFAULT_PORT_COUNT: u16 = 4;
 pub const PORT_BLOCK_STRIDE: u16 = 16;
@@ -166,6 +172,17 @@ fn run_hook(
     cwd: &Path,
     ports: &[u16],
 ) -> Result<(), EnvironmentError> {
+    run_hook_with_timeout(phase, command_line, session_id, cwd, ports, HOOK_TIMEOUT)
+}
+
+fn run_hook_with_timeout(
+    phase: &'static str,
+    command_line: Option<&str>,
+    session_id: &str,
+    cwd: &Path,
+    ports: &[u16],
+    timeout: Duration,
+) -> Result<(), EnvironmentError> {
     let Some(command_line) = command_line
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -186,7 +203,16 @@ fn run_hook(
             phase,
             cause: error.to_string(),
         })?;
-    let deadline = Instant::now() + HOOK_TIMEOUT;
+    #[cfg(windows)]
+    let job = match ProcessJob::assign(child.as_raw_handle()) {
+        Ok(job) => job,
+        Err(cause) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(EnvironmentError::HookSpawn { phase, cause });
+        }
+    };
+    let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -201,11 +227,15 @@ fn run_hook(
             }
             Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
             Ok(None) => {
+                #[cfg(windows)]
+                let _ = job.terminate();
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(EnvironmentError::HookTimeout { phase });
             }
             Err(error) => {
+                #[cfg(windows)]
+                let _ = job.terminate();
                 let _ = child.kill();
                 let _ = child.wait();
                 return Err(EnvironmentError::HookSpawn {
@@ -343,6 +373,37 @@ mod tests {
             ..Default::default()
         };
         run_setup(&spec, "s0001", Path::new("."), &[42_000]).expect("setup hook");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn timed_out_hook_terminates_descendant_processes() {
+        let marker = std::env::temp_dir().join(format!(
+            "terminalai-hook-timeout-{}-{}.txt",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_file(&marker);
+        let command = format!(
+            r#"start "" /b cmd.exe /d /c "ping -n 30 127.0.0.1 > nul & echo leaked > {}" & ping -n 30 127.0.0.1 > nul"#,
+            marker.display()
+        );
+
+        let result = run_hook_with_timeout(
+            "setup",
+            Some(&command),
+            "s0001",
+            Path::new("."),
+            &[],
+            Duration::from_millis(100),
+        );
+        assert!(matches!(result, Err(EnvironmentError::HookTimeout { .. })));
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(!marker.exists(), "hook descendant survived timeout");
+        let _ = std::fs::remove_file(marker);
     }
 
     #[cfg(windows)]

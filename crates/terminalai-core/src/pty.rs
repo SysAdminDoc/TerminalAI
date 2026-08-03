@@ -13,23 +13,12 @@ use std::sync::{Arc, Mutex};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty};
 
-#[cfg(windows)]
-use std::mem::size_of;
-#[cfg(windows)]
-use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
-#[cfg(windows)]
-use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-#[cfg(windows)]
-use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-};
-
 pub use portable_pty::PtySize;
 
 use crate::environment;
 use crate::launch::ResolvedCommand;
+#[cfg(windows)]
+use crate::process_tree::ProcessJob;
 
 #[derive(Debug, thiserror::Error)]
 pub enum PtyError {
@@ -45,63 +34,6 @@ pub enum PtyError {
     Write(#[from] std::io::Error),
     #[error("could not contain child process: {0}")]
     Job(String),
-}
-
-#[cfg(windows)]
-#[derive(Debug)]
-struct ProcessJob {
-    handle: OwnedHandle,
-}
-
-#[cfg(windows)]
-impl ProcessJob {
-    fn assign(process: RawHandle) -> Result<Self, PtyError> {
-        let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
-        if job.is_null() {
-            return Err(PtyError::Job(std::io::Error::last_os_error().to_string()));
-        }
-
-        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        let configured = unsafe {
-            SetInformationJobObject(
-                job,
-                JobObjectExtendedLimitInformation,
-                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            )
-        } != 0;
-        if !configured {
-            let error = std::io::Error::last_os_error();
-            unsafe {
-                CloseHandle(job);
-            }
-            return Err(PtyError::Job(error.to_string()));
-        }
-
-        let assigned = unsafe { AssignProcessToJobObject(job, process as HANDLE) } != 0;
-        if !assigned {
-            let error = std::io::Error::last_os_error();
-            unsafe {
-                CloseHandle(job);
-            }
-            return Err(PtyError::Job(error.to_string()));
-        }
-
-        Ok(Self {
-            handle: unsafe { OwnedHandle::from_raw_handle(job as RawHandle) },
-        })
-    }
-
-    fn terminate(&self) -> Result<(), PtyError> {
-        let terminated =
-            unsafe { TerminateJobObject(self.handle.as_raw_handle() as HANDLE, 1) } != 0;
-        if terminated {
-            Ok(())
-        } else {
-            Err(PtyError::Gone)
-        }
-    }
 }
 
 /// A live agent process attached to a pseudo-console.
@@ -171,7 +103,7 @@ impl PtySession {
             let process = child.as_raw_handle().ok_or_else(|| {
                 PtyError::Job("portable-pty did not expose a process handle".into())
             });
-            match process.and_then(ProcessJob::assign) {
+            match process.and_then(|process| ProcessJob::assign(process).map_err(PtyError::Job)) {
                 Ok(job) => job,
                 Err(error) => {
                     let mut child = child;
@@ -281,7 +213,7 @@ impl PtySession {
     /// Terminate the agent. Used when the user closes a session.
     pub fn kill(&self) -> Result<(), PtyError> {
         #[cfg(windows)]
-        self.job.terminate()?;
+        self.job.terminate().map_err(PtyError::Job)?;
         #[cfg(not(windows))]
         {
             let mut c = self.child.lock().map_err(|_| PtyError::Gone)?;

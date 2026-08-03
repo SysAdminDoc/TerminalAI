@@ -19,6 +19,7 @@ pub mod hook_config;
 pub mod hooks;
 pub mod launch;
 pub mod notification;
+pub(crate) mod process_tree;
 pub mod pty;
 pub mod registry;
 pub mod review;

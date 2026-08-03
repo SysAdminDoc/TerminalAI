@@ -141,6 +141,8 @@ pub enum RegistryError {
     StillRunning(SessionId),
     #[error("session has no native resume id: {0}")]
     NoResumeId(SessionId),
+    #[error("could not start {phase} worker: {cause}")]
+    WorkerSpawn { phase: &'static str, cause: String },
     #[error("session is no longer running: {0}")]
     NotRunning(SessionId),
 }
@@ -174,6 +176,16 @@ struct RestartTask {
     sequence: u64,
     id: SessionId,
     generation: u64,
+}
+
+struct TeardownTask {
+    id: SessionId,
+    generation: u64,
+    final_phase: SessionPhase,
+    restart: Option<(u64, Duration)>,
+    cwd: std::path::PathBuf,
+    spec: EnvironmentSpec,
+    ports: Vec<u16>,
 }
 
 impl Ord for RestartTask {
@@ -442,6 +454,8 @@ impl SessionRegistry {
             if queued {
                 session.mark_queued_at(SystemTime::now());
                 state.queue.push_back(id.clone());
+            } else {
+                session.mark_preparing();
             }
             state.entries.insert(
                 id.clone(),
@@ -498,7 +512,12 @@ impl SessionRegistry {
                 .entries
                 .get_mut(id)
                 .ok_or_else(|| RegistryError::Missing(id.clone()))?;
-            if entry.pty.is_some() {
+            if entry.pty.is_some()
+                || matches!(
+                    entry.session.phase,
+                    SessionPhase::Preparing | SessionPhase::Starting | SessionPhase::TearingDown
+                )
+            {
                 return Err(RegistryError::StillRunning(id.clone()));
             }
             let resume_id = entry
@@ -526,6 +545,7 @@ impl SessionRegistry {
                 state.queue.push_back(id.clone());
             } else {
                 entry.session.begin_manual_revive_at(SystemTime::now());
+                entry.session.mark_preparing();
             }
             (command, generation, queued)
         };
@@ -600,6 +620,30 @@ impl SessionRegistry {
                 .ok_or_else(|| RegistryError::Missing(id.clone()))?;
             entry.stop_requested = true;
             let Some(pty) = entry.pty.clone() else {
+                if matches!(
+                    entry.session.phase,
+                    SessionPhase::Preparing | SessionPhase::Starting
+                ) {
+                    let previous_status = entry.session.status;
+                    let previous_state_since = entry.session.state_since;
+                    entry.generation = entry.generation.saturating_add(1);
+                    let now = SystemTime::now();
+                    entry
+                        .session
+                        .mark_resurrectable_at_from(None, now, StatusSource::Manual);
+                    let session = entry.session.clone();
+                    let notifications = state.notifications.observe(
+                        &session,
+                        previous_status,
+                        previous_state_since,
+                        now,
+                    );
+                    drop(state);
+                    self.emit(RegistryEvent::SessionUpdated { session });
+                    self.emit_notification_changes(notifications);
+                    self.drain_queue();
+                    return Ok(());
+                }
                 if entry.session.status == SessionStatus::Queued {
                     let previous_status = entry.session.status;
                     let previous_state_since = entry.session.state_since;
@@ -881,25 +925,13 @@ impl SessionRegistry {
                 .filter_map(|entry| {
                     entry.stop_requested = true;
                     let pty = entry.pty.clone()?;
-                    let teardown = if entry.teardown_done {
-                        None
-                    } else {
-                        entry.teardown_done = true;
-                        Some((
-                            entry.session.cwd.clone(),
-                            entry.spec.environment.clone(),
-                            entry.session.ports.clone(),
-                        ))
-                    };
-                    Some((entry.session.id.clone(), pty, teardown))
+                    Some((entry.session.id.clone(), entry.generation, pty))
                 })
                 .collect()
         };
-        for (id, pty, teardown) in sessions {
+        for (id, generation, pty) in sessions {
             let _ = pty.kill();
-            if let Some((cwd, spec, ports)) = teardown {
-                let _ = environment::run_teardown(&spec, &id.0, &cwd, &ports);
-            }
+            self.mark_process_exit(&id, generation, None);
         }
     }
 
@@ -980,10 +1012,39 @@ impl SessionRegistry {
         command: ResolvedCommand,
         generation: u64,
     ) -> Result<(), RegistryError> {
+        let registry = self.clone();
+        let worker_id = id.clone();
+        thread::Builder::new()
+            .name(format!("terminalai-environment-{id}"))
+            .spawn(move || {
+                if let Err(error) = registry.prepare_and_start(&worker_id, &command, generation) {
+                    registry.finish_start_failure(&worker_id, generation, error);
+                }
+            })
+            .map(|_| ())
+            .map_err(|error| RegistryError::WorkerSpawn {
+                phase: "setup",
+                cause: error.to_string(),
+            })
+    }
+
+    fn prepare_and_start(
+        &self,
+        id: &SessionId,
+        command: &ResolvedCommand,
+        generation: u64,
+    ) -> Result<(), RegistryError> {
         let (cwd, environment_spec, ports) = self.runtime_environment(id)?;
         let environment = environment::variables(&id.0, &ports);
-        environment::run_setup(&environment_spec, &id.0, &cwd, &ports)?;
-        let pty = match self.spawn_pty(id, &command, generation, &environment) {
+        if let Err(error) = environment::run_setup(&environment_spec, &id.0, &cwd, &ports) {
+            let _ = environment::run_teardown(&environment_spec, &id.0, &cwd, &ports);
+            return Err(error.into());
+        }
+        if !self.start_is_current(id, generation) {
+            let _ = environment::run_teardown(&environment_spec, &id.0, &cwd, &ports);
+            return Err(RegistryError::NotRunning(id.clone()));
+        }
+        let pty = match self.spawn_pty(id, command, generation, &environment) {
             Ok(pty) => pty,
             Err(error) => {
                 let _ = environment::run_teardown(&environment_spec, &id.0, &cwd, &ports);
@@ -1015,6 +1076,51 @@ impl SessionRegistry {
         self.emit_session(id);
         self.spawn_monitor(id.clone(), pty, generation);
         Ok(())
+    }
+
+    fn finish_start_failure(&self, id: &SessionId, generation: u64, error: RegistryError) {
+        let (session, notifications) = {
+            let mut state = lock_state(&self.inner);
+            let Some(entry) = state.entries.get_mut(id) else {
+                return;
+            };
+            if entry.generation != generation
+                || entry.stop_requested
+                || entry.pty.is_some()
+                || entry.session.phase != SessionPhase::Preparing
+            {
+                return;
+            }
+            let previous_status = entry.session.status;
+            let previous_state_since = entry.session.state_since;
+            let now = SystemTime::now();
+            entry
+                .session
+                .mark_resurrectable_at_from(None, now, StatusSource::Supervisor);
+            entry.session.phase = SessionPhase::Failed;
+            entry.session.health = crate::session::SessionHealth::Failed;
+            entry
+                .session
+                .set_last_line(&format!("Environment startup failed: {error}"));
+            let session = entry.session.clone();
+            let notifications =
+                state
+                    .notifications
+                    .observe(&session, previous_status, previous_state_since, now);
+            (session, notifications)
+        };
+        self.emit(RegistryEvent::SessionUpdated { session });
+        self.emit_notification_changes(notifications);
+        self.drain_queue();
+    }
+
+    fn start_is_current(&self, id: &SessionId, generation: u64) -> bool {
+        let state = lock_state(&self.inner);
+        state.entries.get(id).is_some_and(|entry| {
+            entry.generation == generation
+                && !entry.stop_requested
+                && entry.session.phase == SessionPhase::Preparing
+        })
     }
 
     fn runtime_environment(
@@ -1053,6 +1159,7 @@ impl SessionRegistry {
                 entry
                     .session
                     .begin_restart_at_from(SystemTime::now(), StatusSource::Admission);
+                entry.session.mark_preparing();
                 (id, entry.command.clone(), entry.generation)
             };
 
@@ -1148,28 +1255,106 @@ impl SessionRegistry {
                     RestartDecision::Failed => None,
                 }
             };
-            let session = entry.session.clone();
             let teardown = if entry.teardown_done {
                 None
             } else {
                 entry.teardown_done = true;
-                Some((
-                    entry.session.cwd.clone(),
-                    entry.spec.environment.clone(),
-                    entry.session.ports.clone(),
-                ))
+                let final_phase = entry.session.phase;
+                entry.session.mark_tearing_down();
+                Some(TeardownTask {
+                    id: id.clone(),
+                    generation: entry.generation,
+                    final_phase,
+                    restart,
+                    cwd: entry.session.cwd.clone(),
+                    spec: entry.spec.environment.clone(),
+                    ports: entry.session.ports.clone(),
+                })
             };
+            let session = entry.session.clone();
             let notifications =
                 state
                     .notifications
                     .observe(&session, previous_status, previous_state_since, now);
             (restart, session, notifications, teardown)
         };
-        if let Some((cwd, spec, ports)) = teardown {
-            let _ = environment::run_teardown(&spec, &id.0, &cwd, &ports);
-        }
         self.emit(RegistryEvent::SessionUpdated { session });
         self.emit_notification_changes(notifications);
+        if let Some(task) = teardown {
+            self.spawn_teardown(task);
+        } else {
+            self.complete_process_exit(id, restart);
+        }
+    }
+
+    fn spawn_teardown(&self, task: TeardownTask) {
+        let TeardownTask {
+            id,
+            generation,
+            final_phase,
+            restart,
+            cwd,
+            spec,
+            ports,
+        } = task;
+        let registry = self.clone();
+        let worker_id = id.clone();
+        let worker_cwd = cwd.clone();
+        let worker_spec = spec.clone();
+        let worker_ports = ports.clone();
+        let result = thread::Builder::new()
+            .name(format!("terminalai-environment-teardown-{id}"))
+            .spawn(move || {
+                let error = environment::run_teardown(
+                    &worker_spec,
+                    &worker_id.0,
+                    &worker_cwd,
+                    &worker_ports,
+                )
+                .err()
+                .map(|error| error.to_string());
+                registry.finish_teardown(&worker_id, generation, final_phase, restart, error);
+            });
+        if let Err(error) = result {
+            self.finish_teardown(
+                &id,
+                generation,
+                final_phase,
+                restart,
+                Some(format!("could not start teardown worker: {error}")),
+            );
+        }
+    }
+
+    fn finish_teardown(
+        &self,
+        id: &SessionId,
+        generation: u64,
+        final_phase: SessionPhase,
+        restart: Option<(u64, Duration)>,
+        error: Option<String>,
+    ) {
+        let session = {
+            let mut state = lock_state(&self.inner);
+            let Some(entry) = state.entries.get_mut(id) else {
+                return;
+            };
+            if entry.generation != generation || entry.session.phase != SessionPhase::TearingDown {
+                return;
+            }
+            entry.session.phase = final_phase;
+            if let Some(error) = error {
+                entry
+                    .session
+                    .set_last_line(&format!("Environment teardown failed: {error}"));
+            }
+            entry.session.clone()
+        };
+        self.emit(RegistryEvent::SessionUpdated { session });
+        self.complete_process_exit(id, restart);
+    }
+
+    fn complete_process_exit(&self, id: &SessionId, restart: Option<(u64, Duration)>) {
         self.drain_queue();
         if let Some((generation, delay)) = restart {
             self.schedule_restart(id.clone(), generation, delay);
@@ -1234,6 +1419,7 @@ impl SessionRegistry {
             entry.generation = entry.generation.saturating_add(1);
             let generation = entry.generation;
             entry.session.begin_restart_at(SystemTime::now());
+            entry.session.mark_preparing();
             (entry.command.clone(), generation)
         };
         self.emit_session(&id);
@@ -1687,6 +1873,12 @@ mod tests {
 
         lock_state(&registry.inner).entries.remove(&active_id);
         registry.drain_queue();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while std::time::Instant::now() < deadline
+            && registry.snapshot()[0].status != SessionStatus::Exited
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         assert_eq!(
             registry.snapshot()[0].status,
             SessionStatus::Exited,
@@ -2176,6 +2368,56 @@ mod tests {
         )));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn slow_setup_runs_off_launch_path_and_exposes_preparing_phase() {
+        let mut spec = LaunchSpec {
+            cwd: std::env::current_dir().expect("test cwd"),
+            extra_args: vec!["/c".into(), "exit".into(), "0".into()],
+            ..LaunchSpec::default()
+        };
+        spec.environment.setup = Some("ping -n 5 127.0.0.1 > nul".into());
+        let registry = SessionRegistry::new();
+        let started = std::time::Instant::now();
+        let id = registry
+            .launch(
+                spec,
+                AgentBinary {
+                    agent: Agent::Claude,
+                    path: PathBuf::from("cmd.exe"),
+                    origin: Origin::Path,
+                },
+            )
+            .expect("launch with slow setup hook");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "launch waited for the setup worker"
+        );
+        assert_eq!(
+            registry
+                .snapshot()
+                .into_iter()
+                .find(|session| session.id == id)
+                .expect("preparing row")
+                .phase,
+            SessionPhase::Preparing
+        );
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(8);
+        while std::time::Instant::now() < deadline {
+            let row = registry
+                .snapshot()
+                .into_iter()
+                .find(|session| session.id == id)
+                .expect("session remains tracked");
+            if row.pid.is_some() || row.status == SessionStatus::Exited {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        registry.shutdown();
+    }
+
     #[test]
     fn admission_blocked_restart_consumes_budget_without_spawning_retry_threads() {
         let registry = SessionRegistry::with_admission(AdmissionConfig::new(1, None));
@@ -2281,6 +2523,10 @@ mod tests {
             .expect("spawn teardown test process");
 
         registry.shutdown();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while std::time::Instant::now() < deadline && !marker.exists() {
+            std::thread::sleep(Duration::from_millis(25));
+        }
         let teardown = std::fs::read_to_string(&marker).expect("teardown marker");
         assert!(
             teardown.contains(&id.0),
@@ -2315,6 +2561,10 @@ mod tests {
                 },
             )
             .expect("spawn short-lived process");
+        let launch_deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < launch_deadline && registry.snapshot()[0].pid.is_none() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         assert!(registry.snapshot()[0].pid.is_some());
 
         let deadline = Instant::now() + Duration::from_secs(3);

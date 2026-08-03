@@ -51,9 +51,9 @@ Working today (`terminalai-probe`, headless):
   daemon shutdown runs active teardown hooks once
 - Native Claude and Codex version checks run through the same sanitized environment allowlist as
   live sessions, including opt-in proxy variables without inheriting parent secrets
-- 129 default tests over the flag mapping, real-pty boundary, supervision state machine, registry,
+- 131 default tests over the flag mapping, real-pty boundary, supervision state machine, registry,
   diagnostics, review aggregation, daemon protocol, presets, launch golden fixtures, atomic file
-  recovery, corrupt-store quarantine, deterministic fleet ordering, prompt safety and fleet-row model; 131
+  recovery, corrupt-store quarantine, deterministic fleet ordering, prompt safety and fleet-row model; 133
   with the opt-in app-server
   transport enabled
 

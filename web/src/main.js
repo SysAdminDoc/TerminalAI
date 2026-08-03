@@ -35,6 +35,12 @@ const STATUS_KEYS = Object.keys(STATUS_META);
 const RELEASES_ENDPOINT = "https://api.github.com/repos/SysAdminDoc/TerminalAI/releases/latest";
 const FALLBACK_APP_VERSION = "0.1.0";
 
+function lifecycleLabel(session) {
+  if (session?.phase === "preparing") return "Preparing environment";
+  if (session?.phase === "tearing-down") return "Tearing down environment";
+  return STATUS_META[session?.status]?.label ?? session?.status ?? "Unknown";
+}
+
 const MODEL_SUGGESTIONS = {
   claude: ["opus", "sonnet", "haiku"],
   codex: ["gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1"],
@@ -236,6 +242,7 @@ function renderDiagnostics() {
   const history = Array.isArray(session.status_history) ? [...session.status_history].reverse() : [];
   const latest = history[0];
   const meta = STATUS_META[session.status] ?? STATUS_META.exited;
+  const label = lifecycleLabel(session);
   const source = latest?.source ? diagnosticSource(latest.source) : "Unavailable";
   const timeline = history.length
     ? history.map((entry) => {
@@ -244,8 +251,8 @@ function renderDiagnostics() {
       return '<li class="diagnostic-event"><span class="diagnostic-event-glyph tone-' + entryMeta.tone + '" aria-hidden="true">' + entryMeta.glyph + '</span><div class="diagnostic-event-body"><div><b>' + escapeHtml(entryMeta.label) + '</b><span>from ' + escapeHtml(from) + '</span></div><small>' + escapeHtml(diagnosticSource(entry.source)) + ' · ' + escapeHtml(diagnosticTime(entry.at)) + '</small>' + (entry.detail ? '<p>' + escapeHtml(entry.detail) + '</p>' : '') + '</div></li>';
     }).join("")
     : '<li class="diagnostics-empty">No transition history was persisted for this session.</li>';
-  host.innerHTML = '<div class="diagnostics-heading"><div><span class="eyebrow">WHY THIS STATE</span><h2>' + escapeHtml(session.name) + '</h2><p>' + escapeHtml(session.cwd) + '</p></div><span class="status-glyph tone-' + meta.tone + '" title="' + escapeHtml(meta.label) + '" aria-hidden="true">' + meta.glyph + '</span></div>' +
-    '<div class="diagnostics-current"><span>Current status</span><b>' + escapeHtml(meta.label) + '</b><span>for ' + escapeHtml(dwell(session.status_since)) + ' · source ' + escapeHtml(source) + '</span></div>' +
+  host.innerHTML = '<div class="diagnostics-heading"><div><span class="eyebrow">WHY THIS STATE</span><h2>' + escapeHtml(session.name) + '</h2><p>' + escapeHtml(session.cwd) + '</p></div><span class="status-glyph tone-' + meta.tone + '" title="' + escapeHtml(label) + '" aria-hidden="true">' + meta.glyph + '</span></div>' +
+    '<div class="diagnostics-current"><span>Current status</span><b>' + escapeHtml(label) + '</b><span>for ' + escapeHtml(dwell(session.status_since)) + ' · source ' + escapeHtml(source) + '</span></div>' +
     '<ol class="diagnostics-timeline">' + timeline + '</ol>';
 }
 
@@ -367,7 +374,7 @@ function renderRows() {
   const sessions = sortedSessions().filter((session) => {
     if (state.attentionOnly && !isAttention(session)) return false;
     if (!filter) return true;
-    return [session.name, session.cwd, folderLabel(session.cwd), session.branch, session.agent, session.model, session.status, session.last_line, toolProgress(session.tool_progress), session.restarts, ports(session.ports)]
+    return [session.name, session.cwd, folderLabel(session.cwd), session.branch, session.agent, session.model, session.status, session.phase, lifecycleLabel(session), session.last_line, toolProgress(session.tool_progress), session.restarts, ports(session.ports)]
       .filter(Boolean)
       .join(" ")
       .toLowerCase()
@@ -423,6 +430,7 @@ function bindFleetRow(row) {
 
 function updateFleetRow(row, session) {
   const meta = STATUS_META[session.status] ?? STATUS_META.exited;
+  const label = lifecycleLabel(session);
   const active = session.id === state.focused;
   const unread = Boolean(session.unread);
   const agentLabel = session.agent === "codex" ? "CX" : "CC";
@@ -434,7 +442,7 @@ function updateFleetRow(row, session) {
   const restartCount = Number.isInteger(Number(session.restarts)) ? Number(session.restarts) : 0;
   const lastLine = session.last_line || "No output yet";
   const pinLabel = session.pinned ? "Unpin" : "Pin";
-  const sessionLabel = `${session.name}, ${meta.label}, ${repo}, ${branch}, progress ${progress}, ${restartCount} restarts, ports ${ports(session.ports)}`;
+  const sessionLabel = `${session.name}, ${label}, ${repo}, ${branch}, progress ${progress}, ${restartCount} restarts, ports ${ports(session.ports)}`;
 
   row.className = `fleet-row${active ? " row-focused" : ""}${unread ? " row-unread" : ""}`;
   row.dataset.id = session.id;
@@ -442,7 +450,7 @@ function updateFleetRow(row, session) {
 
   const glyph = row.querySelector(".status-glyph");
   glyph.className = `status-glyph tone-${meta.tone}`;
-  glyph.title = meta.label;
+  glyph.title = label;
   glyph.textContent = meta.glyph;
 
   row.querySelector(".row-name-text").textContent = session.name;
@@ -457,7 +465,7 @@ function updateFleetRow(row, session) {
   }
   row.querySelector(".row-repo").textContent = repo;
   row.querySelector(".row-branch").textContent = branch;
-  row.querySelector(".row-status-label").textContent = meta.label;
+  row.querySelector(".row-status-label").textContent = label;
   const portBadge = row.querySelector(".row-ports");
   portBadge.textContent = "ports " + ports(session.ports);
 
@@ -519,6 +527,7 @@ function announceStatusChange(session, previousStatus) {
 
 function renderRow(session) {
   const meta = STATUS_META[session.status] ?? STATUS_META.exited;
+  const label = lifecycleLabel(session);
   const active = session.id === state.focused ? " row-focused" : "";
   const unread = session.unread ? " row-unread" : "";
   const agentLabel = session.agent === "codex" ? "CX" : "CC";
@@ -537,8 +546,8 @@ function renderRow(session) {
   const replyHidden = isAttention(session) ? "" : " hidden";
   const wideHidden = state.wideMode ? "" : " hidden";
   const portsLabel = ports(session.ports);
-  return `<article class="fleet-row${active}${unread}" data-id="${escapeHtml(session.id)}" role="listitem" tabindex="0" aria-keyshortcuts="Enter Space" aria-label="${escapeHtml(`${session.name}, ${meta.label}, ${repo}, ${branch}, progress ${progress}, ${restartCount} restarts, ports ${portsLabel}`)}">
-    <div class="row-identity"><span class="status-glyph tone-${meta.tone}" title="${escapeHtml(meta.label)}" aria-hidden="true">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name"><span class="row-name-text">${escapeHtml(session.name)}</span>${session.unread ? '<span class="unread-dot" title="Unread attention"></span>' : ""}</div><div class="row-folder"><span class="row-repo" title="Repository">${escapeHtml(repo)}</span><span class="row-branch" title="Branch">${escapeHtml(branch)}</span><span class="row-status-label">${escapeHtml(meta.label)}</span><span class="row-ports" title="Allocated ports">ports ${escapeHtml(portsLabel)}</span></div></div></div>
+  return `<article class="fleet-row${active}${unread}" data-id="${escapeHtml(session.id)}" role="listitem" tabindex="0" aria-keyshortcuts="Enter Space" aria-label="${escapeHtml(`${session.name}, ${label}, ${repo}, ${branch}, progress ${progress}, ${restartCount} restarts, ports ${portsLabel}`)}">
+    <div class="row-identity"><span class="status-glyph tone-${meta.tone}" title="${escapeHtml(label)}" aria-hidden="true">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name"><span class="row-name-text">${escapeHtml(session.name)}</span>${session.unread ? '<span class="unread-dot" title="Unread attention"></span>' : ""}</div><div class="row-folder"><span class="row-repo" title="Repository">${escapeHtml(repo)}</span><span class="row-branch" title="Branch">${escapeHtml(branch)}</span><span class="row-status-label">${escapeHtml(label)}</span><span class="row-ports" title="Allocated ports">ports ${escapeHtml(portsLabel)}</span></div></div></div>
     <div class="row-metrics"><span class="agent-badge agent-${session.agent}" title="${session.agent === "codex" ? "Codex" : "Claude Code"}" aria-label="${session.agent === "codex" ? "Codex" : "Claude Code"}">${agentLabel}</span><span class="row-progress" title="Tool progress"><small>PROG</small><b>${escapeHtml(progress)}</b></span><span class="row-restarts" title="Restart count">↻ ${restartCount}</span></div>
     <div class="row-dwell"><span>${dwell(session.status_since)}</span><small class="row-last-line" title="${escapeHtml(lastLine)}">${escapeHtml(lastLine)}</small></div>
     <div class="row-actions"><button type="button" data-action="pin" class="row-action ${session.pinned ? "row-action-active" : ""}" title="${pinLabel}" aria-label="${pinLabel} ${escapeHtml(session.name)}">${session.pinned ? "◆" : "◇"}</button><button type="button" data-action="focus" class="row-action" title="Focus terminal" aria-label="Focus ${escapeHtml(session.name)} terminal">↗</button><button type="button" data-action="revive" class="row-action" title="Revive ${escapeHtml(session.name)} with native resume" aria-label="Revive ${escapeHtml(session.name)} with native resume"${reviveHidden}>↻</button><button type="button" data-action="archive" class="row-action" title="Archive stopped session" aria-label="Archive ${escapeHtml(session.name)}"${archiveHidden}>▣</button><button type="button" data-action="kill" class="row-action row-action-danger" title="${escapeHtml(stopLabel)}" aria-label="${escapeHtml(stopLabel)}"${stopHidden}>×</button></div>
@@ -580,9 +589,10 @@ function updateTerminalHeader() {
     return;
   }
   const meta = STATUS_META[session.status] ?? STATUS_META.exited;
+  const label = lifecycleLabel(session);
   $("terminal-name").textContent = session.name;
   $("terminal-path").textContent = session.cwd;
-  $("terminal-status").textContent = `${meta.label} · ${dwell(session.status_since)} · ${session.agent === "codex" ? "Codex" : "Claude Code"}`;
+  $("terminal-status").textContent = `${label} · ${dwell(session.status_since)} · ${session.agent === "codex" ? "Codex" : "Claude Code"}`;
   $("terminal-pulse").className = `terminal-pulse pulse-${meta.tone}`;
   if (state.diagnosticsMode) renderDiagnostics();
 }
