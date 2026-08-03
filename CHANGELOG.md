@@ -3,6 +3,28 @@
 All notable changes to TerminalAI are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- The launcher ships with built-in presets, so a fresh install offers something to pick instead of
+  an empty dropdown that asks the operator to invent a configuration before they know which ones
+  matter. Six span the axes actually decided between — which agent, and how much rope it gets —
+  each with a one-line description rather than four words of jargon. The preset that never asks
+  permission is also the one that runs in its own worktree; shipping the dangerous half of that
+  pair without the safe half would be the app recommending it. Built-ins are marked in the
+  dropdown, cannot be edited in place — an edited copy would silently outlive a corrected version
+  in a later release, so saving under a built-in's name is refused with the suggestion to clone —
+  and are hidden rather than deleted, because a preset that exists only in code cannot be
+  recreated by hand. `↺` beside the preset list offers every hidden built-in again.
+- Presets saved before this version still load: the store read a bare JSON array and now reads
+  either shape, rewriting in the current one on the next save.
+
+### Fixed
+
+- Applying a preset that names no working directory no longer blanks the folder. Which
+  configuration to use and which project to run it on are separate choices.
+
 ## [0.5.0] — 2026-08-03
 
 ### Added

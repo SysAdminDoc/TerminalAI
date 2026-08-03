@@ -4,10 +4,6 @@ Single task tracker for this repo. Newest phase at the top; completed items are 
 
 ## v0.6.0 — the project factory (operator request, 2026-08-03)
 
-- [ ] Ship default presets — the launcher's preset store starts empty; seed it with useful
-      out-of-the-box presets (e.g. Claude/Codex × plan-first/full-auto × common effort levels) that
-      appear on first run, are clearly marked built-in, and can be hidden or cloned but not edited
-      in place
 - [ ] Usability and comprehension pass — a new operator should understand the fleet screen without
       reading the README. Cover: first-run guidance beyond the empty-state card, plain-language
       labels for status/dwell/attention states, tooltips on every control, and a short in-app

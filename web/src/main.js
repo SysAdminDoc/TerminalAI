@@ -1689,7 +1689,10 @@ function readSpec() {
 function writeSpec(spec) {
   $("agent-input").value = spec.agent ?? "claude";
   $("name-input").value = spec.name ?? "";
-  $("cwd-input").value = spec.cwd ?? "";
+  // A built-in preset names no folder: which configuration and which project
+  // are separate choices, so applying "Plan first" must not retarget the
+  // session to nowhere. Only a preset that actually carries a folder sets one.
+  if (spec.cwd) $("cwd-input").value = spec.cwd;
   $("model-input").value = spec.model ?? "";
   $("effort-input").value = spec.effort ?? "";
   $("permission-input").value = spec.permission ?? "ask";
@@ -1820,7 +1823,16 @@ async function launchCurrentSpec() {
 async function loadPresets() {
   try {
     state.presets = await invoke("list_presets");
-    $("preset-select").innerHTML = `<option value="">Presets</option>${state.presets.map((preset) => `<option value="${escapeHtml(preset.name)}">${escapeHtml(preset.name)}</option>`).join("")}`;
+    // Built-ins are labelled, not silently mixed in: an operator who cannot see
+    // which ones shipped with the app cannot tell why one of them refuses to be
+    // overwritten.
+    $("preset-select").innerHTML = `<option value="">${escapeHtml(t("button-presets"))}</option>${state.presets
+      .map((preset) => {
+        const label = preset.builtin ? `${preset.name} ${t("preset-builtin-mark")}` : preset.name;
+        const title = preset.description ? ` — ${preset.description}` : "";
+        return `<option value="${escapeHtml(preset.name)}" title="${escapeHtml(`${label}${title}`)}">${escapeHtml(label)}</option>`;
+      })
+      .join("")}`;
   } catch (error) {
     showToast(`Could not load presets: ${error}`);
   }
@@ -1900,7 +1912,9 @@ async function saveCurrentPreset() {
     return;
   }
   try {
-    await invoke("save_preset", { preset: { name, spec: readSpec(), configured_path: null } });
+    await invoke("save_preset", {
+      preset: { name, spec: readSpec(), configured_path: null, builtin: false, description: null },
+    });
     await loadPresets();
     $("preset-name-input").value = "";
     showToast(`Preset “${name}” saved`, "success");
@@ -2228,6 +2242,18 @@ function bindEvents() {
   });
   $("save-preset-button").addEventListener("click", saveCurrentPreset);
   $("launch-preset-button").addEventListener("click", loadSelectedPreset);
+  $("restore-presets-button").addEventListener("click", async () => {
+    try {
+      const restored = await invoke("restore_builtin_presets");
+      await loadPresets();
+      showToast(
+        restored ? t("presets-restored", { count: restored }) : t("presets-none-hidden"),
+        restored ? "success" : "",
+      );
+    } catch (error) {
+      showToast(String(error));
+    }
+  });
   $("cancel-launch-button").addEventListener("click", () => $("launcher-dialog").close());
   $("close-launcher-button").addEventListener("click", () => $("launcher-dialog").close());
   $("close-rollup-button").addEventListener("click", () => $("rollup-dialog").close());

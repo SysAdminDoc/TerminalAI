@@ -104,6 +104,13 @@ count-unknown-external-other = { $count } unknown
 fleet-live = live
 fleet-spent = spent
 rollup-title = Fleet spend
+preset-builtin-mark = (built-in)
+button-restore-presets = Offer every built-in preset again
+presets-restored = { $count } built-in { $count ->
+    [one] preset restored
+   *[other] presets restored
+  }
+presets-none-hidden = No built-in presets are hidden
 template-label = This project's templates
 template-none = Choose a template…
 template-applied = Applied “{ $name }” from this project

@@ -461,6 +461,16 @@ fn save_preset(preset: Preset, state: State<'_, AppState>) -> Result<(), String>
     state.presets.save(preset)
 }
 
+/// Offer every built-in preset again.
+///
+/// Hiding one is otherwise a one-way door: a built-in exists only in code, so
+/// there is no way to recreate it by hand — the name would collide with the
+/// built-in it was meant to replace.
+#[tauri::command]
+fn restore_builtin_presets(state: State<'_, AppState>) -> Result<usize, String> {
+    state.presets.restore_builtins()
+}
+
 #[tauri::command]
 fn delete_preset(name: String, state: State<'_, AppState>) -> Result<bool, String> {
     state.presets.delete(&name)
@@ -1392,6 +1402,7 @@ fn run_app() -> Result<(), String> {
             list_templates,
             save_preset,
             delete_preset,
+            restore_builtin_presets,
             pick_folder,
             pick_extra_dirs,
             preflight_report,
