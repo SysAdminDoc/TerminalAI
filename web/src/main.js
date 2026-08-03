@@ -135,6 +135,7 @@ const state = {
   snapshotLoading: true,
   historyLoading: false,
   broadcastSelection: [],
+  templates: [],
   announcementQueue: new Map(),
   announcementTimer: null,
   orderFreeze: null,
@@ -1825,6 +1826,72 @@ async function loadPresets() {
   }
 }
 
+/**
+ * Offer the launch configurations the chosen repository declares about itself.
+ *
+ * Re-read every time the folder changes rather than cached: the file is
+ * versioned with the repository, so pulling a branch that changes it should
+ * change what the launcher offers.
+ *
+ * A repository with no templates hides the control entirely — an empty dropdown
+ * reads as "this project has none configured yet", which is a different and
+ * more distracting claim than not mentioning it.
+ */
+async function loadProjectTemplates() {
+  const field = document.querySelector(".project-template-field");
+  const cwd = $("cwd-input").value.trim();
+  state.templates = [];
+  if (!cwd) {
+    field.hidden = true;
+    return;
+  }
+  try {
+    state.templates = await invoke("list_templates", { cwd });
+  } catch (error) {
+    // Said out loud, never swallowed: launching now would apply the operator's
+    // own defaults while they believe the project's were used.
+    field.hidden = true;
+    showToast(t("template-unreadable", { detail: String(error) }));
+    return;
+  }
+  field.hidden = state.templates.length === 0;
+  $("template-select").innerHTML = `<option value="">${escapeHtml(t("template-none"))}</option>${state.templates
+    .map(
+      (template, index) =>
+        `<option value="${index}">${escapeHtml(template.name)}${
+          template.description ? ` — ${escapeHtml(template.description)}` : ""
+        }</option>`,
+    )
+    .join("")}`;
+}
+
+/**
+ * Apply the chosen template to the form.
+ *
+ * The folder is deliberately not touched: it is the repository the template was
+ * read from, which is the one choice the operator has already made.
+ */
+function applyProjectTemplate() {
+  const index = Number.parseInt($("template-select").value, 10);
+  const template = state.templates[index];
+  if (!template) return;
+  const cwd = $("cwd-input").value.trim();
+  if (template.agent) $("agent-input").value = template.agent;
+  if (template.model) $("model-input").value = template.model;
+  if (template.effort) $("effort-input").value = template.effort;
+  if (template.permission) $("permission-input").value = template.permission;
+  if (template.sandbox) $("sandbox-input").value = template.sandbox;
+  if (template.profile) $("profile-input").value = template.profile;
+  if (template.prompt) $("prompt-input").value = template.prompt;
+  $("worktree-input").checked = Boolean(template.worktree);
+  $("search-input").checked = Boolean(template.web_search);
+  state.extraDirs = (template.add_dirs ?? []).map((dir) => `${cwd}/${dir}`);
+  $("extra-dirs-input").value = state.extraDirs.join("; ");
+  syncAgentFields();
+  schedulePreview();
+  showToast(t("template-applied", { name: template.name }), "success");
+}
+
 async function saveCurrentPreset() {
   const name = $("preset-name-input").value.trim();
   if (!name) {
@@ -2146,8 +2213,11 @@ function bindEvents() {
     if (folder) {
       $("cwd-input").value = folder;
       schedulePreview();
+      void loadProjectTemplates();
     }
   });
+  $("cwd-input").addEventListener("change", () => void loadProjectTemplates());
+  $("template-select").addEventListener("change", () => applyProjectTemplate());
   $("pick-extra-button").addEventListener("click", async () => {
     const folders = await invoke("pick_extra_dirs");
     if (folders?.length) {

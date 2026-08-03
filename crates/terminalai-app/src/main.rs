@@ -442,6 +442,20 @@ fn list_presets(state: State<'_, AppState>) -> Result<Vec<Preset>, String> {
     state.presets.list()
 }
 
+/// Launch templates the chosen repository declares about itself.
+///
+/// Read on demand from the folder in the launcher rather than cached, because
+/// the file is versioned with the repository: pulling a branch that changes it
+/// should change what the launcher offers, without restarting anything.
+///
+/// A malformed file is an error the operator sees, not an empty list. Silently
+/// ignoring it launches with them believing the repository's own defaults were
+/// applied.
+#[tauri::command]
+fn list_templates(cwd: PathBuf) -> Result<Vec<terminalai_core::template::Template>, String> {
+    terminalai_core::template::load(&cwd).map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 fn save_preset(preset: Preset, state: State<'_, AppState>) -> Result<(), String> {
     state.presets.save(preset)
@@ -1375,6 +1389,7 @@ fn run_app() -> Result<(), String> {
             revive_session,
             archive_session,
             list_presets,
+            list_templates,
             save_preset,
             delete_preset,
             pick_folder,

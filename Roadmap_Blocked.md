@@ -12,6 +12,17 @@ and click-to-focus through the in-process `on_activated` handler. Delivery is no
 one operator run on the interactive desktop with the Start-Menu shortcut present: confirm the toast
 appears, names the session, and that clicking it focuses that row.
 
+## ACP transport as an alternative to the pty
+
+Gated on a product decision this agent cannot make, not on effort. The item's own 2026-08-02
+research concluded it should be built *only when a third agent family is added*: ACP v1 is stable,
+but neither Claude Code nor Codex speaks it natively, so today it would mean adopting two
+third-party adapters (`@zed-industries/claude-code-acp`, `agentclientprotocol/codex-acp`) to reach
+agents the pty already drives directly — new dependencies and a second transport for no capability
+the fleet lacks. Implementing it now would contradict the recorded finding rather than act on it.
+
+Unblocks when a third agent family is on the roadmap; the adapters are then the cheapest way in.
+
 ## R-06 · P1 — Session hibernation and rehydration
 
 Blocked pending live validation that `claude --resume <id>` restores enough context for

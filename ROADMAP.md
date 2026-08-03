@@ -2,14 +2,6 @@
 
 Single task tracker for this repo. Newest phase at the top; completed items are removed.
 
-## v0.5.0 — beyond the terminal
-
-- [ ] ACP transport as an alternative to the pty, for a compact native chat view
-      (`@zed-industries/claude-code-acp`, `agentclientprotocol/codex-acp`)
-      — *2026-08-02 research: downgraded to conditional. ACP v1 is stable but neither target CLI speaks it natively;
-      only third-party adapters exist. Do this only when adding a third agent family.*
-- [ ] Session templates per repo, read from the repo itself
-
 ## v0.6.0 — the project factory (operator request, 2026-08-03)
 
 - [ ] Ship default presets — the launcher's preset store starts empty; seed it with useful

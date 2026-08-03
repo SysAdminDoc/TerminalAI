@@ -21,7 +21,7 @@ terminalai-daemon = { path = "crates/terminalai-daemon", version = "0.4.0" }
 portable-pty = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml_edit = { version = "0.25", default-features = false, features = ["display", "parse"] }
+toml_edit = { version = "0.25", default-features = false, features = ["display", "parse", "serde"] }
 vte = { version = "0.15.0", features = ["ansi"] }
 unicode-width = "0.2"
 proptest = "1"

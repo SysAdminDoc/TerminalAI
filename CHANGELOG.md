@@ -7,6 +7,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Repositories can declare their own launch templates in `.terminalai/templates.toml`, versioned
+  with the code they describe, so starting work on a familiar project does not begin by
+  remembering which permission mode and effort level it wants. Templates appear in the launcher
+  when that folder is chosen and are re-read on every change, because pulling a branch that edits
+  the file should change what the launcher offers. A template may only set choices the launcher
+  already models: `extra_args` and `cwd` are refused at the schema, since the file arrives with a
+  clone and one that could put arbitrary text on an agent's command line would be argument
+  injection; extra writable directories are refused if they escape the repository; and an
+  unrecognized value for agent, effort, permission or sandbox is a refusal rather than a string
+  passed through to the CLI. A malformed file is reported, never treated as no templates. This
+  repository ships its own, which is also what the format's test reads.
+
 - Broadcast one prompt to several sessions, from a dialog in the fleet toolbar or with
   `terminalai-probe broadcast <id>... -- <text>`. The result is reported per session, never as one
   status: a broadcast that says only "sent" leaves the operator unable to tell which agents got the

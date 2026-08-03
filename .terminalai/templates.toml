@@ -1,0 +1,33 @@
+# Launch configurations this repository declares about itself.
+#
+# TerminalAI reads this when the launcher's folder is set to this repository and
+# offers each entry as a starting point, so working on this project does not
+# begin by remembering which permission mode and effort level it wants.
+#
+# Only choices the launcher already models may appear here. Raw agent arguments
+# and the working directory are deliberately not settable from this file: it
+# arrives with a clone, and a file that could put arbitrary text on an agent's
+# command line would be argument injection.
+
+[[template]]
+name = "Drain the roadmap"
+description = "Work ROADMAP.md top to bottom in an isolated checkout"
+agent = "claude"
+effort = "high"
+permission = "accept-edits"
+worktree = true
+
+[[template]]
+name = "Review the diff"
+description = "Read-only pass over uncommitted work, no edits"
+agent = "claude"
+permission = "plan"
+effort = "medium"
+
+[[template]]
+name = "Research"
+description = "Survey prior art and write findings into RESEARCH.md"
+agent = "codex"
+permission = "plan"
+sandbox = "read-only"
+effort = "high"

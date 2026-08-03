@@ -34,6 +34,7 @@ pub mod scrollback;
 pub mod session;
 pub mod tail;
 pub mod store;
+pub mod template;
 pub mod transcript;
 pub mod worktree;
 

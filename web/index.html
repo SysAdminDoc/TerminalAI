@@ -112,6 +112,7 @@
           <label class="field claude-only"><span>Spend cap <em>USD, optional</em></span><input id="budget-input" type="number" min="0" step="0.01" placeholder="No cap" /></label>
           <label class="field codex-only check-field"><input id="search-input" type="checkbox" /><span>Enable web search</span></label>
           <div class="field field-wide"><span>Extra writable folders</span><div class="input-with-button"><input id="extra-dirs-input" readonly placeholder="None selected" /><button type="button" class="button button-quiet" id="pick-extra-button">Add folders</button></div></div>
+          <label class="field field-wide project-template-field" hidden><span data-i18n="template-label">This project's templates <em>declared in the repository</em></span><select id="template-select"><option value="" data-i18n="template-none">Choose a template…</option></select></label>
           <label class="field field-wide check-field"><input id="worktree-input" type="checkbox" /><span>Isolate in its own Git worktree <em>private checkout and branch, so two sessions on one repo cannot see each other's edits</em></span></label>
           <label class="field"><span>Port slots <em>per session</em></span><input id="port-count-input" type="number" min="0" max="16" step="1" value="4" /></label>
           <label class="field"><span>Port base <em>deterministic</em></span><input id="port-base-input" type="number" min="1024" max="65535" step="1" value="42000" /></label>
