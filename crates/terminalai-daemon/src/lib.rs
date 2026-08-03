@@ -37,6 +37,10 @@ use persistence::StoreWriter;
 pub const PROTOCOL_VERSION: u16 = 2;
 pub const PIPE_NAME: &str = "terminalai.control.v2";
 
+pub fn install_panic_hook() {
+    persistence::install_panic_hook();
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum IpcError {
     #[error("local control transport failed: {0}")]
@@ -310,6 +314,7 @@ fn bridge_store(registry: SessionRegistry, writer: StoreWriter) {
 }
 
 pub fn run() -> Result<(), IpcError> {
+    install_panic_hook();
     DaemonServer::bind()?.serve()
 }
 

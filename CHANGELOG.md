@@ -53,6 +53,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   preserves conflict markers, and lets the operator mark a session reviewed.
 - R-25 adds real-pty echo coverage for output and exit detection plus version-pinned Claude Code
   and Codex CLI launch-argument golden fixtures.
+- R-26 adds bounded per-session status evidence, a focused "why this state" diagnostics view, and
+  structured JSONL crash records for daemon or app panics.
 - Claude/Codex hook payloads now share one parser, including session/thread id aliases and
   permission/idle notification normalization for approval and awaiting-input states.
 - The fleet now has a needs-input filter and per-row reply controls that send bracketed paste

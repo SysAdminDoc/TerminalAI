@@ -11,6 +11,7 @@
 
 pub mod agent;
 pub mod app_server;
+pub mod diagnostics;
 pub mod environment;
 pub mod grid;
 pub mod hook_config;
@@ -30,6 +31,7 @@ pub use app_server::{
     AppServerMessage, AppServerNotification, AppServerParseError, AppServerRequest,
     AppServerResponse, AppServerThreadStatus, AppServerTokenUsage, RpcId,
 };
+pub use diagnostics::{StatusDiagnostic, StatusSource, MAX_STATUS_HISTORY};
 pub use environment::{
     EnvironmentError, EnvironmentSpec, DEFAULT_PORT_BASE, DEFAULT_PORT_COUNT, MAX_PORT_COUNT,
     PORT_BLOCK_STRIDE,

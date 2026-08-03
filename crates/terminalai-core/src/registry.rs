@@ -13,6 +13,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::agent::{AgentBinary, Origin};
 use crate::app_server::{AgentEvent, AppServerEvent};
+use crate::diagnostics::StatusSource;
 use crate::environment::{self, EnvironmentError, EnvironmentSpec};
 use crate::grid::{TerminalGrid, TerminalGridSnapshot};
 use crate::hooks::{HookEvent, HookNotification, HookSignal};
@@ -228,7 +229,7 @@ impl SessionRegistry {
                     .unwrap_or_default();
             }
             let exit_code = session.last_exit_code;
-            session.mark_resurrectable_at(exit_code, SystemTime::now());
+            session.mark_resurrectable_at_from(exit_code, SystemTime::now(), StatusSource::Restore);
             let mut scrollback = RingBuffer::default();
             scrollback.push(&bytes);
             let mut grid = TerminalGrid::default();
@@ -479,7 +480,11 @@ impl SessionRegistry {
             if let Ok(mut state) = self.inner.state.lock() {
                 if let Some(entry) = state.entries.get_mut(id) {
                     if entry.generation == generation {
-                        entry.session.mark_resurrectable_at(None, SystemTime::now());
+                        entry.session.mark_resurrectable_at_from(
+                            None,
+                            SystemTime::now(),
+                            StatusSource::Manual,
+                        );
                     }
                 }
             }
@@ -532,7 +537,9 @@ impl SessionRegistry {
                 if entry.session.status == SessionStatus::Queued {
                     entry.generation = entry.generation.saturating_add(1);
                     let now = SystemTime::now();
-                    entry.session.mark_resurrectable_at(None, now);
+                    entry
+                        .session
+                        .mark_resurrectable_at_from(None, now, StatusSource::Manual);
                     let session = entry.session.clone();
                     state.queue.retain(|queued| queued != id);
                     drop(state);
@@ -545,7 +552,9 @@ impl SessionRegistry {
                     let previous_state_since = entry.session.state_since;
                     entry.generation = entry.generation.saturating_add(1);
                     let now = SystemTime::now();
-                    entry.session.mark_resurrectable_at(None, now);
+                    entry
+                        .session
+                        .mark_resurrectable_at_from(None, now, StatusSource::Manual);
                     let session = entry.session.clone();
                     let notification = state.notifications.observe(
                         &session,
@@ -591,6 +600,10 @@ impl SessionRegistry {
     /// hooks from agents launched outside TerminalAI must not fabricate rows or
     /// delete state.
     pub fn apply_hook(&self, event: HookEvent) -> bool {
+        self.apply_hook_from(event, StatusSource::Hook)
+    }
+
+    fn apply_hook_from(&self, event: HookEvent, source: StatusSource) -> bool {
         let id = {
             let state = self.inner.state.lock().expect("registry poisoned");
             event
@@ -634,16 +647,20 @@ impl SessionRegistry {
             }
             match event.signal {
                 HookSignal::SessionStart => {}
-                HookSignal::Stop => entry.session.set_status(SessionStatus::Idle),
-                HookSignal::PreToolUse => entry.session.set_status(SessionStatus::Working),
-                HookSignal::PostToolUse => entry.session.set_status(SessionStatus::Thinking),
+                HookSignal::Stop => entry.session.set_status_from(SessionStatus::Idle, source),
+                HookSignal::PreToolUse => entry
+                    .session
+                    .set_status_from(SessionStatus::Working, source),
+                HookSignal::PostToolUse => entry
+                    .session
+                    .set_status_from(SessionStatus::Thinking, source),
                 HookSignal::Notification { notification } => match notification {
-                    HookNotification::PermissionPrompt => {
-                        entry.session.set_status(SessionStatus::NeedsApproval)
-                    }
-                    HookNotification::IdlePrompt => {
-                        entry.session.set_status(SessionStatus::AwaitingInput)
-                    }
+                    HookNotification::PermissionPrompt => entry
+                        .session
+                        .set_status_from(SessionStatus::NeedsApproval, source),
+                    HookNotification::IdlePrompt => entry
+                        .session
+                        .set_status_from(SessionStatus::AwaitingInput, source),
                     HookNotification::Other => {}
                 },
             }
@@ -687,12 +704,15 @@ impl SessionRegistry {
         let Some(signal) = app_server_signal(&event) else {
             return true;
         };
-        self.apply_hook(HookEvent {
-            agent: crate::agent::Agent::Codex,
-            session_id: Some(thread_id.to_owned()),
-            cwd: None,
-            signal,
-        })
+        self.apply_hook_from(
+            HookEvent {
+                agent: crate::agent::Agent::Codex,
+                session_id: Some(thread_id.to_owned()),
+                cwd: None,
+                signal,
+            },
+            StatusSource::AppServer,
+        )
     }
 
     fn has_native_session(&self, agent: crate::agent::Agent, native_id: &str) -> bool {
@@ -939,7 +959,9 @@ impl SessionRegistry {
                     continue;
                 }
                 entry.generation = entry.generation.saturating_add(1);
-                entry.session.begin_restart_at(SystemTime::now());
+                entry
+                    .session
+                    .begin_restart_at_from(SystemTime::now(), StatusSource::Admission);
                 (id, entry.command.clone(), entry.generation)
             };
 
@@ -953,7 +975,11 @@ impl SessionRegistry {
                     if entry.generation != generation {
                         continue;
                     }
-                    entry.session.mark_resurrectable_at(None, SystemTime::now());
+                    entry.session.mark_resurrectable_at_from(
+                        None,
+                        SystemTime::now(),
+                        StatusSource::Supervisor,
+                    );
                     entry.session.clone()
                 };
                 self.emit(RegistryEvent::SessionUpdated { session });
@@ -997,10 +1023,16 @@ impl SessionRegistry {
             let now = SystemTime::now();
             let restart = if entry.stop_requested {
                 entry.stop_requested = false;
-                entry.session.mark_resurrectable_at(exit_code, now);
+                entry
+                    .session
+                    .mark_resurrectable_at_from(exit_code, now, StatusSource::ProcessExit);
                 None
             } else {
-                match entry.session.schedule_restart_at(exit_code, now) {
+                match entry.session.schedule_restart_at_from(
+                    exit_code,
+                    now,
+                    StatusSource::ProcessExit,
+                ) {
                     RestartDecision::Backoff(delay) => Some((entry.generation, delay)),
                     RestartDecision::Failed => None,
                 }
@@ -1094,7 +1126,11 @@ impl SessionRegistry {
                 return;
             }
             entry.generation = entry.generation.saturating_add(1);
-            match entry.session.schedule_restart_at(None, SystemTime::now()) {
+            match entry.session.schedule_restart_at_from(
+                None,
+                SystemTime::now(),
+                StatusSource::Supervisor,
+            ) {
                 RestartDecision::Backoff(delay) => Some((entry.generation, delay)),
                 RestartDecision::Failed => None,
             }
@@ -1145,7 +1181,9 @@ fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u
         let previous_status = entry.session.status;
         let previous_state_since = entry.session.state_since;
         if entry.session.status == SessionStatus::Starting {
-            entry.session.set_status(SessionStatus::Idle);
+            entry
+                .session
+                .set_status_from(SessionStatus::Idle, StatusSource::PtyOutput);
         }
         let session = entry.session.clone();
         let notification = (previous_status != session.status).then(|| {

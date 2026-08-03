@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use crate::agent::Agent;
+use crate::diagnostics::{StatusDiagnostic, StatusSource, MAX_STATUS_HISTORY};
 use crate::launch::{Effort, LaunchSpec};
 
 /// Maximum number of automatic restart attempts for one session. A session
@@ -176,6 +177,9 @@ pub struct Session {
     pub unread: bool,
     /// Pinned sessions keep a live terminal grid even when not focused.
     pub pinned: bool,
+    /// Bounded evidence for why the supervisor assigned each status.
+    #[serde(default)]
+    pub status_history: Vec<StatusDiagnostic>,
     /// Operator acknowledgement for the current review snapshot.
     #[serde(default)]
     pub reviewed: bool,
@@ -189,7 +193,7 @@ impl Session {
             .environment
             .ports_for_session(&id.0)
             .unwrap_or_default();
-        Self {
+        let mut session = Self {
             id,
             agent: spec.agent,
             name,
@@ -214,24 +218,46 @@ impl Session {
             cost_usd: None,
             unread: false,
             pinned: false,
+            status_history: Vec::new(),
             reviewed: false,
-        }
+        };
+        session.record_status_transition(None, SessionStatus::Starting, StatusSource::Launch, now);
+        session
     }
 
     /// Apply a status transition, stamping the clock and raising the unread flag
     /// when the session starts wanting something.
     pub fn set_status(&mut self, status: SessionStatus) {
-        if self.status == status {
+        self.set_status_from(status, StatusSource::Unknown);
+    }
+
+    /// Apply a status transition with the evidence source shown in diagnostics.
+    pub fn set_status_from(&mut self, status: SessionStatus, source: StatusSource) {
+        self.set_status_at(status, SystemTime::now(), source, false);
+    }
+
+    fn set_status_at(
+        &mut self,
+        status: SessionStatus,
+        now: SystemTime,
+        source: StatusSource,
+        force_restamp: bool,
+    ) {
+        let previous = self.status;
+        if !force_restamp && previous == status {
             return;
         }
-        if matches!(
-            status,
-            SessionStatus::NeedsApproval | SessionStatus::AwaitingInput | SessionStatus::NeedsYou
-        ) {
+        if previous != status
+            && matches!(
+                status,
+                SessionStatus::NeedsApproval
+                    | SessionStatus::AwaitingInput
+                    | SessionStatus::NeedsYou
+            )
+        {
             self.unread = true;
         }
         self.status = status;
-        let now = SystemTime::now();
         self.status_since = now;
         self.state_since = now;
         self.phase = match status {
@@ -251,71 +277,99 @@ impl Session {
             _ if self.pid.is_some() => SessionHealth::Healthy,
             _ => SessionHealth::Degraded,
         };
+        if previous != status {
+            self.record_status_transition(Some(previous), status, source, now);
+        }
+    }
+
+    fn record_status_transition(
+        &mut self,
+        from: Option<SessionStatus>,
+        to: SessionStatus,
+        source: StatusSource,
+        at: SystemTime,
+    ) {
+        self.status_history.push(StatusDiagnostic {
+            at,
+            from,
+            to,
+            source,
+            detail: None,
+        });
+        let overflow = self.status_history.len().saturating_sub(MAX_STATUS_HISTORY);
+        if overflow > 0 {
+            self.status_history.drain(..overflow);
+        }
     }
 
     /// Record a process that has been spawned. The agent may still be in its
     /// startup phase, but the supervision boundary is now healthy.
     pub fn mark_spawned_at(&mut self, pid: Option<u32>, now: SystemTime) {
         self.pid = pid;
-        self.phase = SessionPhase::Starting;
-        self.health = SessionHealth::Healthy;
         self.backoff_until = None;
-        self.state_since = now;
-        self.status = SessionStatus::Starting;
-        self.status_since = now;
+        self.set_status_at(
+            SessionStatus::Starting,
+            now,
+            StatusSource::ProcessStart,
+            true,
+        );
+        self.health = SessionHealth::Healthy;
     }
 
     /// Keep the row visible while admission control waits for a live slot.
     pub fn mark_queued_at(&mut self, now: SystemTime) {
         self.pid = None;
-        self.phase = SessionPhase::Queued;
-        self.health = SessionHealth::Queued;
         self.backoff_until = None;
-        self.state_since = now;
-        self.status = SessionStatus::Queued;
-        self.status_since = now;
+        self.set_status_at(SessionStatus::Queued, now, StatusSource::Admission, true);
     }
 
     /// A failed process query is not proof of exit. Keep the PID and all
     /// session state while exposing an honest degraded state to the operator.
     pub fn mark_unknown_at(&mut self, now: SystemTime) {
-        self.phase = SessionPhase::Unknown;
+        self.set_status_at(
+            SessionStatus::Unknown,
+            now,
+            StatusSource::ProcessQuery,
+            true,
+        );
         self.health = SessionHealth::Degraded;
-        self.state_since = now;
-        self.status = SessionStatus::Unknown;
-        self.status_since = now;
     }
 
     pub fn begin_restart_at(&mut self, now: SystemTime) {
+        self.begin_restart_at_from(now, StatusSource::Supervisor);
+    }
+
+    pub fn begin_restart_at_from(&mut self, now: SystemTime, source: StatusSource) {
         self.pid = None;
-        self.phase = SessionPhase::Starting;
-        self.health = SessionHealth::Starting;
         self.backoff_until = None;
-        self.state_since = now;
-        self.status = SessionStatus::Starting;
-        self.status_since = now;
+        self.set_status_at(SessionStatus::Starting, now, source, true);
     }
 
     /// Start an operator-requested native revive and clear automatic restart
     /// accounting. The resume id remains intact for the new process.
     pub fn begin_manual_revive_at(&mut self, now: SystemTime) {
         self.restarts = 0;
-        self.begin_restart_at(now);
+        self.begin_restart_at_from(now, StatusSource::Manual);
     }
 
     /// Stop without automatically restarting. The row remains available for a
     /// future explicit revive operation.
     pub fn mark_resurrectable_at(&mut self, exit_code: Option<u32>, now: SystemTime) {
+        self.mark_resurrectable_at_from(exit_code, now, StatusSource::ProcessExit);
+    }
+
+    pub fn mark_resurrectable_at_from(
+        &mut self,
+        exit_code: Option<u32>,
+        now: SystemTime,
+        source: StatusSource,
+    ) {
         self.pid = None;
         if exit_code.is_some() {
             self.last_exit_code = exit_code;
         }
-        self.phase = SessionPhase::Resurrectable;
-        self.health = SessionHealth::Degraded;
         self.backoff_until = None;
-        self.state_since = now;
-        self.status = SessionStatus::Exited;
-        self.status_since = now;
+        self.set_status_at(SessionStatus::Exited, now, source, true);
     }
 
     /// Schedule one automatic restart using exponential backoff. The final
@@ -325,28 +379,33 @@ impl Session {
         exit_code: Option<u32>,
         now: SystemTime,
     ) -> RestartDecision {
+        self.schedule_restart_at_from(exit_code, now, StatusSource::ProcessExit)
+    }
+
+    pub fn schedule_restart_at_from(
+        &mut self,
+        exit_code: Option<u32>,
+        now: SystemTime,
+        source: StatusSource,
+    ) -> RestartDecision {
         self.pid = None;
         if exit_code.is_some() {
             self.last_exit_code = exit_code;
         }
         if self.restarts >= MAX_RESTARTS {
+            self.backoff_until = None;
+            self.set_status_at(SessionStatus::Exited, now, source, true);
             self.phase = SessionPhase::Failed;
             self.health = SessionHealth::Failed;
-            self.backoff_until = None;
-            self.state_since = now;
-            self.status = SessionStatus::Exited;
-            self.status_since = now;
             return RestartDecision::Failed;
         }
 
         self.restarts += 1;
         let delay = restart_backoff(self.restarts);
+        self.backoff_until = Some(now + delay);
+        self.set_status_at(SessionStatus::Exited, now, source, true);
         self.phase = SessionPhase::Backoff;
         self.health = SessionHealth::Degraded;
-        self.backoff_until = Some(now + delay);
-        self.state_since = now;
-        self.status = SessionStatus::Exited;
-        self.status_since = now;
         RestartDecision::Backoff(delay)
     }
 
@@ -478,12 +537,27 @@ mod tests {
         value.as_object_mut().unwrap().remove("branch");
         value.as_object_mut().unwrap().remove("ports");
         value.as_object_mut().unwrap().remove("tool_progress");
+        value.as_object_mut().unwrap().remove("status_history");
         value.as_object_mut().unwrap().remove("reviewed");
         let restored: Session = serde_json::from_value(value).unwrap();
         assert_eq!(restored.branch, None);
         assert!(restored.ports.is_empty());
         assert_eq!(restored.tool_progress, None);
+        assert!(restored.status_history.is_empty());
         assert!(!restored.reviewed);
+    }
+
+    #[test]
+    fn status_history_records_source_and_timestamp() {
+        let spec = spec_for(Agent::Claude, Path::new("."));
+        let mut session = Session::new(SessionId::new(8), &spec);
+        let before = SystemTime::now();
+        session.set_status_from(SessionStatus::NeedsYou, StatusSource::Hook);
+        let transition = session.status_history.last().expect("status evidence");
+        assert_eq!(transition.from, Some(SessionStatus::Starting));
+        assert_eq!(transition.to, SessionStatus::NeedsYou);
+        assert_eq!(transition.source, StatusSource::Hook);
+        assert!(transition.at >= before);
     }
 
     #[test]

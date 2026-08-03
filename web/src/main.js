@@ -46,6 +46,7 @@ const state = {
   wideMode: false,
   reviewMode: false,
   reviews: [],
+  diagnosticsMode: false,
   terminal: null,
   fitAddon: null,
   previewTimer: null,
@@ -134,6 +135,56 @@ function cost(value) {
 function reviewNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
+}
+
+function diagnosticSource(value) {
+  return String(value ?? "unknown")
+    .split("-")
+    .map((part) => part ? part[0].toUpperCase() + part.slice(1) : part)
+    .join(" ");
+}
+
+function diagnosticTime(value) {
+  const time = systemTimeMs(value);
+  return Number.isFinite(time) ? new Date(time).toISOString().replace(".000Z", "Z").replace("T", " ") : "unknown time";
+}
+
+function renderDiagnostics() {
+  const host = $("diagnostics-host");
+  const session = state.sessions.find((item) => item.id === state.focused);
+  if (!session) {
+    host.innerHTML = '<div class="diagnostics-empty">Focus a session to inspect its status evidence.</div>';
+    return;
+  }
+  const history = Array.isArray(session.status_history) ? [...session.status_history].reverse() : [];
+  const latest = history[0];
+  const meta = STATUS_META[session.status] ?? STATUS_META.exited;
+  const source = latest?.source ? diagnosticSource(latest.source) : "Unavailable";
+  const timeline = history.length
+    ? history.map((entry) => {
+      const entryMeta = STATUS_META[entry.to] ?? STATUS_META.exited;
+      const from = entry.from ? (STATUS_META[entry.from]?.label ?? entry.from) : "Session created";
+      return '<li class="diagnostic-event"><span class="diagnostic-event-glyph tone-' + entryMeta.tone + '">' + entryMeta.glyph + '</span><div class="diagnostic-event-body"><div><b>' + escapeHtml(entryMeta.label) + '</b><span>from ' + escapeHtml(from) + '</span></div><small>' + escapeHtml(diagnosticSource(entry.source)) + ' · ' + escapeHtml(diagnosticTime(entry.at)) + '</small>' + (entry.detail ? '<p>' + escapeHtml(entry.detail) + '</p>' : '') + '</div></li>';
+    }).join("")
+    : '<li class="diagnostics-empty">No transition history was persisted for this session.</li>';
+  host.innerHTML = '<div class="diagnostics-heading"><div><span class="eyebrow">WHY THIS STATE</span><h2>' + escapeHtml(session.name) + '</h2><p>' + escapeHtml(session.cwd) + '</p></div><span class="status-glyph tone-' + meta.tone + '" title="' + escapeHtml(meta.label) + '">' + meta.glyph + '</span></div>' +
+    '<div class="diagnostics-current"><span>Current status</span><b>' + escapeHtml(meta.label) + '</b><span>for ' + escapeHtml(dwell(session.status_since)) + ' · source ' + escapeHtml(source) + '</span></div>' +
+    '<ol class="diagnostics-timeline">' + timeline + '</ol>';
+}
+
+function syncDiagnosticsVisibility() {
+  const active = state.diagnosticsMode;
+  $("terminal-host").classList.toggle("view-hidden", active);
+  $("diagnostics-host").classList.toggle("view-hidden", !active);
+  $("diagnostics-toggle").setAttribute("aria-pressed", String(active));
+  $("diagnostics-toggle").classList.toggle("row-action-active", active);
+  $("diagnostics-toggle").textContent = active ? "▣" : "?";
+  if (active) renderDiagnostics();
+}
+
+function setDiagnosticsMode(active) {
+  state.diagnosticsMode = active;
+  syncDiagnosticsVisibility();
 }
 
 function syncReviewVisibility() {
@@ -343,6 +394,7 @@ function updateTerminalHeader() {
     $("terminal-path").textContent = "";
     $("terminal-status").textContent = "Waiting for a session";
     $("terminal-pulse").className = "terminal-pulse";
+    if (state.diagnosticsMode) renderDiagnostics();
     return;
   }
   const meta = STATUS_META[session.status] ?? STATUS_META.exited;
@@ -350,6 +402,7 @@ function updateTerminalHeader() {
   $("terminal-path").textContent = session.cwd;
   $("terminal-status").textContent = `${meta.label} · ${dwell(session.status_since)} · ${session.agent === "codex" ? "Codex" : "Claude Code"}`;
   $("terminal-pulse").className = `terminal-pulse pulse-${meta.tone}`;
+  if (state.diagnosticsMode) renderDiagnostics();
 }
 
 function resetTerminal(status = "Waiting for a session") {
@@ -712,6 +765,7 @@ function bindEvents() {
       void markReviewed(button.dataset.reviewId, button);
     }
   });
+  $("diagnostics-toggle").addEventListener("click", () => setDiagnosticsMode(!state.diagnosticsMode));
   $("filter-input").addEventListener("input", renderRows);
   $("wide-toggle").addEventListener("click", () => {
     state.wideMode = !state.wideMode;

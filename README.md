@@ -45,8 +45,8 @@ Working today (`terminalai-probe`, headless):
 - Spawns and drives either agent on a live ConPTY
 - Runs a Tauri 2.11.5/WebView2 shell with the Catppuccin fleet list, launcher, presets and one
   reused xterm renderer
-- 98 default tests over the flag mapping, real-pty boundary, supervision state machine, registry,
-  review aggregation, daemon protocol, presets, launch golden fixtures and fleet-row model; 100
+- 99 default tests over the flag mapping, real-pty boundary, supervision state machine, registry,
+  diagnostics, review aggregation, daemon protocol, presets, launch golden fixtures and fleet-row model; 101
   with the opt-in app-server
   transport enabled
 
@@ -60,6 +60,10 @@ The daemon writes a versioned, human-readable session store to
 `%LOCALAPPDATA%\TerminalAI\sessions.json`. Reconnecting the window reattaches to live rows and
 replays bounded scrollback; rows recovered after a daemon restart remain stopped until the operator
 chooses native resume or archive.
+
+Each session retains the latest 64 status transitions with their timestamp and source, and the
+terminal panel's diagnostics view explains why the focused row is in its current state. Daemon or
+desktop-shell panics append structured JSON records to %LOCALAPPDATA%\TerminalAI\crash.log.
 
 Attention notifications are deduplicated per session and status, grouped by repository, retracted
 when the agent proceeds, and quiet during startup or the first seconds of a tool call.

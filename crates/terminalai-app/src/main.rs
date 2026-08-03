@@ -412,6 +412,7 @@ fn run_hook_cli(args: &[String]) -> i32 {
 }
 
 fn main() {
+    terminalai_daemon::install_panic_hook();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if is_hook_invocation(&args) {
         std::process::exit(run_hook_cli(&args[1..]));
