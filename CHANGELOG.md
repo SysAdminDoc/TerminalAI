@@ -46,6 +46,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   `Raw` channel, with 12 ms batching so split UTF-8 sequences reach xterm intact.
 - Windows PTY sessions now belong to kill-on-close job objects, so manual kills and session drops
   reap descendants; daemon teardown runs each active session hook once and releases its port block.
+- The PTY environment now preserves the Windows user/runtime directories, processor count and
+  present HTTP(S)/no-proxy settings; installed Claude and Codex binaries are covered by sanitized
+  `--version` launch tests while parent-only secrets remain excluded.
 - R-16 adds lifecycle-aware attention notifications with stable dedup keys, repository grouping,
   automatic retraction on progress, and startup/long-tool grace suppression. The shell consumes
   raised notifications as deduplicated, click-to-focus in-app alerts.

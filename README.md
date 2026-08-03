@@ -49,9 +49,11 @@ Working today (`terminalai-probe`, headless):
   xterm without corrupting multi-byte sequences split across reads
 - Windows PTY sessions use kill-on-close job objects so stopping a session reaps its descendants;
   daemon shutdown runs active teardown hooks once
-- 110 default tests over the flag mapping, real-pty boundary, supervision state machine, registry,
+- Native Claude and Codex version checks run through the same sanitized environment allowlist as
+  live sessions, including opt-in proxy variables without inheriting parent secrets
+- 111 default tests over the flag mapping, real-pty boundary, supervision state machine, registry,
   diagnostics, review aggregation, daemon protocol, presets, launch golden fixtures, atomic file
-  recovery, corrupt-store quarantine, deterministic fleet ordering, prompt safety and fleet-row model; 112
+  recovery, corrupt-store quarantine, deterministic fleet ordering, prompt safety and fleet-row model; 113
   with the opt-in app-server
   transport enabled
 

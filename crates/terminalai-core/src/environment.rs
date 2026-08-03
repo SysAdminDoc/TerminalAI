@@ -262,10 +262,21 @@ pub(crate) fn safe_environment_keys() -> &'static [&'static str] {
         &[
             "PATH",
             "SYSTEMROOT",
+            "SystemDrive",
+            "windir",
             "TEMP",
+            "TMP",
             "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "HOMEDRIVE",
+            "HOMEPATH",
             "COMSPEC",
             "PATHEXT",
+            "NUMBER_OF_PROCESSORS",
+            "HTTPS_PROXY",
+            "HTTP_PROXY",
+            "NO_PROXY",
         ]
     }
     #[cfg(not(windows))]
@@ -332,5 +343,58 @@ mod tests {
             ..Default::default()
         };
         run_setup(&spec, "s0001", Path::new("."), &[42_000]).expect("setup hook");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolved_agents_run_with_the_sanitized_environment() {
+        use crate::agent::{self, Agent};
+
+        for key in [
+            "APPDATA",
+            "LOCALAPPDATA",
+            "HOMEDRIVE",
+            "HOMEPATH",
+            "TMP",
+            "SystemDrive",
+            "windir",
+            "NUMBER_OF_PROCESSORS",
+            "HTTPS_PROXY",
+            "HTTP_PROXY",
+            "NO_PROXY",
+        ] {
+            assert!(
+                safe_environment_keys().contains(&key),
+                "allowlist omitted {key}"
+            );
+        }
+
+        const SENTINEL: &str = "TERMINALAI_R41_PARENT_SECRET";
+        std::env::set_var(SENTINEL, "must-not-cross-process-boundary");
+        for agent in [Agent::Claude, Agent::Codex] {
+            let binary = agent::resolve(agent, None).expect("installed agent binary");
+            let mut command = Command::new(&binary.path);
+            command.arg("--version");
+            configure_command_environment(&mut command, &[]);
+            let output = command.output().expect("run agent version command");
+            assert!(
+                output.status.success(),
+                "{} --version failed: {}{}",
+                agent.command_name(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        let mut command = Command::new("cmd.exe");
+        command.args(["/d", "/c", "set"]);
+        configure_command_environment(&mut command, &[]);
+        let output = command.output().expect("inspect sanitized environment");
+        std::env::remove_var(SENTINEL);
+        let child_environment = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !child_environment.contains(SENTINEL),
+            "parent sentinel crossed the allowlist: {child_environment}"
+        );
     }
 }
