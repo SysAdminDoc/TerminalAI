@@ -53,6 +53,15 @@ pub(crate) fn default_path() -> Option<PathBuf> {
     dirs::data_local_dir().map(|root| root.join("TerminalAI").join("sessions.json"))
 }
 
+/// Where session history is spooled, given the store path.
+///
+/// A sibling directory rather than the store's own sidecar folder: the sidecar
+/// is rewritten in full on every store cycle, and an append-only log must not
+/// share a directory with something that replaces files under it.
+pub(crate) fn scrollback_directory(store: &Path) -> Option<PathBuf> {
+    store.parent().map(|parent| parent.join("scrollback"))
+}
+
 pub(crate) fn load(path: &Path) -> Result<LoadResult, String> {
     match SessionStoreSnapshot::read(path) {
         Ok(snapshot) => Ok(LoadResult {

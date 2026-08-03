@@ -359,6 +359,26 @@ fn stream_scrollback(
     }
 }
 
+/// Output the in-memory ring has already dropped, read from the disk tier.
+///
+/// Streamed on a channel like the ring is, because it is the same kind of
+/// payload and a Tauri command's return value is JSON — a serialized byte array
+/// costs several times its own length.
+#[tauri::command]
+fn stream_scrollback_history(
+    id: SessionId,
+    max_bytes: u64,
+    channel: Channel<InvokeResponseBody>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let client = daemon_client(&state)?;
+    match daemon_response(&client, Request::ScrollbackHistory { id, max_bytes })? {
+        Response::ScrollbackHistory { data } => send_raw(&channel, data),
+        Response::Error { message } => Err(message),
+        other => Err(format!("unexpected history response: {other:?}")),
+    }
+}
+
 #[tauri::command]
 fn attach_session_output(
     id: SessionId,
@@ -1326,6 +1346,7 @@ fn run_app() -> Result<(), String> {
             grid_snapshot,
             subscribe_output,
             stream_scrollback,
+            stream_scrollback_history,
             attach_session_output,
             revive_session,
             archive_session,

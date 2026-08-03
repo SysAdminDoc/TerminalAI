@@ -5,6 +5,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Added
+
+- Scrollback to disk, under the bounded in-memory ring. Each session appends to a rotating pair of
+  segments capped at 8 MB total, so history outlives the 512 KB the ring can hold, and survives a
+  daemon restart. The bound is in bytes rather than lines because a line costs whatever the pane is
+  wide — the same "10,000 lines" is three times the storage at 360 columns as at 120. Writes are
+  queued to a dedicated thread: output arrives on the pty reader with the registry's state lock
+  held, and a blocking write there would stall every other session and back-pressure the agent that
+  produced the bytes. If that queue ever fills, the bytes it drops are announced in place in the
+  log rather than silently omitted. `⇡` in the terminal toolbar loads older output into the focused
+  pane, and `terminalai-probe history <id> [bytes]` reads it from the CLI.
+
+### Changed
+
+- The session store no longer carries session output. The log is now the durable copy, so the
+  store's debounced rewrite stopped copying every session's whole ring — up to 30 × 512 KB as often
+  as once a second — and a restarted daemon replays its panes from the log instead.
+
 ### Fixed
 
 - A session no longer adopts the transcript of another session running in the same folder.

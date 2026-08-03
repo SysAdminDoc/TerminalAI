@@ -2,22 +2,8 @@
 
 Single task tracker for this repo. Newest phase at the top; completed items are removed.
 
-## v0.3.0 — knowing what the fleet is doing
-
-- [ ] Verify Windows toast delivery on an interactive desktop
-      — *Implemented and unit-tested (which states toast, the text, dedup by session+status,
-      click-to-focus via the in-process `on_activated` handler). Delivery itself was never
-      observed on this machine: the app is launched onto a private desktop where notifications
-      do not render, and PowerShell cannot load the WinRT projection to raise one independently.
-      What is needed is one run on the interactive desktop with the Start-Menu shortcut present —
-      confirm the toast appears, names the session, and that clicking it focuses that row.*
-
 ## v0.4.0 — many sessions, one operator
 
-- [ ] Scrollback to disk with a bounded in-memory ring per session
-      — *2026-08-02 research: bound in BYTES, not lines (tmux#4859 — cost scales with width, so a line limit means
-      3× the memory in a wide pane). Two-tier per Warp's block model: mutable grid for the live region, packed
-      immutable bytes for scrollback.*
 - [ ] Git worktree per session, created and cleaned up from the launcher
       — *2026-08-02 research: git isolation alone is insufficient; see R-22 for the non-git half (ports, services,
       databases), which HN 46424131 identifies as universally unserved.*

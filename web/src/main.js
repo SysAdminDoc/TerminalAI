@@ -131,6 +131,7 @@ const state = {
   capabilities: {},
   capabilityRequest: 0,
   snapshotLoading: true,
+  historyLoading: false,
   announcementQueue: new Map(),
   announcementTimer: null,
   orderFreeze: null,
@@ -1412,6 +1413,49 @@ function createOutputChannel(id) {
   return channel;
 }
 
+/// Most history one request may carry. Matches the daemon's own ceiling; asking
+/// for more returns the same bytes, so the number lives in one place
+/// conceptually even though both ends must agree on it.
+const HISTORY_REQUEST_BYTES = 128 * 1024;
+
+/// Prepend output the in-memory ring has already dropped.
+///
+/// The terminal is reset and rewritten rather than scrolled backwards: xterm has
+/// no way to insert above existing content, and replaying history followed by
+/// the ring is the only ordering that reads correctly. The live stream keeps
+/// arriving on its own channel throughout.
+async function loadOlderOutput() {
+  const id = state.focused;
+  if (!id || state.historyLoading) return;
+  state.historyLoading = true;
+  try {
+    const generation = state.focusGeneration;
+    const chunks = [];
+    const channel = new Channel();
+    channel.onmessage = (data) => chunks.push(data);
+    await invoke("stream_scrollback_history", {
+      id,
+      maxBytes: HISTORY_REQUEST_BYTES,
+      channel,
+    });
+    // A focus switch while the read was in flight would otherwise paint one
+    // session's history into another session's pane.
+    if (state.focused !== id || state.focusGeneration !== generation) return;
+    const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+    if (!total) {
+      showToast(t("history-empty"));
+      return;
+    }
+    state.terminal?.reset();
+    for (const chunk of chunks) writeTerminalBytes(chunk, id, generation);
+    showToast(t("history-loaded", { bytes: Math.round(total / 1024) }), "success");
+  } catch (error) {
+    showToast(`Could not load older output: ${error}`);
+  } finally {
+    state.historyLoading = false;
+  }
+}
+
 async function attachSessionOutput(id) {
   const channel = createOutputChannel(id);
   state.outputChannel = channel;
@@ -1989,6 +2033,7 @@ function bindEvents() {
   $("launcher-form").addEventListener("submit", (event) => event.preventDefault());
   $("launch-button").addEventListener("click", () => void launchCurrentSpec());
   $("terminal-clear").addEventListener("click", () => state.terminal?.clear());
+  $("terminal-history").addEventListener("click", () => void loadOlderOutput());
   $("terminal-resize").addEventListener("click", async () => {
     if (!state.focused) return;
     try {

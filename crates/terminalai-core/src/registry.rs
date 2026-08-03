@@ -25,6 +25,7 @@ use crate::launch::{LaunchError, LaunchSpec, ResolvedCommand, Resume};
 use crate::notification::{NotificationCenter, NotificationChange, NotificationEvent};
 use crate::pty::PtySize;
 use crate::review::{collect_reviews, ReviewItem};
+use crate::scrollback::ScrollbackSpool;
 use crate::session::{
     fleet_order, RateLimit, RestartDecision, Session, SessionId, SessionPhase, SessionStatus,
 };
@@ -257,6 +258,16 @@ struct Inner {
     dropped_events: AtomicU64,
     restart_tx: Sender<RestartTask>,
     restart_sequence: AtomicU64,
+    /// The disk tier under the in-memory ring, when one is configured. Absent
+    /// in tests and in the in-process app-server, where a session's history
+    /// dies with the process that owns it anyway.
+    spool: Mutex<Option<Arc<ScrollbackSpool>>>,
+}
+
+impl Inner {
+    fn spool(&self) -> Option<Arc<ScrollbackSpool>> {
+        self.spool.lock().ok().and_then(|spool| spool.clone())
+    }
 }
 
 impl Inner {
@@ -327,6 +338,7 @@ impl SessionRegistry {
                 subscribers: Vec::new(),
             }),
             domain,
+            spool: Mutex::new(None),
             dropped_events: AtomicU64::new(0),
             restart_tx,
             restart_sequence: AtomicU64::new(0),
@@ -466,6 +478,12 @@ impl SessionRegistry {
     /// Capture only serializable state; live PTY handles and parsed grids are
     /// intentionally reconstructed on restore.
     pub fn store_snapshot(&self) -> SessionStoreSnapshot {
+        // With a disk tier attached the log is the durable copy of a session's
+        // output, so the store carries none. It is rewritten in full on a
+        // debounce — copying every session's whole ring into it once a second
+        // was the most expensive thing persistence did, and it duplicated bytes
+        // the spool had already appended.
+        let store_scrollback = self.inner.spool().is_none();
         let state = lock_state(&self.inner);
         SessionStoreSnapshot {
             magic: crate::store::SESSION_STORE_MAGIC.to_owned(),
@@ -477,7 +495,11 @@ impl SessionRegistry {
                     session: entry.session.clone(),
                     spec: entry.spec.clone(),
                     command: entry.command.clone(),
-                    scrollback: entry.scrollback.to_vec(),
+                    scrollback: if store_scrollback {
+                        entry.scrollback.to_vec()
+                    } else {
+                        Vec::new()
+                    },
                 })
                 .collect(),
             archives: state.archives.clone(),
@@ -704,6 +726,9 @@ impl SessionRegistry {
             let notifications = state.notifications.retract_session(id);
             (archived, notifications)
         };
+        // An archive keeps the layout and the command, never the output. The
+        // history is what the disk is being spent on, so it goes with the row.
+        spool_forget(&self.inner, id);
         self.emit(RegistryEvent::SessionRemoved { id: id.clone() });
         self.emit_notification_changes(notifications);
         self.drain_queue();
@@ -1200,6 +1225,85 @@ impl SessionRegistry {
             .get(id)
             .map(|entry| entry.scrollback.to_vec())
             .ok_or_else(|| RegistryError::Missing(id.clone()))
+    }
+
+    /// Attach the disk tier. Output from this point on is also spooled to
+    /// `spool`, and [`Self::scrollback_history`] can reach past the ring.
+    ///
+    /// Set once, by whoever owns the data directory — the daemon. The registry
+    /// deliberately does not choose a path itself: a library that picks its own
+    /// place on disk is one a test cannot run twice at the same time.
+    pub fn set_scrollback_spool(&self, spool: Arc<ScrollbackSpool>) {
+        if let Ok(mut slot) = self.inner.spool.lock() {
+            *slot = Some(spool);
+        }
+        self.rehydrate_scrollback();
+    }
+
+    /// Refill every restored session's memory ring from the disk tier.
+    ///
+    /// Once the log exists it is the durable copy, so the store stops carrying
+    /// scrollback and this is what a restarted daemon replays into the focused
+    /// pane. A session whose log is empty keeps whatever the store had, which
+    /// is how a store written before the log existed still restores.
+    fn rehydrate_scrollback(&self) {
+        let Some(spool) = self.inner.spool() else {
+            return;
+        };
+        let ids: Vec<SessionId> = {
+            let state = lock_state(&self.inner);
+            state.entries.keys().cloned().collect()
+        };
+        for id in ids {
+            // Read files outside the lock; every session's output path needs it.
+            let history = spool.history(&id, MAX_SCROLLBACK_BYTES as u64);
+            if history.is_empty() {
+                continue;
+            }
+            let mut state = lock_state(&self.inner);
+            let Some(entry) = state.entries.get_mut(&id) else {
+                continue;
+            };
+            entry.scrollback = RingBuffer::default();
+            entry.scrollback.push(&history);
+            entry.grid = TerminalGrid::default();
+            entry.grid.advance(&history);
+        }
+    }
+
+    /// History for one session, newest bytes last, at most `max_bytes`.
+    ///
+    /// Answers from disk when a spool is attached and falls back to the memory
+    /// ring otherwise, so a caller does not have to know which tier exists. The
+    /// ring is *not* appended to the disk answer: every byte in it was spooled
+    /// too, and concatenating would duplicate the most recent screenful.
+    pub fn scrollback_history(
+        &self,
+        id: &SessionId,
+        max_bytes: u64,
+    ) -> Result<Vec<u8>, RegistryError> {
+        {
+            let state = lock_state(&self.inner);
+            if !state.entries.contains_key(id) {
+                return Err(RegistryError::Missing(id.clone()));
+            }
+        }
+        // Read outside the state lock: this touches files, and every session's
+        // output path goes through that lock.
+        if let Some(spool) = self.inner.spool() {
+            let history = spool.history(id, max_bytes);
+            if !history.is_empty() {
+                return Ok(history);
+            }
+        }
+        let state = lock_state(&self.inner);
+        let ring = state
+            .entries
+            .get(id)
+            .map(|entry| entry.scrollback.to_vec())
+            .unwrap_or_default();
+        let start = ring.len().saturating_sub(max_bytes as usize);
+        Ok(ring[start..].to_vec())
     }
 
     /// Return the parsed terminal state held for a background or pinned pane.
@@ -1773,6 +1877,7 @@ impl SessionRegistry {
             (removed, notifications)
         };
         if removed {
+            spool_forget(&self.inner, id);
             self.emit(RegistryEvent::SessionRemoved { id: id.clone() });
         }
         self.emit_notification_changes(notifications);
@@ -2197,6 +2302,10 @@ fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u
         }
         entry.scrollback.push(bytes);
         entry.grid.advance(bytes);
+        // Queued, never written here: this runs on the pty reader thread with
+        // the state lock held, so a blocking write would stall every other
+        // session and back-pressure the agent that produced the bytes.
+        spool_append(inner, id, bytes);
         if let Some(line) = entry.scrollback.last_line() {
             entry.session.set_last_line(&line);
         }
@@ -2231,6 +2340,22 @@ fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u
     }
     emit_inner(inner, RegistryEvent::SessionUpdated { session });
     emit_notification_changes_inner(inner, notifications);
+}
+
+/// Hand bytes to the disk tier if one is attached.
+///
+/// Takes its own lock rather than the state lock, and never takes the state
+/// lock, so the two can be held in either order without a cycle.
+fn spool_append(inner: &Arc<Inner>, id: &SessionId, bytes: &[u8]) {
+    if let Some(spool) = inner.spool() {
+        spool.append(id, bytes);
+    }
+}
+
+fn spool_forget(inner: &Arc<Inner>, id: &SessionId) {
+    if let Some(spool) = inner.spool() {
+        spool.forget(id);
+    }
 }
 
 fn emit_notification_changes_inner(inner: &Arc<Inner>, changes: Vec<NotificationChange>) {
@@ -2451,6 +2576,7 @@ mod tests {
     use crate::app_server::{AppServerEvent, AppServerThreadStatus, AppServerTokenUsage};
     use crate::domain::{AgentDomain, AgentSession, DomainError, OutputHandler};
     use crate::launch::spec_for;
+    use crate::scrollback::MAX_DISK_SCROLLBACK_BYTES;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
@@ -3590,5 +3716,170 @@ mod tests {
         });
         assert_ne!(registry.snapshot()[0].status, SessionStatus::RateLimited);
         assert!(registry.snapshot()[0].rate_limit.is_none());
+    }
+
+    struct SpoolScratch(PathBuf);
+
+    impl Drop for SpoolScratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn spool_scratch(name: &str) -> SpoolScratch {
+        let dir = std::env::temp_dir().join(format!(
+            "terminalai-registry-spool-{}-{name}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        SpoolScratch(dir)
+    }
+
+    /// Drive output through the same path the pty reader uses.
+    fn feed(registry: &SessionRegistry, id: &SessionId, bytes: &[u8]) {
+        let generation = lock_state(&registry.inner)
+            .entries
+            .get(id)
+            .map(|entry| entry.generation)
+            .expect("entry");
+        handle_output(&registry.inner, id, generation, bytes);
+    }
+
+    #[test]
+    fn history_reaches_past_what_the_memory_ring_kept() {
+        // The reason the disk tier exists. The ring is deliberately small, so
+        // an agent that produced a megabyte of output has already lost the
+        // start of it from memory by the time anyone asks.
+        let dir = spool_scratch("past-ring");
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        insert_session(&registry, &id, SessionStatus::Working);
+        registry.set_scrollback_spool(Arc::new(
+            ScrollbackSpool::new(&dir.0).expect("spool"),
+        ));
+
+        feed(&registry, &id, b"THE FIRST THING IT SAID
+");
+        feed(&registry, &id, &vec![b'x'; MAX_SCROLLBACK_BYTES]);
+        feed(&registry, &id, b"THE LAST THING IT SAID
+");
+        registry.inner.spool().expect("spool").flush();
+
+        let ring = registry.scrollback(&id).expect("ring");
+        assert!(
+            !ring.starts_with(b"THE FIRST"),
+            "the ring is supposed to have dropped this"
+        );
+        let history = registry
+            .scrollback_history(&id, MAX_DISK_SCROLLBACK_BYTES)
+            .expect("history");
+        let text = String::from_utf8_lossy(&history);
+        assert!(text.contains("THE FIRST THING IT SAID"), "history lost the start");
+        assert!(text.contains("THE LAST THING IT SAID"), "history lost the end");
+    }
+
+    #[test]
+    fn without_a_spool_history_falls_back_to_the_ring() {
+        // The in-process app server and every test construct a registry with no
+        // disk tier. Asking for history there must answer with what exists
+        // rather than nothing.
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        insert_session(&registry, &id, SessionStatus::Working);
+        feed(&registry, &id, b"only in memory
+");
+        let history = registry.scrollback_history(&id, 1024).expect("history");
+        assert_eq!(history, b"only in memory
+".to_vec());
+    }
+
+    #[test]
+    fn history_for_an_unknown_session_is_an_error_not_an_empty_answer() {
+        // An empty answer would read as "this session produced nothing".
+        let registry = SessionRegistry::new();
+        assert!(registry.scrollback_history(&SessionId::new(7), 1024).is_err());
+    }
+
+    #[test]
+    fn the_store_stops_carrying_output_once_a_log_owns_it() {
+        // Persistence rewrites the whole store on a debounce. Copying every
+        // session's ring into it once a second duplicated bytes the spool had
+        // already appended, and was the most expensive thing it did.
+        let dir = spool_scratch("store-free");
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        insert_session(&registry, &id, SessionStatus::Working);
+        feed(&registry, &id, b"output
+");
+        assert_eq!(
+            registry.store_snapshot().sessions[0].scrollback,
+            b"output
+".to_vec(),
+            "with no log, the store is the only durable copy"
+        );
+
+        registry.set_scrollback_spool(Arc::new(
+            ScrollbackSpool::new(&dir.0).expect("spool"),
+        ));
+        assert!(
+            registry.store_snapshot().sessions[0].scrollback.is_empty(),
+            "the store is still carrying bytes the log owns"
+        );
+    }
+
+    #[test]
+    fn a_restarted_registry_replays_its_ring_from_the_log() {
+        // Because the store no longer carries output, this is the only thing
+        // that puts a restored session's last screenful back in front of the
+        // operator. Without it, restarting the daemon would blank every pane.
+        let dir = spool_scratch("rehydrate");
+        let first = SessionRegistry::new();
+        let id = SessionId::new(1);
+        insert_session(&first, &id, SessionStatus::Working);
+        first.set_scrollback_spool(Arc::new(ScrollbackSpool::new(&dir.0).expect("spool")));
+        feed(&first, &id, b"said before the restart
+");
+        first.inner.spool().expect("spool").flush();
+        let stored = first.store_snapshot();
+        drop(first);
+
+        let restarted = SessionRegistry::from_store(stored);
+        assert!(
+            restarted.scrollback(&id).expect("ring").is_empty(),
+            "nothing should have come from the store"
+        );
+        restarted.set_scrollback_spool(Arc::new(ScrollbackSpool::new(&dir.0).expect("spool")));
+        let ring = restarted.scrollback(&id).expect("ring");
+        assert_eq!(ring, b"said before the restart
+".to_vec());
+        // The grid is replayed too, or a pinned pane restores blank while the
+        // focused one has content.
+        let grid = restarted.grid_snapshot(&id).expect("grid");
+        assert!(
+            grid.lines.iter().any(|line| line.contains("before the restart")),
+            "the grid was not replayed"
+        );
+    }
+
+    #[test]
+    fn removing_a_session_stops_it_paying_for_disk() {
+        let dir = spool_scratch("forget");
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        insert_session(&registry, &id, SessionStatus::Exited);
+        registry.set_scrollback_spool(Arc::new(ScrollbackSpool::new(&dir.0).expect("spool")));
+        feed(&registry, &id, b"some output
+");
+        let spool = registry.inner.spool().expect("spool");
+        spool.flush();
+        assert!(!spool.history(&id, 1024).is_empty());
+
+        registry.archive(&id).expect("archive");
+        spool.flush();
+        assert!(
+            spool.history(&id, 1024).is_empty(),
+            "an archived row kept its history on disk"
+        );
     }
 }

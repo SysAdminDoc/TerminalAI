@@ -40,6 +40,7 @@ USAGE:
   terminalai-probe shutdown
   terminalai-probe pin     <session-id> --json      (toggle a pinned live grid)
   terminalai-probe grid    <session-id> --json      (parsed grid for a pinned pane)
+  terminalai-probe history <session-id> [bytes] [--json]  (output the memory ring has dropped)
   terminalai-probe mcp     [--write-token <t> --write-session <id>]...  (MCP server on stdio)
   terminalai-probe land    --source <dir> --target <dir> [--expect-head <sha>]
                            [--verify <program> [--verify-arg <arg>]...] [--verify-timeout <s>]
@@ -88,6 +89,7 @@ fn main() {
         Some("mcp") => cmd_mcp(&args[1..]),
         Some("pin") => cmd_pin(&args[1..]),
         Some("grid") => cmd_grid(&args[1..]),
+        Some("history") => cmd_history(&args[1..]),
         Some("hook") => cmd_hook(&args[1..]),
         Some("hooks") => cmd_hooks(&args[1..]),
         Some("--help") | Some("-h") | None => {
@@ -479,6 +481,39 @@ fn cmd_grid(args: &[String]) -> i32 {
             for line in &grid.lines {
                 println!("{line}");
             }
+            0
+        }
+        Ok(response) => print_control_response(response, machine),
+        Err(error) => print_control_error(error, machine),
+    }
+}
+
+/// Read a session's output history, including bytes the in-memory ring has
+/// already dropped. The one way to see the disk tier from outside the GUI.
+fn cmd_history(args: &[String]) -> i32 {
+    let (machine, rest) = without_json(args);
+    let Some(id) = rest.first() else {
+        return control_usage("history <session-id> [bytes] [--json]");
+    };
+    let max_bytes = match rest.get(1) {
+        Some(value) => match value.parse::<u64>() {
+            Ok(parsed) => parsed,
+            Err(_) => return control_usage("history <session-id> [bytes] [--json]"),
+        },
+        None => terminalai_daemon::MAX_HISTORY_BYTES,
+    };
+    match control_call(Request::ScrollbackHistory {
+        id: SessionId(id.clone()),
+        max_bytes,
+    }) {
+        Ok(Response::ScrollbackHistory { data }) if machine => {
+            print_json(serde_json::json!({
+                "bytes": data.len(),
+                "text": String::from_utf8_lossy(&data),
+            }))
+        }
+        Ok(Response::ScrollbackHistory { data }) => {
+            print!("{}", String::from_utf8_lossy(&data));
             0
         }
         Ok(response) => print_control_response(response, machine),

@@ -61,6 +61,7 @@ use terminalai_core::agent::{self, Agent, Origin};
 use terminalai_core::land::LandQueue;
 use terminalai_core::launch::LaunchSpec;
 use terminalai_core::pty::PtySize;
+use terminalai_core::scrollback::ScrollbackSpool;
 use terminalai_core::{
     AdmissionConfig, AdmissionSnapshot, AgentEvent, HookEvent, LogEntry, RegistryEvent, ReviewItem,
     Session, SessionId, SessionRegistry,
@@ -86,6 +87,13 @@ pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
 /// half a prompt reaching an agent is worse than none.
 pub const MAX_WRITE_BYTES: usize = 256 * 1024;
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+/// Most history one request may return.
+///
+/// A response is one frame, and a frame is capped at [`MAX_FRAME_BYTES`]. The
+/// bytes are JSON-encoded as an array of numbers, which costs several times
+/// their length, so the ceiling here is well under the frame limit rather than
+/// equal to it — a reply that cannot be framed is worse than a short one.
+pub const MAX_HISTORY_BYTES: u64 = 128 * 1024;
 
 /// Sessions the supervisor did not start, reconciled from the agent's own
 /// registry with the CLI as a fallback when that registry is unreadable.
@@ -250,6 +258,14 @@ pub enum Request {
     Scrollback {
         id: SessionId,
     },
+    /// History from the disk tier, reaching past the in-memory ring.
+    ///
+    /// `max_bytes` is clamped rather than rejected: a client asking for more
+    /// than one frame can carry gets what fits, not an error it cannot act on.
+    ScrollbackHistory {
+        id: SessionId,
+        max_bytes: u64,
+    },
     /// The parsed terminal state for a pinned or background session.
     ///
     /// Distinct from `Scrollback`, which returns raw bytes for the one focused
@@ -329,6 +345,9 @@ pub enum Response {
     Scrollback {
         data: Vec<u8>,
     },
+    ScrollbackHistory {
+        data: Vec<u8>,
+    },
     GridSnapshot {
         grid: terminalai_core::TerminalGridSnapshot,
     },
@@ -385,6 +404,22 @@ impl DaemonServer {
                 let loaded = persistence::load(&path).map_err(IpcError::Store)?;
                 let registry =
                     SessionRegistry::from_store_with_admission(loaded.snapshot, admission);
+                // The disk tier lives beside the store, not inside it: the
+                // store is rewritten whole on a debounce, and history is
+                // appended to. Attached before the pipe is bound, so no session
+                // can produce output that misses it.
+                match persistence::scrollback_directory(&path)
+                    .ok_or_else(|| "no data directory".to_owned())
+                    .and_then(|directory| {
+                        ScrollbackSpool::new(directory).map_err(|error| error.to_string())
+                    }) {
+                    Ok(spool) => registry.set_scrollback_spool(Arc::new(spool)),
+                    Err(error) => {
+                        // Losing history is a degradation, not a reason to
+                        // refuse to supervise agents.
+                        tracing::warn!(%error, "scrollback history is memory-only this run");
+                    }
+                }
                 (
                     registry.clone(),
                     Some(StoreWriter::spawn(path, registry)),
@@ -1081,6 +1116,14 @@ fn dispatch_with_endpoint(
                 message: error.to_string(),
             },
         },
+        Request::ScrollbackHistory { id, max_bytes } => {
+            match registry.scrollback_history(&id, max_bytes.min(MAX_HISTORY_BYTES)) {
+                Ok(data) => Response::ScrollbackHistory { data },
+                Err(error) => Response::Error {
+                    message: error.to_string(),
+                },
+            }
+        }
         Request::Reattach { id } => match registry.reattach(&id) {
             Ok(data) => Response::Reattached { data },
             Err(error) => Response::Error {

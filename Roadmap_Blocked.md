@@ -1,5 +1,17 @@
 # Blocked roadmap items
 
+## Verify Windows toast delivery on an interactive desktop
+
+Blocked 2026-08-03: requires an interactive desktop session, which the standing visual-isolation
+rule forbids this agent from using. The app is launched onto a private desktop, where the shell that
+renders notifications is not running, so a toast raised there cannot appear by construction; and
+PowerShell on this machine cannot load the WinRT projection to raise one independently.
+
+The decisions are unit-tested — which states toast, the text of each, dedup by session and status,
+and click-to-focus through the in-process `on_activated` handler. Delivery is not. What closes it is
+one operator run on the interactive desktop with the Start-Menu shortcut present: confirm the toast
+appears, names the session, and that clicking it focuses that row.
+
 ## R-06 · P1 — Session hibernation and rehydration
 
 Blocked pending live validation that `claude --resume <id>` restores enough context for

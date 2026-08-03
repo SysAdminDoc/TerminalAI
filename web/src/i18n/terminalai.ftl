@@ -28,6 +28,9 @@ button-recheck-all = Recheck all
 button-back-to-fleet = Back to fleet
 button-refit-terminal = Refit the terminal grid to the pane
 button-clear-terminal = Clear rendered terminal
+button-load-history = Load older output from disk
+history-loaded = Loaded { $bytes } KB of earlier output
+history-empty = No older output is stored for this session
 
 label-session-fleet = Session fleet
 label-filter-sessions = Filter sessions

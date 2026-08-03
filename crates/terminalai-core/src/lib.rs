@@ -30,6 +30,7 @@ pub(crate) mod process_tree;
 pub mod pty;
 pub mod registry;
 pub mod review;
+pub mod scrollback;
 pub mod session;
 pub mod tail;
 pub mod store;
