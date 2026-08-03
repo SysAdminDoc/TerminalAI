@@ -17,9 +17,6 @@ Single task tracker for this repo. Newest phase at the top; completed items are 
       alphabetically rather than document-first; records lacking `requestId` are summed unconditionally, which
       double-counts Codex's cumulative per-turn usage; and `seen_request_ids` grows unbounded. No pricing data
       ships. agent-deck v1.11.0 shipped this on 2026-08-01, so it is now parity work, not a differentiator.*
-- [ ] Status inference fallback for sessions started outside TerminalAI
-      — *2026-08-02 research: when no hook is installed for an agent, render a visible degraded state. Never
-      report idle from absence of signal — that is the exact failure mode in ccmanager#227 and cmux#1027.*
 - [ ] Pin up to three sessions to keep live grids; split view
 - [ ] Windows toast on `NeedsYou`, with click-to-focus
       — *2026-08-02 research: an unpackaged Win32 app cannot raise a toast without a Start Menu shortcut carrying
@@ -183,14 +180,6 @@ researcher continues from R-88.
 ### P0
 
 ### P1
-
-- [ ] R-72 · P1 — Adopt sessions TerminalAI did not spawn
-  Why: Claude Code ships an official, headless enumeration of every running session on the machine, so the supervisor can show and reason about agents started from a terminal, an IDE or another tool instead of pretending they do not exist.
-  Evidence: verified 2026-08-02 — `claude agents --json` returned 11 live sessions with `pid`, `cwd`, `sessionId`, `startedAt`, `kind` and `name`, backed by a per-PID registry at `~/.claude/sessions/<pid>.json` that additionally carries `procStart` (making identity PID-reuse-safe), `version` and `entrypoint`. `claude attach <id>` and `claude logs <id>` exist but are absent from `--help`. Codex's equivalent is `thread/list` with `sourceKinds` and `archived` filters.
-  Touches: `crates/terminalai-core/src/agent.rs`, `registry.rs`, fleet list
-  Acceptance: externally started sessions appear as read-only rows identified by `(pid, procStart)`, visibly distinguished from supervised rows and never offered actions the supervisor cannot perform; the registry file is watched directly with `claude agents --json` as the reconciliation fallback; an unparseable or missing registry degrades to "unknown", never to "idle".
-  Complexity: M
-  — *Supersedes the premise of the v0.3.0 item "Status inference fallback for sessions started outside TerminalAI", which assumed no signal exists. Keep that item's rule — never report idle from absence of signal — and source it from here.*
 
 ### P2
 

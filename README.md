@@ -123,6 +123,14 @@ Each launch can reserve a deterministic block of service ports and run optional 
 hooks from the project directory. Hooks and the agent receive `TERMINALAI_SESSION_ID`,
 `TERMINALAI_PORTS`, `TERMINALAI_PORT_BASE`, and the first port as `PORT`.
 
+Sessions started outside TerminalAI — from a terminal, an IDE, or another tool — appear in a
+separate **Elsewhere on this machine** panel, read from Claude Code's own per-PID session registry
+with `claude agents --json` as the reconciliation fallback. Those rows are deliberately actionless:
+TerminalAI owns none of their processes, so it offers nothing it cannot perform. Identity is
+`(pid, procStart)`, which survives PID reuse. A registry that cannot be read reports "unknown",
+never "idle" — reporting idle from the absence of a signal is the failure mode this whole surface
+exists to avoid.
+
 The Review view is a daemon-owned, read-only Git diff surface across all sessions with changes.
 It ranks entries by file and line review cost, shows additions/deletions and conflict markers, caps
 diff payloads at 128 KiB per session, and lets the operator mark a session reviewed. It never stages,

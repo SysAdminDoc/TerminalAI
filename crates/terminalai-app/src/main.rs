@@ -119,6 +119,20 @@ fn review_snapshot(state: State<'_, AppState>) -> Result<ReviewSnapshot, String>
     }
 }
 
+/// Sessions running outside this supervisor. Read-only by construction: the
+/// response carries no handle the UI could act on.
+#[tauri::command]
+fn external_sessions(
+    state: State<'_, AppState>,
+) -> Result<Vec<terminalai_core::ExternalSession>, String> {
+    let client = daemon_client(&state)?;
+    match daemon_response(&client, Request::ExternalSessions)? {
+        Response::ExternalSessions { sessions } => Ok(sessions),
+        Response::Error { message } => Err(message),
+        other => Err(format!("unexpected external-session response: {other:?}")),
+    }
+}
+
 #[tauri::command]
 fn mark_reviewed(id: SessionId, state: State<'_, AppState>) -> Result<(), String> {
     let client = daemon_client(&state)?;
@@ -904,6 +918,7 @@ fn run_app() -> Result<(), String> {
             app_version,
             fleet_snapshot,
             review_snapshot,
+            external_sessions,
             mark_reviewed,
             preview_launch,
             resolve_agent,

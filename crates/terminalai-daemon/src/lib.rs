@@ -56,6 +56,27 @@ pub const PIPE_NAME: &str = "terminalai.control.v2";
 const OUTGOING_QUEUE_CAPACITY: usize = 256;
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
+/// Sessions the supervisor did not start, reconciled from the agent's own
+/// registry with the CLI as a fallback when that registry is unreadable.
+///
+/// Never fabricates: an empty result means nothing was discoverable, which the
+/// UI renders as "unknown", not as an empty machine.
+fn external_sessions() -> Vec<terminalai_core::ExternalSession> {
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+    let sessions =
+        terminalai_core::claude_sessions(&home, &terminalai_core::external::process_is_running);
+    if !sessions.is_empty() {
+        return sessions;
+    }
+    // The registry directory was missing or unreadable. Ask the CLI once.
+    agent::resolve(Agent::Claude, None)
+        .ok()
+        .and_then(|binary| terminalai_core::external::enumerate_via_cli(&binary.path))
+        .unwrap_or_default()
+}
+
 pub fn install_panic_hook() {
     persistence::install_panic_hook();
 }
@@ -96,6 +117,9 @@ pub enum Request {
     Close,
     Snapshot,
     ReviewSnapshot,
+    /// Sessions running outside this supervisor, read from the agent's own
+    /// per-PID registry. Read-only: the daemon owns none of them.
+    ExternalSessions,
     MarkReviewed {
         id: SessionId,
     },
@@ -179,6 +203,9 @@ pub enum Response {
     },
     ReviewSnapshot {
         entries: Vec<ReviewItem>,
+    },
+    ExternalSessions {
+        sessions: Vec<terminalai_core::ExternalSession>,
     },
     Status {
         session: Session,
@@ -571,6 +598,9 @@ fn dispatch_with_quarantine(
         },
         Request::ReviewSnapshot => Response::ReviewSnapshot {
             entries: registry.review_snapshot(),
+        },
+        Request::ExternalSessions => Response::ExternalSessions {
+            sessions: external_sessions(),
         },
         Request::MarkReviewed { id } => match registry.mark_reviewed(&id) {
             Ok(()) => Response::Ok,

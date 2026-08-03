@@ -140,6 +140,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   laid out below it.
 - Closing the launcher, or pressing Enter in any launcher field, no longer spawns an agent —
   every dialog control is an explicit button and the form refuses submission outright.
+- Sessions started outside TerminalAI now appear in an **Elsewhere on this machine** panel, read
+  from Claude Code's per-PID session registry with `claude agents --json` as the reconciliation
+  fallback. The rows are read-only and carry no controls, because the supervisor owns none of
+  those processes. Identity is `(pid, procStart)` so a reused PID cannot inherit another
+  session's row, and an unreadable registry reports "unknown" rather than an empty machine.
 - The cost model can now express the rates transcripts actually carry: separate 5-minute and
   1-hour cache-write tiers, the regional-inference premium and the priority-speed premium. The
   previous four-field type could represent none of them, so the first spend figure the fleet

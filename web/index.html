@@ -51,6 +51,10 @@
           <div id="fleet-state-strip" class="fleet-state-strip" role="list" aria-label="Fleet state counts"></div>
           <div class="column-labels" aria-hidden="true"><span>STATUS / REPO · BRANCH</span><span>AGENT · PROGRESS</span><span>DWELL / LAST LINE</span><span></span></div>
           <div id="fleet-list" class="fleet-list" role="listbox" aria-label="Tracked sessions" aria-describedby="fleet-summary" aria-orientation="vertical"></div>
+          <div id="external-view" class="external-view view-hidden" aria-label="Sessions started outside TerminalAI">
+            <div class="external-heading"><span class="eyebrow">ELSEWHERE ON THIS MACHINE</span><span id="external-summary"></span></div>
+            <div id="external-list" class="external-list" role="list" aria-label="Sessions TerminalAI does not supervise"></div>
+          </div>
           <div id="fleet-order-notice" class="fleet-order-notice view-hidden"><span id="fleet-order-message"></span><button type="button" class="button button-secondary" id="apply-fleet-order">Apply</button></div>
           <div id="fleet-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
           <div id="empty-state" class="empty-state">

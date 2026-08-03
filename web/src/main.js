@@ -60,6 +60,8 @@ const MODEL_SUGGESTIONS = {
 
 const state = {
   sessions: [],
+  external: [],
+  externalError: null,
   focused: null,
   presets: [],
   extraDirs: [],
@@ -875,6 +877,62 @@ function resetTerminal(status = "Waiting for a session") {
   updateTerminalHeader();
 }
 
+const EXTERNAL_STATE_LABEL = {
+  live: { label: "Running", tone: "sapphire" },
+  ended: { label: "Ended", tone: "overlay0" },
+  unknown: { label: "Unknown", tone: "overlay0" },
+};
+
+// Rows for sessions this supervisor did not start. Deliberately actionless: we
+// do not own their pty, so offering Stop or Focus would promise something the
+// daemon cannot deliver.
+function renderExternal() {
+  const supervised = new Set(state.sessions.map((session) => String(session.cwd ?? "").toLowerCase()));
+  const rows = state.external.filter((session) => session.state !== "ended");
+  const view = $("external-view");
+  view.classList.toggle("view-hidden", rows.length === 0 && !state.externalError);
+
+  if (state.externalError) {
+    $("external-summary").textContent = state.externalError;
+    $("external-list").innerHTML = "";
+    return;
+  }
+  const unknown = rows.filter((session) => session.state === "unknown").length;
+  $("external-summary").textContent = unknown
+    ? `${rows.length} not supervised · ${unknown} unknown`
+    : `${rows.length} not supervised`;
+
+  $("external-list").innerHTML = rows
+    .map((session) => {
+      const meta = EXTERNAL_STATE_LABEL[session.state] ?? EXTERNAL_STATE_LABEL.unknown;
+      const label = session.name || folderLabel(session.cwd) || `pid ${session.pid}`;
+      const where = session.entrypoint ? `${session.kind ?? "session"} · ${session.entrypoint}` : (session.kind ?? "session");
+      const alsoHere = supervised.has(String(session.cwd ?? "").toLowerCase())
+        ? '<span class="external-overlap" title="TerminalAI also supervises a session in this folder">same folder</span>'
+        : "";
+      return `<article class="external-row" role="listitem" aria-label="${escapeHtml(`${label}, ${meta.label}, not supervised by TerminalAI`)}">
+        <span class="status-glyph tone-${meta.tone}" aria-hidden="true">◦</span>
+        <div class="external-identity"><div class="external-name">${escapeHtml(label)}</div><div class="external-meta"><span title="${escapeHtml(String(session.cwd ?? ""))}">${escapeHtml(folderLabel(session.cwd))}</span><span>${escapeHtml(where)}</span>${session.version ? `<span>v${escapeHtml(session.version)}</span>` : ""}</div></div>
+        <span class="external-state">${escapeHtml(meta.label)}</span>
+        <span class="external-pid" title="Process id">${escapeHtml(String(session.pid))}</span>
+        ${alsoHere}
+      </article>`;
+    })
+    .join("");
+}
+
+async function loadExternal() {
+  try {
+    state.external = (await invoke("external_sessions")) ?? [];
+    state.externalError = null;
+  } catch (error) {
+    // Never render "nothing running" from a failed lookup.
+    state.external = [];
+    state.externalError = `Could not read external sessions: ${error}`;
+  }
+  renderExternal();
+}
+
 async function loadReview() {
   try {
     const snapshot = await invoke("review_snapshot");
@@ -1241,7 +1299,10 @@ async function handleDaemonEvent(event) {
 function bindEvents() {
   $("new-session-button").addEventListener("click", openLauncher);
   $("empty-new-button").addEventListener("click", openLauncher);
-  $("refresh-button").addEventListener("click", loadSnapshot);
+  $("refresh-button").addEventListener("click", () => {
+    void loadSnapshot();
+    void loadExternal();
+  });
   $("dismiss-store-quarantine").addEventListener("click", () => {
     state.storeQuarantineDismissed = true;
     renderStoreQuarantine();
@@ -1361,7 +1422,7 @@ async function start() {
     showToast(`Event stream unavailable: ${error}`);
   }
   await loadPreflight();
-  await Promise.all([loadSnapshot(), loadPresets()]);
+  await Promise.all([loadSnapshot(), loadPresets(), loadExternal()]);
   setInterval(() => {
     renderRows();
     updateTerminalHeader();

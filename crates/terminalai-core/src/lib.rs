@@ -14,6 +14,7 @@ pub mod app_server;
 pub mod atomic_file;
 pub mod diagnostics;
 pub mod environment;
+pub mod external;
 pub mod grid;
 pub mod hook_config;
 pub mod hooks;
@@ -34,6 +35,7 @@ pub use app_server::{
     AppServerResponse, AppServerThreadStatus, AppServerTokenUsage, RpcId,
 };
 pub use diagnostics::{StatusDiagnostic, StatusSource, MAX_STATUS_HISTORY};
+pub use external::{claude_sessions, ExternalSession, ExternalState};
 pub use environment::{
     EnvironmentError, EnvironmentSpec, DEFAULT_PORT_BASE, DEFAULT_PORT_COUNT, MAX_PORT_COUNT,
     PORT_BLOCK_STRIDE,
