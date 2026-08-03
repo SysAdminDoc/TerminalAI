@@ -34,6 +34,7 @@
     "allow-pick-folder",
     "allow-pick-extra-dirs",
     "allow-preflight-report",
-    "allow-preflight-fix"
+    "allow-preflight-fix",
+    "allow-open-external-url"
   ]
 }

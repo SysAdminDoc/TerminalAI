@@ -5,7 +5,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Fixed
+
+- A session that opened a synchronized update (DEC 2026) and then stopped writing — killed
+  mid-frame, or with its write truncated — froze that session's terminal grid permanently. `vte`
+  buffers everything between `ESC[?2026h` and `ESC[?2026l`, and arms a 150ms deadline when the
+  update opens, but reports only that a deadline *exists*, never that it expired, so the buffer was
+  never flushed and every status inferred from the grid went quietly stale. Expiry is the caller's
+  job and now happens on both the write and the read side.
+
+### Added
+
+- The focused pane now runs the WebGL renderer. xterm 6.0 removed `addon-canvas`, so with no WebGL
+  addon the DOM renderer — the slowest of the three — was the only one available. Context creation,
+  addon construction, and later context loss each fall back to the DOM renderer rather than blanking
+  the pane. Measured in a Chromium engine: 2 canvases attached, renderer reports loaded.
+- OSC 8 hyperlinks emitted by a session are now clickable. They already reached the pane, because
+  the focused renderer replays raw PTY bytes, but without a link handler xterm underlined them and
+  clicking did nothing. The URI is agent-controlled, so it is opened only after Rust accepts the
+  scheme: `http`, `https` and `mailto` only, control characters refused, and every refusal reported.
+
 ### Changed
+
+- xterm now measures character widths with the unicode11 addon. It defaulted to Unicode 6 (confirmed
+  by reading `unicode.activeVersion` in a real browser) while the Rust grid uses `unicode-width`
+  against a modern table, so the two disagreed about where a line wraps and the status inferred from
+  the Rust grid could stop describing what the pane showed.
 
 - Agent resolution now runs against an injectable filesystem (`which` 8's `Sys` trait), so the npm
   prefix and `PATH` routes are covered by tests instead of by whatever happens to be installed on

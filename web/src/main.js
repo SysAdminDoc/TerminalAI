@@ -1,6 +1,8 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { FitAddon } from "@xterm/addon-fit";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { reconcileKeyedRows } from "./fleetRows.js";
@@ -84,6 +86,7 @@ const state = {
   terminal: null,
   outputChannel: null,
   fitAddon: null,
+  webglAddon: null,
   focusGeneration: 0,
   resizeTimer: null,
   lastSentSize: null,
@@ -1430,9 +1433,68 @@ function observeTerminalSize() {
   window.addEventListener("resize", scheduleFit);
 }
 
+/// Open an OSC 8 hyperlink a session emitted.
+///
+/// The scheme allowlist lives in Rust, not here: this is agent-controlled text,
+/// and the renderer is the wrong place to be the only thing standing between it
+/// and `ShellExecute`. A refusal is shown, never swallowed.
+async function openSessionLink(uri) {
+  try {
+    const opened = await invoke("open_external_url", { url: uri });
+    showToast(`Opened ${new URL(opened).host || opened}`, "success");
+  } catch (error) {
+    showToast(String(error));
+  }
+}
+
+/// Swap the DOM renderer for the WebGL one.
+///
+/// Kept separate from `setupTerminal` because every step here can legitimately
+/// fail on a machine with no usable GPU path, and the terminal must still work
+/// when it does. WebView2 falls back to SwiftShader in some configurations, and
+/// the context can also be lost later — after a driver reset or a GPU process
+/// crash — so `onContextLoss` disposes the addon and returns the terminal to the
+/// DOM renderer rather than leaving a blank pane.
+function useWebglRenderer(terminal) {
+  let addon;
+  try {
+    addon = new WebglAddon();
+  } catch (error) {
+    console.info("WebGL renderer unavailable, using the DOM renderer", error);
+    return null;
+  }
+  addon.onContextLoss(() => {
+    console.info("WebGL context lost, falling back to the DOM renderer");
+    addon.dispose();
+    state.webglAddon = null;
+  });
+  try {
+    terminal.loadAddon(addon);
+  } catch (error) {
+    // loadAddon is where context creation actually happens.
+    console.info("WebGL context could not be created, using the DOM renderer", error);
+    addon.dispose();
+    return null;
+  }
+  return addon;
+}
+
 function setupTerminal() {
   state.terminal = new Terminal({
-    allowProposedApi: false,
+    // Required by the unicode11 addon. Without it xterm measures character
+    // widths against Unicode 6, while the Rust grid uses `unicode-width`
+    // against a modern table — the two then disagree about where a line wraps,
+    // and the row status inferred from the Rust grid stops matching the pane.
+    allowProposedApi: true,
+    // OSC 8 hyperlinks reach the pane already, because the focused renderer
+    // replays raw PTY bytes. Without a handler xterm underlines them and
+    // clicking does nothing.
+    linkHandler: {
+      activate: (event, uri) => {
+        event.preventDefault();
+        openSessionLink(uri);
+      },
+    },
     convertEol: false,
     cursorBlink: true,
     cursorStyle: "bar",
@@ -1458,7 +1520,13 @@ function setupTerminal() {
   });
   state.fitAddon = new FitAddon();
   state.terminal.loadAddon(state.fitAddon);
+  const unicode11 = new Unicode11Addon();
+  state.terminal.loadAddon(unicode11);
+  state.terminal.unicode.activeVersion = "11";
   state.terminal.open($("terminal-host"));
+  // Must follow `open`: the WebGL addon needs an attached element to create a
+  // context against.
+  state.webglAddon = useWebglRenderer(state.terminal);
   state.terminal.resize(DEFAULT_COLS, DEFAULT_ROWS);
   // The addon was constructed and registered but never called, so the grid
   // stayed at its hard-coded size no matter how large the pane was.

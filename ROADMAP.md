@@ -132,13 +132,6 @@ researcher continues from R-88.
   Acceptance: a rate-limited session shows a distinct status with its reset time, sorts with the attention states rather than with idle, and is excluded from admission's live count so a queued session can take the slot; the fleet header shows how many sessions are limited and when the earliest resets; the state is never inferred from silence.
   Complexity: M
 
-- [ ] R-84 · P2 — Close the renderer capability gap
-  Why: the app runs the slowest available renderer and re-fetches scrollback over IPC when the pinned dependencies already provide faster paths — and the two libraries either side of the terminal both implement synchronized output that neither is asked to use.
-  Evidence: `web/package.json` pins `@xterm/xterm` 6.0.0 with only `@xterm/addon-fit`; 6.0 removed `addon-canvas`, so with no `@xterm/addon-webgl` the DOM renderer is in use. `@xterm/addon-serialize` 0.14.0 would replace the `invoke("scrollback")` round-trip at `web/src/main.js:484`. `vte` 0.15 implements DEC mode 2026 synchronized updates, OSC 8 hyperlinks and the Kitty keyboard protocol (`ansi.rs:45,48,967,701`); `crates/terminalai-core/src/grid.rs` exposes none of them. `allowProposedApi: false` (`main.js:698`) additionally blocks the unicode11 and ligature addons.
-  Touches: `web/package.json`, `web/src/main.js`, `crates/terminalai-core/src/grid.rs`
-  Acceptance: the WebGL addon is loaded with a documented DOM fallback when context creation fails; DEC 2026 synchronized output is honoured on both the vte and xterm sides so replay and live output do not tear; OSC 8 hyperlinks survive into the rendered pane; scrollback restore uses the serialize addon where it is cheaper than the IPC round-trip. Overlaps R-57 on sizing — do that first.
-  Complexity: S
-
 ### P3
 
 - [ ] R-87 · P3 — Expose the fleet as a read-mostly MCP server

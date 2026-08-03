@@ -1128,11 +1128,17 @@ impl SessionRegistry {
     /// The focused browser renderer does not need this path: it resets once and
     /// replays the raw bounded ring returned by [`Self::scrollback`].
     pub fn grid_snapshot(&self, id: &SessionId) -> Result<TerminalGridSnapshot, RegistryError> {
-        let state = lock_state(&self.inner);
+        let mut state = lock_state(&self.inner);
         state
             .entries
-            .get(id)
-            .map(|entry| entry.grid.snapshot())
+            .get_mut(id)
+            .map(|entry| {
+                // A session that opened a synchronized update and then stopped
+                // writing has no further bytes to drive expiry, so the read side
+                // has to do it or the pane renders a permanently stale frame.
+                entry.grid.expire_sync_update();
+                entry.grid.snapshot()
+            })
             .ok_or_else(|| RegistryError::Missing(id.clone()))
     }
 

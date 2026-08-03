@@ -386,6 +386,41 @@ fn pick_extra_dirs() -> Vec<String> {
         .collect()
 }
 
+/// Open an OSC 8 hyperlink emitted by a session.
+///
+/// The URI comes from agent output, which is untrusted: a session that renders
+/// attacker-controlled text can emit any hyperlink it likes. Only the three
+/// schemes a terminal link plausibly needs are honoured, so `file:`, `vbscript:`
+/// and any registered custom protocol handler are refused rather than handed to
+/// `ShellExecute`. The refusal is reported, never swallowed.
+/// Decide whether a session-supplied URI may be opened. Kept separate from the
+/// command so the rules can be tested without launching a browser.
+fn validate_external_url(url: &str) -> Result<&str, String> {
+    const ALLOWED: [&str; 3] = ["http://", "https://", "mailto:"];
+    let trimmed = url.trim();
+    // Control characters would survive into whatever handles the URI.
+    if trimmed.chars().any(char::is_control) {
+        return Err("refused to open a link containing control characters".to_owned());
+    }
+    let lowered = trimmed.to_ascii_lowercase();
+    let scheme_ok = ALLOWED
+        .iter()
+        .any(|scheme| lowered.starts_with(scheme) && trimmed.len() > scheme.len());
+    if !scheme_ok {
+        return Err(format!(
+            "refused to open {trimmed:?}: only http, https and mailto links are opened"
+        ));
+    }
+    Ok(trimmed)
+}
+
+#[tauri::command]
+fn open_external_url(url: String) -> Result<String, String> {
+    let target = validate_external_url(&url)?;
+    open::that_detached(target).map_err(|error| format!("could not open link: {error}"))?;
+    Ok(target.to_owned())
+}
+
 #[tauri::command]
 fn preflight_report() -> PreflightReport {
     PreflightReport {
@@ -1185,7 +1220,8 @@ fn run_app() -> Result<(), String> {
             pick_folder,
             pick_extra_dirs,
             preflight_report,
-            preflight_fix
+            preflight_fix,
+            open_external_url
         ])
         .setup(|app| {
             let client = if cfg!(feature = "wdio") {
@@ -1290,6 +1326,51 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_web_and_mail_schemes_are_opened_from_session_output() {
+        // Every one of these is a URI a session could emit inside an OSC 8
+        // sequence, and each would be handed to ShellExecute without the check.
+        for refused in [
+            "file:///C:/Windows/System32/calc.exe",
+            "vbscript:msgbox(1)",
+            "javascript:alert(1)",
+            "ms-msdt:/id",
+            "search-ms:query=x",
+            r"\\attacker\share\payload.exe",
+            "C:\\Windows\\System32\\calc.exe",
+            "http://",
+            "",
+        ] {
+            let error = validate_external_url(refused)
+                .expect_err(&format!("{refused:?} must not be opened"));
+            assert!(error.starts_with("refused"), "{refused:?} gave {error}");
+        }
+    }
+
+    #[test]
+    fn a_link_carrying_control_characters_is_refused() {
+        let error = validate_external_url("https://example.com/\u{1b}]0;pwned\u{7}")
+            .expect_err("control characters must be refused");
+        assert!(error.contains("control characters"), "{error}");
+    }
+
+    #[test]
+    fn ordinary_links_are_opened() {
+        // Uppercase spellings are legal URI syntax; refusing them would send an
+        // operator chasing a link that looks identical to a working one.
+        for allowed in [
+            "https://example.com/path?q=1#frag",
+            "http://localhost:3000/",
+            "HTTPS://Example.COM",
+            "mailto:someone@example.com",
+            "  https://example.com/padded  ",
+        ] {
+            let target = validate_external_url(allowed)
+                .unwrap_or_else(|error| panic!("{allowed:?} should open: {error}"));
+            assert_eq!(target, allowed.trim());
+        }
+    }
 
     #[test]
     fn protocol_version_is_pinned_for_the_shell() {

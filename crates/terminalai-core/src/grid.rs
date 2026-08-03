@@ -7,6 +7,7 @@
 //! Rust with `vte`.
 
 use std::mem;
+use std::time::Instant;
 
 use unicode_width::UnicodeWidthChar;
 use vte::ansi::{
@@ -679,7 +680,39 @@ impl TerminalGrid {
     }
 
     pub fn advance(&mut self, bytes: &[u8]) {
+        // Expire first: a synchronized update opened by the *previous* chunk must
+        // not swallow this one just because its terminator never arrived.
+        self.expire_sync_update();
         self.processor.advance(&mut self.state, bytes);
+    }
+
+    /// Flush a synchronized update (DEC 2026) whose deadline has passed.
+    ///
+    /// `vte` buffers everything between `ESC[?2026h` and `ESC[?2026l` so a
+    /// redraw is applied atomically, and arms a 150ms deadline when the update
+    /// opens — but `Timeout::pending_timeout` reports only that a deadline
+    /// *exists*, never that it expired, so `Processor::advance` keeps buffering
+    /// until the caller intervenes. An agent that opens an update and then dies,
+    /// is killed, or has its write truncated therefore freezes this grid
+    /// permanently, and every status this project infers from the grid would go
+    /// quietly stale. Expiring is the caller's job; this is where it happens.
+    ///
+    /// Returns true when an update was force-ended.
+    pub fn expire_sync_update(&mut self) -> bool {
+        let expired = self
+            .processor
+            .sync_timeout()
+            .sync_timeout()
+            .is_some_and(|deadline| Instant::now() >= deadline);
+        if expired {
+            self.processor.stop_sync(&mut self.state);
+        }
+        expired
+    }
+
+    /// True while a synchronized update is holding bytes back.
+    pub fn sync_update_pending(&self) -> bool {
+        self.processor.sync_timeout().sync_timeout().is_some()
     }
 
     pub fn reset(&mut self) {
@@ -806,6 +839,53 @@ mod tests {
         grid.reset();
         grid.advance(b"\x1b[3g\x1b[5G\x1bH\x1b[1Ga\tb");
         assert_eq!(grid.snapshot().lines[0], "a   b");
+    }
+
+    #[test]
+    fn a_synchronized_update_is_applied_atomically() {
+        // Between BSU and ESU the grid must not show a half-drawn frame.
+        let mut grid = TerminalGrid::new(1, 10);
+        grid.advance(b"\x1b[?2026h");
+        grid.advance(b"partial");
+        assert_eq!(
+            grid.snapshot().lines[0], "",
+            "buffered bytes must not reach the screen before the update ends"
+        );
+        assert!(grid.sync_update_pending());
+        grid.advance(b"\x1b[?2026l");
+        assert_eq!(grid.snapshot().lines[0], "partial");
+        assert!(!grid.sync_update_pending());
+    }
+
+    #[test]
+    fn an_abandoned_synchronized_update_expires_instead_of_freezing_the_grid() {
+        // `vte` arms a 150ms deadline when an update opens, but reports only
+        // that a deadline exists — never that it passed — so `advance` keeps
+        // buffering until the caller intervenes. A session killed mid-frame
+        // never sends ESU, and without expiry this grid would stay blank for
+        // the life of the process while status inference read from it.
+        let mut grid = TerminalGrid::new(1, 10);
+        grid.advance(b"\x1b[?2026hstuck");
+        assert_eq!(grid.snapshot().lines[0], "");
+
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(grid.expire_sync_update(), "the deadline has passed");
+        assert_eq!(
+            grid.snapshot().lines[0], "stuck",
+            "the buffered frame must be flushed once the update is abandoned"
+        );
+        assert!(!grid.sync_update_pending());
+    }
+
+    #[test]
+    fn expiry_does_not_fire_while_an_update_is_still_within_its_deadline() {
+        let mut grid = TerminalGrid::new(1, 10);
+        grid.advance(b"\x1b[?2026hfresh");
+        assert!(
+            !grid.expire_sync_update(),
+            "a live update must not be torn open early — that is the tearing the mode exists to prevent"
+        );
+        assert_eq!(grid.snapshot().lines[0], "");
     }
 
     proptest! {

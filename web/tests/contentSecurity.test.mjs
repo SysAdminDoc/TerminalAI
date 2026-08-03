@@ -27,8 +27,19 @@ test("agent output cannot reach the system clipboard", () => {
     "the xterm clipboard addon must not be a dependency",
   );
   assert.doesNotMatch(main, /ClipboardAddon|addon-clipboard/);
-  // allowProposedApi stays off: it is what unlocks the unstable addon surface.
-  assert.match(main, /allowProposedApi:\s*false/);
+});
+
+test("allowProposedApi unlocks only the unicode addon", () => {
+  // This was asserted `false` as a second barrier against OSC 52 until the
+  // unicode11 addon — which is proposed API — became necessary to keep xterm's
+  // character widths matching the Rust grid's. Verified against
+  // @xterm/xterm 6.0.0: the core registers no OSC 52 handler at all, so the
+  // clipboard gate is the addon's absence, asserted above, and this flag never
+  // controlled it. Keep the addon list explicit so a future proposed-API addon
+  // has to be justified here rather than arriving with the flag already on.
+  assert.match(main, /allowProposedApi: true,/);
+  const addons = [...main.matchAll(/from "@xterm\/(addon-[a-z0-9]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(addons.sort(), ["addon-fit", "addon-unicode11", "addon-webgl"]);
 });
 
 /** Every `${...}` in `source`, brace-balanced so nested template literals stay whole. */

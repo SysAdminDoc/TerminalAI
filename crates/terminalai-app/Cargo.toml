@@ -29,5 +29,10 @@ serde_json.workspace = true
 thiserror.workspace = true
 dirs.workspace = true
 rfd = { version = "0.17.2", default-features = false, features = ["common-controls-v6"] }
+# `shellexecute-on-windows` calls ShellExecuteW directly. The default path
+# spawns a helper process instead; neither uses `cmd.exe` (that is behind the
+# crate's `insecure` feature, which stays off), but going straight to the shell
+# API keeps an agent-supplied URI out of any argv.
+open = { version = "5.4.0", default-features = false, features = ["shellexecute-on-windows"] }
 tauri-plugin-wdio = { version = "1.2.0", optional = true }
 tauri-plugin-wdio-webdriver = { version = "1.2.0", optional = true }

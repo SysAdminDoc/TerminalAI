@@ -38,6 +38,7 @@ const COMMANDS: &[&str] = &[
     "pick_extra_dirs",
     "preflight_report",
     "preflight_fix",
+    "open_external_url",
 ];
 
 /// Fail the build when a command has no matching `allow-*` grant.
