@@ -104,6 +104,17 @@ count-unknown-external-other = { $count } unknown
 fleet-live = live
 fleet-spent = spent
 rollup-title = Fleet spend
+label-project-folder = Project folder
+label-known-projects = Known projects
+button-browse = Browse
+button-register-root = Register root
+button-register-root-title = Register a folder that holds your repositories
+project-choose = Choose a project…
+projects-root-added = Registered { $root } — { $count } { $count ->
+    [one] project found
+   *[other] projects found
+  }
+projects-none-found = No Git repositories were found under { $root }
 preset-builtin-mark = (built-in)
 button-restore-presets = Offer every built-in preset again
 presets-restored = { $count } built-in { $count ->

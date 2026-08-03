@@ -136,6 +136,7 @@ const state = {
   historyLoading: false,
   broadcastSelection: [],
   templates: [],
+  projects: [],
   announcementQueue: new Map(),
   announcementTimer: null,
   orderFreeze: null,
@@ -1904,6 +1905,58 @@ function applyProjectTemplate() {
   showToast(t("template-applied", { name: template.name }), "success");
 }
 
+/**
+ * Offer every repository under the registered roots as a launch target.
+ *
+ * Re-read rather than cached: the point of the list is being current, so a
+ * repository cloned five minutes ago is launchable without telling the app.
+ *
+ * With no root registered the control is hidden entirely — an empty "Known
+ * projects" dropdown is a question the operator has no way to answer. The
+ * register button beside Browse is what they see instead.
+ */
+async function loadKnownProjects() {
+  const field = document.querySelector(".known-projects-field");
+  try {
+    state.projects = await invoke("list_projects");
+  } catch (error) {
+    state.projects = [];
+    showToast(String(error));
+  }
+  field.hidden = state.projects.length === 0;
+  $("register-root-empty-button").hidden = state.projects.length > 0;
+  $("project-select").innerHTML = `<option value="">${escapeHtml(t("project-choose"))}</option>${state.projects
+    .map(
+      (project) =>
+        `<option value="${escapeHtml(project.path)}" title="${escapeHtml(project.path)}">${escapeHtml(project.name)}</option>`,
+    )
+    .join("")}`;
+}
+
+/**
+ * Register a folder that holds repositories.
+ *
+ * Reports how many projects it found. "Registered" alone leaves the operator
+ * unable to tell a working root from one pointed at the wrong directory, and
+ * the difference only shows up later as an empty dropdown.
+ */
+async function registerProjectRoot() {
+  const root = await invoke("pick_folder");
+  if (!root) return;
+  try {
+    await invoke("add_project_root", { path: root });
+  } catch (error) {
+    showToast(String(error));
+    return;
+  }
+  await loadKnownProjects();
+  const found = state.projects.filter((project) => project.root === root).length;
+  showToast(
+    found ? t("projects-root-added", { root, count: found }) : t("projects-none-found", { root }),
+    found ? "success" : "",
+  );
+}
+
 async function saveCurrentPreset() {
   const name = $("preset-name-input").value.trim();
   if (!name) {
@@ -1933,6 +1986,7 @@ function loadSelectedPreset() {
 
 function openLauncher() {
   writeSpec(defaultSpec());
+  void loadKnownProjects();
   $("launcher-dialog").showModal();
   $("cwd-input").focus();
   void loadAgentCapabilities($("agent-input").value);
@@ -2231,6 +2285,17 @@ function bindEvents() {
     }
   });
   $("cwd-input").addEventListener("change", () => void loadProjectTemplates());
+  $("register-root-button").addEventListener("click", () => void registerProjectRoot());
+  $("register-root-empty-button").addEventListener("click", () => void registerProjectRoot());
+  $("project-select").addEventListener("change", () => {
+    const path = $("project-select").value;
+    if (!path) return;
+    $("cwd-input").value = path;
+    schedulePreview();
+    // The chosen project may declare its own templates; the folder changed
+    // without the input's change event firing.
+    void loadProjectTemplates();
+  });
   $("template-select").addEventListener("change", () => applyProjectTemplate());
   $("pick-extra-button").addEventListener("click", async () => {
     const folders = await invoke("pick_extra_dirs");

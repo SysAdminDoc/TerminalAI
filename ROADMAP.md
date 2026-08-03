@@ -9,9 +9,6 @@ Single task tracker for this repo. Newest phase at the top; completed items are 
       labels for status/dwell/attention states, tooltips on every control, and a short in-app
       explainer of the row → focused-terminal model. Acceptance: someone unfamiliar with the tool
       can launch a session, read its state, and answer an attention request unaided
-- [ ] Master project folder — register a root (e.g. `~/repos`) once; every child git repo becomes a
-      known project, kept current as repos appear and disappear, and usable as a launch target
-      without browsing for a folder each time (extends the v0.4.0 folder filter/grouping)
 - [ ] Roadmap scanner — for every known project, detect and parse `ROADMAP.md`, surfacing
       open-item counts and staleness per project so "which projects still have work queued" is a
       glance, not a hunt

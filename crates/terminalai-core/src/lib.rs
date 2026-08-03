@@ -27,6 +27,7 @@ pub mod lease;
 pub mod mcp;
 pub mod notification;
 pub(crate) mod process_tree;
+pub mod project;
 pub mod pty;
 pub mod registry;
 pub mod review;

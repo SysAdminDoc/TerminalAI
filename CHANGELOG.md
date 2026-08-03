@@ -7,6 +7,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Register a root that holds your repositories — `~/repos` — and every Git repository under it
+  becomes a launch target, so starting a session no longer means browsing to a folder you have
+  visited a hundred times. The list is re-discovered on every launcher open rather than cached: a
+  repository cloned five minutes ago is launchable without telling the app, and one deleted last
+  week stops being offered. Discovery stops at a repository rather than descending into it, since
+  otherwise every submodule and vendored dependency becomes a project of its own and a list of
+  thirty becomes a list of four hundred; heavy directories are skipped and depth is bounded, so a
+  root registered by mistake cannot turn into a full tree walk. Registering reports how many
+  projects it found, because "registered" alone cannot distinguish a working root from one pointed
+  at the wrong directory. A root already covered by another is refused, and a broader one replaces
+  the roots it covers. Measured against a real 318-repository tree.
+
 - The launcher ships with built-in presets, so a fresh install offers something to pick instead of
   an empty dropdown that asks the operator to invent a configuration before they know which ones
   matter. Six span the axes actually decided between — which agent, and how much rope it gets —

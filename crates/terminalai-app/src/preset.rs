@@ -223,8 +223,8 @@ impl PresetStore {
         Ok(out)
     }
 
-    /// Saved presets only, without built-ins. Used by tests and by anything
-    /// that needs to know what is actually on disk.
+    /// Saved presets only, without built-ins — what is actually on disk.
+    #[cfg(test)]
     pub fn saved(&self) -> Result<Vec<Preset>, String> {
         self.lock().map(|state| state.presets.clone())
     }

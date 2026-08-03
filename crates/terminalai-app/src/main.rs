@@ -1,4 +1,5 @@
 mod preset;
+mod projects;
 mod toast;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -27,6 +28,7 @@ use terminalai_daemon::{
 struct AppState {
     client: Mutex<Option<DaemonClient>>,
     presets: PresetStore,
+    project_roots: projects::ProjectRoots,
     output_channels: Arc<Mutex<HashMap<SessionId, Channel<InvokeResponseBody>>>>,
 }
 
@@ -459,6 +461,33 @@ fn list_templates(cwd: PathBuf) -> Result<Vec<terminalai_core::template::Templat
 #[tauri::command]
 fn save_preset(preset: Preset, state: State<'_, AppState>) -> Result<(), String> {
     state.presets.save(preset)
+}
+
+/// Every repository under the registered roots.
+///
+/// Discovered fresh on every call rather than cached: the list's value is being
+/// current, and a cache would need invalidation nobody would remember to
+/// trigger when a repository is cloned.
+#[tauri::command]
+fn list_projects(
+    state: State<'_, AppState>,
+) -> Result<Vec<terminalai_core::project::Project>, String> {
+    state.project_roots.projects()
+}
+
+#[tauri::command]
+fn list_project_roots(state: State<'_, AppState>) -> Result<Vec<PathBuf>, String> {
+    state.project_roots.list()
+}
+
+#[tauri::command]
+fn add_project_root(path: PathBuf, state: State<'_, AppState>) -> Result<(), String> {
+    state.project_roots.add(path)
+}
+
+#[tauri::command]
+fn remove_project_root(path: PathBuf, state: State<'_, AppState>) -> Result<bool, String> {
+    state.project_roots.remove(&path)
 }
 
 /// Offer every built-in preset again.
@@ -1403,6 +1432,10 @@ fn run_app() -> Result<(), String> {
             save_preset,
             delete_preset,
             restore_builtin_presets,
+            list_projects,
+            list_project_roots,
+            add_project_root,
+            remove_project_root,
             pick_folder,
             pick_extra_dirs,
             preflight_report,
@@ -1430,6 +1463,9 @@ fn run_app() -> Result<(), String> {
             let presets = PresetStore::load_default().map_err(|error| {
                 Box::new(std::io::Error::other(error)) as Box<dyn std::error::Error>
             })?;
+            let project_roots = projects::ProjectRoots::load_default().map_err(|error| {
+                Box::new(std::io::Error::other(error)) as Box<dyn std::error::Error>
+            })?;
             let output_channels = Arc::new(Mutex::new(HashMap::new()));
             if let Some(client) = client.as_ref() {
                 bridge_daemon_events(app.handle(), client, output_channels.clone());
@@ -1437,6 +1473,7 @@ fn run_app() -> Result<(), String> {
             app.manage(AppState {
                 client: Mutex::new(client),
                 presets,
+                project_roots,
                 output_channels,
             });
             Ok(())
