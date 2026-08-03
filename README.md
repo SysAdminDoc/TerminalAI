@@ -45,9 +45,9 @@ Working today (`terminalai-probe`, headless):
 - Spawns and drives either agent on a live ConPTY
 - Runs a Tauri 2.11.5/WebView2 shell with the Catppuccin fleet list, launcher, presets and one
   reused xterm renderer
-- 107 default tests over the flag mapping, real-pty boundary, supervision state machine, registry,
+- 108 default tests over the flag mapping, real-pty boundary, supervision state machine, registry,
   diagnostics, review aggregation, daemon protocol, presets, launch golden fixtures, atomic file
-  recovery, corrupt-store quarantine, prompt safety and fleet-row model; 109
+  recovery, corrupt-store quarantine, deterministic fleet ordering, prompt safety and fleet-row model; 110
   with the opt-in app-server
   transport enabled
 

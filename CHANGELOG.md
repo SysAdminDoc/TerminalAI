@@ -37,6 +37,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Corrupt, truncated, and unsupported-version session stores are quarantined with a timestamped
   filename so the daemon starts with an empty fleet and the desktop shell names the saved path in a
   dismissible banner.
+- Fleet ordering now compares persisted status-transition timestamps and stable session ids, so a
+  snapshot cannot become non-transitive while it is being sorted.
 - R-16 adds lifecycle-aware attention notifications with stable dedup keys, repository grouping,
   automatic retraction on progress, and startup/long-tool grace suppression. The shell consumes
   raised notifications as deduplicated, click-to-focus in-app alerts.

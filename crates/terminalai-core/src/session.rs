@@ -437,10 +437,14 @@ fn restart_backoff(attempt: u32) -> Duration {
 }
 
 /// Sort key for the fleet list: attention first, then longest-waiting.
+///
+/// Compare the stored transition timestamps directly. Reading the clock inside
+/// a comparator makes the result change during one sort and can violate the
+/// total-order contract required by `sort_by`.
 pub fn fleet_order(a: &Session, b: &Session) -> std::cmp::Ordering {
     b.status
         .cmp(&a.status)
-        .then_with(|| b.in_status_for().cmp(&a.in_status_for()))
+        .then_with(|| b.status_since.cmp(&a.status_since))
         .then_with(|| a.id.cmp(&b.id))
 }
 
@@ -500,6 +504,35 @@ mod tests {
         v.sort_by(fleet_order);
         assert_eq!(v[0].status, SessionStatus::NeedsYou);
         assert_eq!(v[2].status, SessionStatus::Idle);
+    }
+
+    #[test]
+    fn fleet_order_is_stable_when_status_clocks_match() {
+        let stamp = SystemTime::UNIX_EPOCH + Duration::from_secs(1234);
+        let mut first = session(SessionStatus::Working);
+        first.id = SessionId::new(2);
+        first.status_since = stamp;
+        let mut second = session(SessionStatus::Working);
+        second.id = SessionId::new(1);
+        second.status_since = stamp;
+        let mut sessions = [first, second];
+
+        sessions.sort_by(fleet_order);
+        let expected = sessions
+            .iter()
+            .map(|session| session.id.clone())
+            .collect::<Vec<_>>();
+        for _ in 0..5 {
+            sessions.sort_by(fleet_order);
+            assert_eq!(
+                sessions
+                    .iter()
+                    .map(|session| session.id.clone())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+        assert_eq!(expected, [SessionId::new(1), SessionId::new(2)]);
     }
 
     #[test]
