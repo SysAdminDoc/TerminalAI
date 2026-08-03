@@ -26,10 +26,13 @@ const HOOK_TIMEOUT: Duration = Duration::from_secs(30);
 /// User-configurable lifecycle and port settings for one launched session.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EnvironmentSpec {
-    /// Shell command run in the project directory before the agent starts.
+    /// Optional, explicit local shell code run in the project directory before
+    /// the agent starts. `None` is the safe default; supplying a command opts
+    /// this session into local code execution.
     #[serde(default)]
     pub setup: Option<String>,
-    /// Shell command run in the project directory after the agent exits.
+    /// Optional, explicit local shell code run in the project directory after
+    /// the agent exits. `None` is the safe default.
     #[serde(default)]
     pub teardown: Option<String>,
     /// First port in the deterministic session range.
@@ -378,6 +381,13 @@ mod tests {
         assert!(!values
             .iter()
             .any(|(key, _)| key.contains("KEY") || key.contains("TOKEN")));
+    }
+
+    #[test]
+    fn shell_hooks_are_opt_in_and_default_to_none() {
+        let spec = EnvironmentSpec::default();
+        assert!(spec.setup.is_none());
+        assert!(spec.teardown.is_none());
     }
 
     #[test]

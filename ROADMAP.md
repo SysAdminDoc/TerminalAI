@@ -97,13 +97,6 @@ From `RESEARCH.md`. IDs R-01…R-63; the next researcher continues from R-64.
 
 ### P2
 
-- [ ] R-60 · P2 — Describe the trust boundary honestly and tighten the DACL
-  Why: the peer check is self-consistency rather than authorization, and the DACL broadens under elevation — while the control pipe can run arbitrary shell commands.
-  Evidence: `terminalai-daemon/src/lib.rs:322,381` compares `GetNamedPipeClientProcessId` against a client-declared `client_pid`; `lib.rs:821` grants `GA` to `OW`, which resolves to `Administrators` when an elevated process's token default owner is that group; `crates/terminalai-core/src/environment.rs:220-233` runs setup/teardown via `cmd.exe /c` from any pipe client's `LaunchSpec`.
-  Touches: `terminalai-daemon/src/lib.rs`, `environment.rs`, `CLAUDE.md`, `README.md`
-  Acceptance: the DACL names the interactive user's SID explicitly rather than `OW`; `IpcError::PeerMismatch` and the module docs state that the DACL is the boundary and the PID is diagnostic; shell hooks are opt-in per session and documented as local code execution.
-  Complexity: S
-
 - [ ] R-63 · P2 — Structured logging with bounded retention
   Why: the diagnostics timeline explains one session, but nothing records what the daemon did across sessions, and the crash log grows without limit.
   Evidence: `crates/terminalai-daemon/src/persistence.rs:48-51` appends to `crash.log` with no rotation; there is no `tracing` subscriber anywhere in the workspace, so a status misattribution — the dominant bug class in this field — leaves no trail beyond the in-memory timeline.

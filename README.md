@@ -124,8 +124,10 @@ HEAD rather than a guess. Tool progress is populated from the agent's own plan �
 `TodoWrite`, Codex's `update_plan` — and is an em dash when the agent exposes no countable plan. Press `/` anywhere outside a text field to focus the fleet
 filter.
 
-Each launch can reserve a deterministic block of service ports and run optional setup and teardown
-hooks from the project directory. Hooks and the agent receive `TERMINALAI_SESSION_ID`,
+Each launch can reserve a deterministic block of service ports and, only when the operator supplies
+them, run setup and teardown shell commands from the project directory. These hooks are local code
+execution with the same trust as the operator's account; they are not agent-sandboxing or a remote
+service boundary. Hooks and the agent receive `TERMINALAI_SESSION_ID`,
 `TERMINALAI_PORTS`, `TERMINALAI_PORT_BASE`, and the first port as `PORT`.
 
 Sessions started outside TerminalAI — from a terminal, an IDE, or another tool — appear in a

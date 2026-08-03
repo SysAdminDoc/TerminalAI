@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- The Windows pipe ACL now grants the current interactive user's explicit SID
+  (plus `SYSTEM`) instead of the elevation-sensitive owner-rights alias. PID
+  mismatches are reported as diagnostics, and setup/teardown hooks are clearly
+  documented as opt-in local shell execution.
 - The daemon now has a graceful `terminalai-probe shutdown` control request, Windows console
   teardown handling, and a single-instance binding guard. Protocol skew reports the running daemon
   PID and a concrete stop command; the desktop shell refuses to spawn a second daemon in that case.

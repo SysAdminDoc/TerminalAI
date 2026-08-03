@@ -96,8 +96,8 @@
           <div class="field field-wide"><span>Extra writable folders</span><div class="input-with-button"><input id="extra-dirs-input" readonly placeholder="None selected" /><button type="button" class="button button-quiet" id="pick-extra-button">Add folders</button></div></div>
           <label class="field"><span>Port slots <em>per session</em></span><input id="port-count-input" type="number" min="0" max="16" step="1" value="4" /></label>
           <label class="field"><span>Port base <em>deterministic</em></span><input id="port-base-input" type="number" min="1024" max="65535" step="1" value="42000" /></label>
-          <label class="field field-wide"><span>Setup hook <em>optional shell command</em></span><input id="setup-hook-input" placeholder="e.g. pnpm install --frozen-lockfile" /></label>
-          <label class="field field-wide"><span>Teardown hook <em>optional shell command</em></span><input id="teardown-hook-input" placeholder="e.g. pnpm run env:down" /></label>
+          <label class="field field-wide"><span>Setup hook <em>optional local code</em></span><input id="setup-hook-input" placeholder="e.g. pnpm install --frozen-lockfile" /></label>
+          <label class="field field-wide"><span>Teardown hook <em>optional local code</em></span><input id="teardown-hook-input" placeholder="e.g. pnpm run env:down" /></label>
           <label class="field field-wide"><span>Initial prompt <em>optional</em></span><textarea id="prompt-input" rows="3" placeholder="The first instruction sent to the agent"></textarea></label>
         </div>
         <div class="preview-card"><div class="preview-label"><span class="eyebrow">WHAT WILL RUN</span><span id="preview-state">Waiting for a valid folder</span></div><code id="preview-output">Choose a project folder to preview the exact command vector.</code></div>

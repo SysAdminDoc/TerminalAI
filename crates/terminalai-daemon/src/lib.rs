@@ -6,6 +6,16 @@
 //! are sent only after an explicit `Subscribe` request, so broadcasts cannot be
 //! mistaken for RPC responses.
 //!
+//! # Trust boundary
+//!
+//! On Windows, the named-pipe DACL grants access to the current interactive
+//! user's SID and `SYSTEM` only. That DACL is the authorization boundary. The
+//! PID in `Request::Hello` is a diagnostic consistency check supplied by the
+//! client; it is not an authorization mechanism, and a peer cannot gain access
+//! by declaring a different PID. Session setup and teardown hooks are separate,
+//! explicit per-session inputs and execute local shell code in the project
+//! directory when the operator supplies them.
+//!
 //! # The daemon must unwind
 //!
 //! This process runs a thread per connection, per writer, per PTY reader, per
@@ -134,7 +144,11 @@ pub enum IpcError {
         client: u16,
         daemon_pid: u32,
     },
-    #[error("control peer identity mismatch: expected process {expected}, got {actual:?}")]
+    /// Diagnostic only: the pipe DACL authorizes the peer; the declared PID is
+    /// not an authorization mechanism and may be self-reported inaccurately.
+    #[error(
+        "control peer PID diagnostic mismatch: client declared {expected}, transport reported {actual:?}; the pipe DACL remains the authorization boundary"
+    )]
     PeerMismatch { expected: u32, actual: Option<u32> },
     #[error("invalid control message: {0}")]
     InvalidMessage(String),
@@ -603,6 +617,9 @@ fn handle_connection(
                     )?;
                     break;
                 }
+                // The DACL already authorized this process. Keep the PID
+                // comparison as a diagnostic defense-in-depth check, not as
+                // the security boundary.
                 if peer_pid != Some(client_pid) {
                     send_response(
                         &outgoing_tx,
@@ -1143,12 +1160,70 @@ fn current_user_pipe_descriptor(
     use interprocess::os::windows::security_descriptor::SecurityDescriptor;
     use widestring::U16CString;
 
-    // `OW` is the owner-rights SID, which resolves to the user that owns the
-    // pipe object. SYSTEM is retained for service/diagnostic tooling. There is
-    // no Everyone or remote-client ACE, and no impersonation is used.
-    let sddl = U16CString::from_str("D:P(A;;GA;;;SY)(A;;GA;;;OW)")
+    let sddl = U16CString::from_str(&current_user_pipe_sddl()?)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
     SecurityDescriptor::deserialize(sddl.as_ucstr()).map_err(IpcError::Io)
+}
+
+#[cfg(windows)]
+fn current_user_pipe_sddl() -> Result<String, IpcError> {
+    use std::ptr::null_mut;
+    use widestring::U16CStr;
+    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, LocalFree, HANDLE};
+    use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows_sys::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    let mut token: HANDLE = null_mut();
+    let opened = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) };
+    if opened == 0 {
+        return Err(IpcError::Io(io::Error::from_raw_os_error(
+            unsafe { GetLastError() } as i32,
+        )));
+    }
+
+    let result = (|| {
+        let mut bytes = 0u32;
+        unsafe {
+            GetTokenInformation(token, TokenUser, null_mut(), 0, &mut bytes);
+        }
+        if bytes == 0 {
+            return Err(IpcError::Io(io::Error::last_os_error()));
+        }
+        let mut buffer = vec![0u8; bytes as usize];
+        let queried = unsafe {
+            GetTokenInformation(
+                token,
+                TokenUser,
+                buffer.as_mut_ptr().cast(),
+                bytes,
+                &mut bytes,
+            )
+        };
+        if queried == 0 {
+            return Err(IpcError::Io(io::Error::last_os_error()));
+        }
+        let token_user = unsafe { &*(buffer.as_ptr().cast::<TOKEN_USER>()) };
+        let mut sid_string = null_mut();
+        let converted = unsafe { ConvertSidToStringSidW(token_user.User.Sid, &mut sid_string) };
+        if converted == 0 {
+            return Err(IpcError::Io(io::Error::last_os_error()));
+        }
+        let sid = unsafe { U16CStr::from_ptr_str(sid_string) }.to_string_lossy();
+        unsafe {
+            LocalFree(sid_string.cast());
+        }
+        if !sid.starts_with("S-") {
+            return Err(IpcError::InvalidMessage(
+                "current token did not yield a Windows SID".into(),
+            ));
+        }
+        Ok(format!("D:P(A;;GA;;;SY)(A;;GA;;;{sid})"))
+    })();
+    unsafe {
+        CloseHandle(token);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -1382,6 +1457,21 @@ mod tests {
         assert!(message.contains("PID 4242"));
         assert!(message.contains("v2"));
         assert!(message.contains("Stop-Process -Id 4242"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pipe_acl_names_the_current_user_sid() {
+        let sddl = current_user_pipe_sddl().expect("current user pipe SDDL");
+        assert!(sddl.contains("(A;;GA;;;SY)"));
+        assert!(
+            sddl.contains("(A;;GA;;;S-"),
+            "missing explicit user SID: {sddl}"
+        );
+        assert!(
+            !sddl.contains("OW"),
+            "owner-rights alias broadens under elevation: {sddl}"
+        );
     }
 
     #[cfg(windows)]
