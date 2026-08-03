@@ -140,6 +140,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   laid out below it.
 - Closing the launcher, or pressing Enter in any launcher field, no longer spawns an agent —
   every dialog control is an explicit button and the form refuses submission outright.
+- `branch` is now real: read from the session directory's Git HEAD at launch and refreshed from
+  hook events, rate limited to one lookup per session per 30 seconds so a per-tool-call hook does
+  not become a process per tool call. A directory outside a repository, a detached HEAD, or a Git
+  that does not answer within 1.5 seconds all render an em dash instead of a guess.
+- `tool_progress` is now populated from the agent's own plan — Claude Code's `TodoWrite` and
+  Codex's `update_plan` both carry a countable list. A tool call with no plan leaves the previous
+  value alone, and a session that has never reported one renders an em dash rather than `0/0`.
+- A session that has never reported a cost renders an em dash instead of `$0.00`, in the row and
+  in the fleet header. `Number(null)` is `0`, so the header was reporting a computed-looking zero
+  for a figure nothing writes yet.
 - The compact fleet row now meets its documented 28px, down from 54px, putting the status glyph,
   name, repository, agent, tool progress, restart count, dwell and last output line on one line
   and moving branch, ports and the spelled-out status into Wide. Measured in WebView2's engine at

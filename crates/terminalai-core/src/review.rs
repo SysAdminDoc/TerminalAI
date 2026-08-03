@@ -22,6 +22,9 @@ use crate::{Agent, Session, SessionId};
 
 pub const MAX_REVIEW_DIFF_BYTES: usize = 128 * 1024;
 pub const REVIEW_REPOSITORY_TIMEOUT: Duration = Duration::from_secs(5);
+/// Branch lookup runs on the hook path, so it gets a much tighter budget than a
+/// review collection: a slow repository must never stall status ingestion.
+pub const BRANCH_TIMEOUT: Duration = Duration::from_millis(1500);
 const REVIEW_WORKER_COUNT: usize = 4;
 const REVIEW_COMMAND_OUTPUT_BYTES: usize = MAX_REVIEW_DIFF_BYTES;
 const REVIEW_POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -285,6 +288,29 @@ fn mark_timed_out(data: &mut ReviewData, args: &[&str]) {
 
 fn git(cwd: &Path, args: &[&str], deadline: Instant) -> Result<GitOutcome, ReviewError> {
     run_git_program("git", cwd, args, deadline)
+}
+
+/// The checked-out branch for `cwd`, or `None` when there is nothing honest to
+/// show.
+///
+/// Returns `None` — never a guess — for a directory outside a repository, a
+/// detached HEAD, an unborn branch, or a Git that does not answer inside
+/// [`BRANCH_TIMEOUT`]. The fleet row renders an em dash in those cases, which is
+/// the truth; inventing "main" would not be.
+pub fn current_branch(cwd: &Path) -> Option<String> {
+    let deadline = Instant::now() + BRANCH_TIMEOUT;
+    let GitOutcome::Completed(output) =
+        git(cwd, &["rev-parse", "--abbrev-ref", "HEAD"], deadline).ok()?
+    else {
+        return None;
+    };
+    let branch = String::from_utf8_lossy(&output.stdout.bytes)
+        .trim()
+        .to_owned();
+    if branch.is_empty() || branch == "HEAD" {
+        return None;
+    }
+    Some(branch)
 }
 
 fn run_git_program(
@@ -617,6 +643,59 @@ mod tests {
         assert!(item.diff.contains("-before"));
         assert!(item.diff.contains("+after"));
         assert!(root.join(".git").is_dir());
+        std::fs::remove_dir_all(root).expect("remove temporary repository");
+    }
+
+    #[test]
+    fn the_branch_is_read_from_head_and_absent_rather_than_guessed() {
+        let root = std::env::temp_dir().join(format!(
+            "terminalai-branch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).expect("create temporary directory");
+
+        // Outside a repository there is no branch, and none is invented.
+        assert_eq!(current_branch(&root), None);
+
+        let run_git = |args: &[&str]| {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(&root)
+                .output()
+                .expect("start git");
+            assert!(
+                output.status.success(),
+                "git {:?}: {}",
+                args,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        run_git(&["init", "-q", "-b", "trunk"]);
+        run_git(&["config", "user.email", "terminalai-tests@example.invalid"]);
+        run_git(&["config", "user.name", "TerminalAI tests"]);
+        std::fs::write(root.join("README.txt"), "x\n").expect("write");
+        run_git(&["add", "README.txt"]);
+        run_git(&["commit", "-qm", "baseline"]);
+
+        assert_eq!(current_branch(&root).as_deref(), Some("trunk"));
+
+        run_git(&["checkout", "-q", "-b", "feature/rewrite"]);
+        assert_eq!(current_branch(&root).as_deref(), Some("feature/rewrite"));
+
+        // A detached HEAD has no branch name; reporting the previous one would lie.
+        let head = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&root)
+            .output()
+            .expect("read head");
+        let sha = String::from_utf8_lossy(&head.stdout).trim().to_owned();
+        run_git(&["checkout", "-q", &sha]);
+        assert_eq!(current_branch(&root), None);
+
         std::fs::remove_dir_all(root).expect("remove temporary repository");
     }
 

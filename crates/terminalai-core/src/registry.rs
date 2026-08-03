@@ -33,6 +33,9 @@ use crate::store::{ArchivedSession, SessionStoreSnapshot, StoredSession};
 pub const MAX_SCROLLBACK_BYTES: usize = 512 * 1024;
 const MAX_LAST_LINE_BYTES: usize = 8 * 1024;
 const SUBSCRIBER_QUEUE_CAPACITY: usize = 256;
+/// Minimum gap between Git branch lookups for one session. Hooks fire per tool
+/// call; a branch changes far less often than that.
+const BRANCH_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 pub const DEFAULT_MAX_LIVE_SESSIONS: usize = 3;
 pub const DEFAULT_SESSION_BUDGET_USD: f64 = 5.0;
 
@@ -159,6 +162,9 @@ struct Entry {
     generation: u64,
     stop_requested: bool,
     teardown_done: bool,
+    /// When the branch was last read from Git. Hooks fire per tool call, so the
+    /// lookup is rate limited rather than run on every event.
+    branch_checked: Option<Instant>,
 }
 
 struct State {
@@ -324,6 +330,7 @@ impl SessionRegistry {
                     grid,
                     generation: 1,
                     stop_requested: false,
+                    branch_checked: None,
                     teardown_done: true,
                 },
             );
@@ -443,12 +450,18 @@ impl SessionRegistry {
             spec.max_budget_usd = admission.default_budget_usd;
         }
         let command = spec.resolve(&binary)?;
+        // Read before the lock: this shells out to Git. Resolving here rather
+        // than waiting for the first hook means the branch is on the row even
+        // for an agent with no hook installed.
+        let branch = crate::review::current_branch(&spec.cwd);
+        let branch_checked = Some(Instant::now());
         let (id, queued) = {
             let mut state = lock_state(&self.inner);
             let id = SessionId::new(state.next_id);
             state.next_id = state.next_id.saturating_add(1);
             let queued = admitted_count(&state) >= state.admission.max_live_sessions;
             let mut session = Session::new(id.clone(), &spec);
+            session.branch = branch;
             if queued {
                 session.mark_queued_at(SystemTime::now());
                 state.queue.push_back(id.clone());
@@ -466,6 +479,7 @@ impl SessionRegistry {
                     grid: TerminalGrid::default(),
                     generation: 1,
                     stop_requested: false,
+                    branch_checked,
                     teardown_done: true,
                 },
             );
@@ -739,6 +753,43 @@ impl SessionRegistry {
         self.apply_hook_from(event, StatusSource::Hook)
     }
 
+    /// Re-read the session's branch when it is worth re-reading.
+    ///
+    /// Returns `Some(value)` to assign — including `Some(None)`, which is how a
+    /// session that left a repository stops claiming a branch. `None` means the
+    /// existing value stands. Hooks fire once per tool call, so an unconditional
+    /// `git rev-parse` here would be a process per tool call across the fleet.
+    fn refreshed_branch(&self, id: &SessionId, signal: &HookSignal) -> Option<Option<String>> {
+        let (cwd, checked, has_branch) = {
+            let state = lock_state(&self.inner);
+            let entry = state.entries.get(id)?;
+            (
+                entry.session.cwd.clone(),
+                entry.branch_checked,
+                entry.session.branch.is_some(),
+            )
+        };
+        // A branch change is only visible after a tool ran, so a session start
+        // and any expired cache are the moments worth spending a process on.
+        let due = match checked {
+            None => true,
+            Some(at) => {
+                matches!(signal, HookSignal::SessionStart)
+                    || at.elapsed() >= BRANCH_REFRESH_INTERVAL
+            }
+        };
+        if !due {
+            return None;
+        }
+        let branch = crate::review::current_branch(&cwd);
+        // Never downgrade a known branch to nothing on a lookup that merely timed
+        // out; only report the absence once we have seen it hold.
+        if branch.is_none() && has_branch && !matches!(signal, HookSignal::SessionStart) {
+            return None;
+        }
+        Some(branch)
+    }
+
     fn apply_hook_from(&self, event: HookEvent, source: StatusSource) -> bool {
         let id = {
             let state = lock_state(&self.inner);
@@ -771,6 +822,9 @@ impl SessionRegistry {
         };
         let Some(id) = id else { return false };
 
+        // Resolved before the lock is taken: this shells out to Git.
+        let branch = self.refreshed_branch(&id, &event.signal);
+
         let (session, notifications) = {
             let mut state = lock_state(&self.inner);
             let Some(entry) = state.entries.get_mut(&id) else {
@@ -781,8 +835,22 @@ impl SessionRegistry {
             if let Some(resume_id) = event.session_id {
                 entry.session.resume_id = Some(resume_id);
             }
+            if let Some(branch) = branch {
+                entry.session.branch = branch;
+                entry.branch_checked = Some(Instant::now());
+            }
+            // A plan only arrives on the events that carry one; absence must not
+            // erase a plan the session already reported.
+            if let Some(progress) = event.progress {
+                entry.session.tool_progress = Some(progress);
+            }
             match event.signal {
-                HookSignal::SessionStart => {}
+                HookSignal::SessionStart => {
+                    // A new run starts with no plan; the previous one is stale.
+                    if event.progress.is_none() {
+                        entry.session.tool_progress = None;
+                    }
+                }
                 HookSignal::Stop => entry.session.set_status_from(SessionStatus::Idle, source),
                 HookSignal::PreToolUse => entry
                     .session
@@ -846,6 +914,9 @@ impl SessionRegistry {
                 session_id: Some(thread_id.to_owned()),
                 cwd: None,
                 signal,
+                // The app-server transport carries plan updates on its own
+                // channel; nothing countable rides this event.
+                progress: None,
             },
             StatusSource::AppServer,
         )
@@ -1884,6 +1955,7 @@ mod tests {
                 generation: 1,
                 stop_requested: false,
                 teardown_done: true,
+                branch_checked: None,
             },
         );
 
@@ -1950,6 +2022,7 @@ mod tests {
                 generation: 1,
                 stop_requested: false,
                 teardown_done: true,
+                branch_checked: None,
             },
         );
 
@@ -1991,6 +2064,7 @@ mod tests {
                 generation: 1,
                 stop_requested: false,
                 teardown_done: true,
+                branch_checked: None,
             },
         );
 
@@ -2086,6 +2160,7 @@ mod tests {
                     grid: TerminalGrid::default(),
                     generation: 1,
                     stop_requested: false,
+                    branch_checked: None,
                     teardown_done: true,
                 },
             );
@@ -2141,6 +2216,7 @@ mod tests {
                     grid: TerminalGrid::default(),
                     generation: 1,
                     stop_requested: false,
+                    branch_checked: None,
                     teardown_done: true,
                 },
             );
@@ -2193,6 +2269,7 @@ mod tests {
                     grid: TerminalGrid::default(),
                     generation: 1,
                     stop_requested: false,
+                    branch_checked: None,
                     teardown_done: true,
                 },
             );
@@ -2239,6 +2316,7 @@ mod tests {
                 generation: 1,
                 stop_requested: false,
                 teardown_done: true,
+                branch_checked: None,
             },
         );
 
@@ -2247,6 +2325,7 @@ mod tests {
             session_id: Some("native-1".into()),
             cwd: Some(cwd.clone()),
             signal: HookSignal::SessionStart,
+            progress: None,
         }));
         assert!(registry.apply_hook(HookEvent {
             agent: Agent::Claude,
@@ -2255,6 +2334,7 @@ mod tests {
             signal: HookSignal::Notification {
                 notification: HookNotification::PermissionPrompt,
             },
+            progress: None,
         }));
         let session = registry.snapshot().pop().expect("session");
         assert_eq!(session.resume_id.as_deref(), Some("native-1"));
@@ -2266,6 +2346,7 @@ mod tests {
             session_id: Some("native-1".into()),
             cwd: Some(cwd),
             signal: HookSignal::Stop,
+            progress: None,
         }));
         assert_eq!(registry.snapshot()[0].status, SessionStatus::Idle);
     }
@@ -2295,6 +2376,7 @@ mod tests {
                 generation: 1,
                 stop_requested: false,
                 teardown_done: true,
+                branch_checked: None,
             },
         );
         let events = registry.subscribe();
@@ -2305,6 +2387,7 @@ mod tests {
             signal: HookSignal::Notification {
                 notification: HookNotification::PermissionPrompt,
             },
+            progress: None,
         };
 
         assert!(registry.apply_hook(attention.clone()));
@@ -2326,6 +2409,7 @@ mod tests {
             session_id: Some("native-1".into()),
             cwd: Some(cwd),
             signal: HookSignal::PreToolUse,
+            progress: None,
         }));
         assert!(events.try_iter().any(|event| matches!(
             event,
@@ -2343,6 +2427,7 @@ mod tests {
             session_id: Some("missing".into()),
             cwd: Some(PathBuf::from(".")),
             signal: HookSignal::Stop,
+            progress: None,
         }));
     }
 
@@ -2370,6 +2455,7 @@ mod tests {
                 generation: 1,
                 stop_requested: false,
                 teardown_done: true,
+                branch_checked: None,
             },
         );
         let events = registry.subscribe();
@@ -2488,6 +2574,7 @@ mod tests {
                     grid: TerminalGrid::default(),
                     generation: 1,
                     stop_requested: false,
+                    branch_checked: None,
                     teardown_done: true,
                 },
             );
@@ -2506,6 +2593,7 @@ mod tests {
                     grid: TerminalGrid::default(),
                     generation: 1,
                     stop_requested: false,
+                    branch_checked: None,
                     teardown_done: true,
                 },
             );

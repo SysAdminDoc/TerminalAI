@@ -28,8 +28,8 @@ You only ever type into one session at a time, so only one session pays for a re
 The compact row is measured, not aspirational: 28px exactly, carrying the status glyph, session
 name, repository, agent, tool progress, restart count, dwell time and last output line on one
 line. Measured 2026-08-03 in WebView2's engine at the default 1440x900 window, that is 29 fully
-visible rows. **Wide** adds a second line with model, reasoning effort, cost, branch, ports and
-the spelled-out status, at 50px.
+visible rows. **Wide** adds a second line with model, reasoning effort, branch, ports, the
+spelled-out status and reported cost, at 50px.
 
 Thirty is a tracked-session target, not a promise to keep thirty agent processes hot. Local
 measurements on 2026-08-02 showed roughly 509 MB RSS for Claude Code and 322 MB for Codex per
@@ -99,12 +99,17 @@ when the agent proceeds, and quiet during startup or the first seconds of a tool
 
 The daemon admits three live processes by default. Set `TERMINALAI_MAX_LIVE_SESSIONS` to change the
 cap and `TERMINALAI_DEFAULT_BUDGET_USD` to change the default Claude `--max-budget-usd` (or `none` to
-disable it). The fleet header shows live/queued counts and the aggregate reported spend.
+disable it). The fleet header shows live/queued counts. Spend renders an em dash until a session
+reports a cost: nothing derives cost from transcripts yet, and a computed-looking `$0.00` would be
+worse than saying so.
 
 The fleet header also shows counts for every session state. Compact rows keep the status glyph,
 session name, repository, agent, tool progress, restart count, dwell time and last output line on
-one 28px line; use **Wide** to reveal model, reasoning effort, cost, branch, ports and the
-spelled-out status on a second line. Press `/` anywhere outside a text field to focus the fleet
+one 28px line; use **Wide** to reveal model, reasoning effort, branch, ports, the spelled-out
+status and reported cost on a second line. Branch is read from the session directory's Git HEAD
+at launch and refreshed from hook events; it is an em dash outside a repository or on a detached
+HEAD rather than a guess. Tool progress is populated from the agent's own plan — Claude Code's
+`TodoWrite`, Codex's `update_plan` — and is an em dash when the agent exposes no countable plan. Press `/` anywhere outside a text field to focus the fleet
 filter.
 
 Each launch can reserve a deterministic block of service ports and run optional setup and teardown

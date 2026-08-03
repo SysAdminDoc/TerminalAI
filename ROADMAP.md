@@ -184,13 +184,6 @@ researcher continues from R-88.
 
 ### P1
 
-- [ ] R-70 · P1 — Populate or retract `branch`, `tool_progress` and `cost_usd`
-  Why: three columns the README sells as working are hard-wired to nothing, so the fleet row shows em dashes and the header shows a computed-looking `$0.00` — the product currently advertises fields no code writes.
-  Evidence: `crates/terminalai-core/src/session.rs:201,214,218` set all three to `None` at construction; verified by grep, no writer exists anywhere in `crates/` for `branch` or `tool_progress`, and `cost_usd` is only ever read (`registry.rs:265`). `README.md:80-81` documents all three as visible in the compact and Wide rows.
-  Touches: `crates/terminalai-core/src/session.rs`, `registry.rs`, `README.md`, `web/src/main.js`
-  Acceptance: `branch` is resolved per session from the cwd's git HEAD and refreshed on hook events; `tool_progress` is populated from the hook and app-server signals that carry a countable plan, rendering an em dash only when the agent genuinely exposes none; any field not wired in this release is removed from `README.md` in the same change.
-  Complexity: M
-
 - [ ] R-71 · P1 — Make the cost model arithmetically correct before it is shown
   Why: the pricing type cannot express the rates the transcripts actually carry, so the first number the fleet reports will be confidently wrong — and a spend figure that under-reports is worse than none, because admission control is meant to act on it.
   Evidence: `crates/terminalai-core/src/transcript.rs:12-27` — `TokenRates` has four fields and cannot express the 5-minute versus 1-hour cache-write split (1.25x / 2x), the `inference_geo: "us"` 1.1x multiplier, or the `speed: "fast"` Opus-5 rate; all three appear in `message.usage` in transcripts on this machine, alongside `service_tier`. No pricing data ships at all. Neither vendor publishes a machine-readable price table; LiteLLM's `model_prices_and_context_window.json` (MIT) is the only maintained one — verified live, 2,986 entries, already carrying `claude-opus-5` and `gpt-5.6-luna`.

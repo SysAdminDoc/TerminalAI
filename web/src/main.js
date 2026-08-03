@@ -181,7 +181,10 @@ function toolProgress(value) {
   return `${Math.min(completed, total)}/${total}`;
 }
 
+// Number(null) is 0, so a session that has never reported a cost used to render
+// "$0.00" — a computed-looking zero is worse than an honest em dash.
 function cost(value) {
+  if (value === null || value === undefined || value === "") return "—";
   const amount = Number(value);
   return Number.isFinite(amount) ? `$${amount.toFixed(2)}` : "—";
 }
@@ -466,9 +469,11 @@ function renderSummary() {
   const queued = state.sessions.filter((session) => session.status === "queued").length;
   const needsYou = state.sessions.filter((session) => ["needs-you", "needs-approval", "awaiting-input"].includes(session.status)).length;
   const working = state.sessions.filter((session) => ["working", "thinking"].includes(session.status)).length;
-  const spend = state.sessions.reduce((total, session) => total + (Number(session.cost_usd) || 0), 0);
+  const reporting = state.sessions.filter((session) => session.cost_usd !== null && session.cost_usd !== undefined);
+  const spend = reporting.reduce((total, session) => total + (Number(session.cost_usd) || 0), 0);
+  const spendLabel = reporting.length ? `$${spend.toFixed(2)}` : "—";
   const maxLive = state.admission.max_live_sessions ?? 3;
-  $("fleet-summary").innerHTML = `<span class="summary-item"><b>${live}/${maxLive}</b> live</span><span class="summary-separator">/</span><span class="summary-item"><b>${queued}</b> queued</span><span class="summary-separator">/</span><span class="summary-item summary-attention"><b>${needsYou}</b> needs you</span><span class="summary-separator">/</span><span class="summary-item"><b>${working}</b> active</span><span class="summary-separator">/</span><span class="summary-item"><b>$${spend.toFixed(2)}</b> spent</span>`;
+  $("fleet-summary").innerHTML = `<span class="summary-item"><b>${live}/${maxLive}</b> live</span><span class="summary-separator">/</span><span class="summary-item"><b>${queued}</b> queued</span><span class="summary-separator">/</span><span class="summary-item summary-attention"><b>${needsYou}</b> needs you</span><span class="summary-separator">/</span><span class="summary-item"><b>${working}</b> active</span><span class="summary-separator">/</span><span class="summary-item"><b>${spendLabel}</b> spent</span>`;
   const droppedEvents = Number(state.admission.dropped_events) || 0;
   $("fleet-count").textContent = droppedEvents
     ? `${state.sessions.length} tracked · ${droppedEvents} event drops`
