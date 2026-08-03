@@ -37,6 +37,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - The desktop shell now opens even when the daemon is unavailable and presents a first-run
   preflight panel for agent versions, managed hooks, daemon reachability and the Start-Menu app ID,
   with local Fix and Recheck actions that remain reachable from Diagnostics.
+- Release checks now use cargo-deny against the Windows target, denying unreviewed vulnerabilities
+  and documenting the five currently unavoidable transitive Unicode advisory exceptions with
+  upstream RustSec links.
 - `terminalai-core::grid::TerminalGrid` now parses each session's ANSI output into a bounded Rust
   grid with cursor motion, scrolling, alternate-screen restore and split UTF-8 coverage. Only the
   focused session (and future pinned panes) receives live output events; background sessions keep

@@ -1,0 +1,18 @@
+[graph]
+targets = ["x86_64-pc-windows-msvc"]
+all-features = true
+
+[advisories]
+version = 2
+# cargo-deny 0.20+ denies vulnerabilities by default; the removed pre-0.20
+# spelling was `vulnerability = "deny"`.
+unmaintained = "all"
+yanked = "warn"
+
+ignore = [
+    { id = "RUSTSEC-2025-0075", reason = "Transitive through Tauri's urlpattern dependency; no safe upgrade is available. Upstream: https://rustsec.org/advisories/RUSTSEC-2025-0075" },
+    { id = "RUSTSEC-2025-0080", reason = "Transitive through Tauri's urlpattern dependency; no safe upgrade is available. Upstream: https://rustsec.org/advisories/RUSTSEC-2025-0080" },
+    { id = "RUSTSEC-2025-0081", reason = "Transitive through Tauri's urlpattern dependency; no safe upgrade is available. Upstream: https://rustsec.org/advisories/RUSTSEC-2025-0081" },
+    { id = "RUSTSEC-2025-0098", reason = "Transitive through Tauri's urlpattern dependency; no safe upgrade is available. Upstream: https://rustsec.org/advisories/RUSTSEC-2025-0098" },
+    { id = "RUSTSEC-2025-0100", reason = "Transitive through Tauri's urlpattern dependency; no safe upgrade is available. Upstream: https://rustsec.org/advisories/RUSTSEC-2025-0100" },
+]
