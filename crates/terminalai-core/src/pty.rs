@@ -42,8 +42,57 @@ pub struct PtySession {
     child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     running: Arc<AtomicBool>,
+    /// A private duplicate of the child's process handle, waited on directly so
+    /// supervision costs no periodic wakeups. Owned separately from `child` so
+    /// the blocking wait never holds the lock that `pid` and `kill` need.
+    #[cfg(windows)]
+    exit_signal: Option<ProcessHandle>,
     #[cfg(windows)]
     job: ProcessJob,
+}
+
+/// An owned `HANDLE` to a process, closed on drop.
+#[cfg(windows)]
+struct ProcessHandle(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+unsafe impl Send for ProcessHandle {}
+#[cfg(windows)]
+unsafe impl Sync for ProcessHandle {}
+
+#[cfg(windows)]
+impl Drop for ProcessHandle {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(self.0);
+        }
+    }
+}
+
+/// Duplicate `handle` into a handle this process owns for the life of the session.
+///
+/// `portable-pty` owns the original and may close it when the child is reaped, so
+/// waiting on the borrowed handle would be a use-after-close race.
+#[cfg(windows)]
+fn duplicate_process_handle(
+    handle: std::os::windows::raw::HANDLE,
+) -> Option<ProcessHandle> {
+    use windows_sys::Win32::Foundation::{DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE};
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    let mut duplicate: HANDLE = std::ptr::null_mut();
+    let ok = unsafe {
+        DuplicateHandle(
+            GetCurrentProcess(),
+            handle as HANDLE,
+            GetCurrentProcess(),
+            &mut duplicate,
+            0,
+            0,
+            DUPLICATE_SAME_ACCESS,
+        )
+    };
+    (ok != 0 && !duplicate.is_null()).then_some(ProcessHandle(duplicate))
 }
 
 /// Device Status Report — "where is the cursor?".
@@ -97,6 +146,9 @@ impl PtySession {
         // Dropping the slave is required on Windows: ConPTY will not report the
         // child's exit while any handle to the slave side is still open.
         drop(pair.slave);
+
+        #[cfg(windows)]
+        let exit_signal = child.as_raw_handle().and_then(duplicate_process_handle);
 
         #[cfg(windows)]
         let job = {
@@ -161,6 +213,8 @@ impl PtySession {
             writer,
             running,
             #[cfg(windows)]
+            exit_signal,
+            #[cfg(windows)]
             job,
         })
     }
@@ -207,6 +261,48 @@ impl PtySession {
             }
             Ok(None) => Ok(None),
             Err(_) => Err(PtyError::Gone),
+        }
+    }
+
+    /// Block until the agent exits, then return its exit code.
+    ///
+    /// The supervisor's stated principle is push, not poll: a thread waking
+    /// twenty times a second per session to ask whether a process is still alive
+    /// is 600 wakeups a second at the thirty-session target, on battery. Windows
+    /// signals the process handle at exit, so nothing needs to ask.
+    ///
+    /// Returns [`PtyError::Gone`] when there is no waitable handle — callers fall
+    /// back to polling [`PtySession::try_wait`] on that path only. Deliberately
+    /// takes no lock: `kill` and `pid` must stay responsive while a wait is
+    /// outstanding.
+    pub fn wait_for_exit(&self) -> Result<u32, PtyError> {
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+            use windows_sys::Win32::System::Threading::{
+                GetExitCodeProcess, WaitForSingleObject, INFINITE,
+            };
+
+            let handle = self.exit_signal.as_ref().ok_or(PtyError::Gone)?;
+            if unsafe { WaitForSingleObject(handle.0, INFINITE) } != WAIT_OBJECT_0 {
+                return Err(PtyError::Gone);
+            }
+            let mut status = 0u32;
+            if unsafe { GetExitCodeProcess(handle.0, &mut status) } == 0 {
+                return Err(PtyError::Gone);
+            }
+            self.running.store(false, Ordering::SeqCst);
+            // Reap through portable-pty as well, so try_wait and Drop agree with
+            // the handle about the child being finished.
+            if let Ok(mut child) = self.child.lock() {
+                let _ = child.try_wait();
+            }
+            Ok(status)
+        }
+        #[cfg(not(windows))]
+        {
+            // No handle to wait on here; the caller polls try_wait instead.
+            Err(PtyError::Gone)
         }
     }
 
@@ -355,6 +451,67 @@ mod tests {
             output.contains("PORT=42000"),
             "child output did not contain PORT: {output:?}"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn wait_for_exit_blocks_on_the_child_handle_and_reports_its_code() {
+        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        let cmd = ResolvedCommand {
+            program: PathBuf::from("cmd.exe"),
+            args: vec!["/c".into(), "exit".into(), "7".into()],
+            cwd: std::env::current_dir().expect("test cwd"),
+        };
+        let session = PtySession::spawn(&cmd, default_size(), move |chunk| {
+            let _ = tx.send(chunk.to_vec());
+        })
+        .expect("spawn cmd for wait test");
+
+        let started = Instant::now();
+        let status = session.wait_for_exit().expect("blocking wait on child handle");
+        let elapsed = started.elapsed();
+
+        assert_eq!(status, 7, "exit code must come from the process handle");
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "wait_for_exit should return as soon as the child exits, took {elapsed:?}"
+        );
+        assert!(!session.is_running(), "the session must be marked finished");
+        // The child is reaped through portable-pty too, so the two views agree.
+        assert!(
+            matches!(session.try_wait(), Ok(Some(_))),
+            "try_wait must agree that the child has finished"
+        );
+        drop(rx);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn kill_releases_a_thread_blocked_in_wait_for_exit() {
+        // A blocking wait must never make a session un-killable: wait_for_exit
+        // deliberately takes no lock, so kill can still reach the job object.
+        let (tx, _rx) = mpsc::channel::<Vec<u8>>();
+        let cmd = ResolvedCommand {
+            program: PathBuf::from("cmd.exe"),
+            args: vec!["/c".into(), "ping.exe".into(), "127.0.0.1".into(), "-n".into(), "30".into()],
+            cwd: std::env::current_dir().expect("test cwd"),
+        };
+        let session = Arc::new(
+            PtySession::spawn(&cmd, default_size(), move |chunk| {
+                let _ = tx.send(chunk.to_vec());
+            })
+            .expect("spawn long-running child"),
+        );
+        let waiter = session.clone();
+        let handle = std::thread::spawn(move || waiter.wait_for_exit());
+
+        // Give the waiter time to actually enter the wait before killing.
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(session.pid().is_some(), "pid must stay readable during a wait");
+        session.kill().expect("kill while a wait is outstanding");
+
+        let result = handle.join().expect("waiter thread");
+        assert!(result.is_ok(), "the blocked wait must be released by kill");
     }
 
     #[cfg(windows)]

@@ -32,7 +32,10 @@ parallel agents. The daemon can hibernate idle sessions while retaining their ro
 
 Status comes from agent hooks and transcript tailing — pushed, not polled. Polling a pty on a
 timer, which is the common approach, both misses transitions between ticks and burns CPU per
-session.
+session. Exit detection blocks on the child's own process handle for the same reason: measured on
+2026-08-03 with `terminalai-probe cpu-idle --sessions 10 --seconds 60`, supervising ten idle
+sessions cost 218.8 ms of CPU per minute when polling at 50 ms and less than one scheduler tick
+when waiting on the handle.
 
 ## Status
 

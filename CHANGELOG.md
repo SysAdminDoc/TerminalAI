@@ -140,6 +140,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   laid out below it.
 - Closing the launcher, or pressing Enter in any launcher field, no longer spawns an agent —
   every dialog control is an explicit button and the form refuses submission outright.
+- Session exit detection now blocks on the child's process handle instead of a per-session thread
+  waking twenty times a second to ask whether it had finished. Environment setup and teardown
+  hooks use one bounded wait rather than a 25 ms poll. Measured over 60 seconds with ten idle
+  sessions: 218.8 ms of CPU per minute before, below one scheduler tick after. Polling remains
+  only where no waitable handle exists.
+- `terminalai-probe cpu-idle` measures that supervision cost on demand, with `--poll` to reproduce
+  the old strategy for comparison on the same machine.
 - `panic = "abort"` is gone from the release profile. One panic on any daemon worker thread used
   to terminate every supervised session at once, and the poisoned-lock recovery arms were dead
   code in the shipped binary while the test profile forced unwinding. A build-time guard in

@@ -7,7 +7,6 @@
 
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::thread;
 use std::time::{Duration, Instant};
 
 use portable_pty::CommandBuilder;
@@ -213,6 +212,9 @@ fn run_hook_with_timeout(
         }
     };
     let deadline = Instant::now() + timeout;
+    // One bounded wait on the child's own exit signal, rather than asking forty
+    // times a second whether a hook that usually runs for minutes has finished.
+    wait_for_child(&child, timeout);
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -225,7 +227,9 @@ fn run_hook_with_timeout(
                     })
                 };
             }
-            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
+            Ok(None) if Instant::now() < deadline => {
+                wait_for_child(&child, deadline.saturating_duration_since(Instant::now()))
+            }
             Ok(None) => {
                 #[cfg(windows)]
                 let _ = job.terminate();
@@ -244,6 +248,33 @@ fn run_hook_with_timeout(
                 });
             }
         }
+    }
+}
+
+/// Block until `child` exits or `timeout` elapses, without periodic wakeups.
+///
+/// Windows signals a process handle at exit, so a single bounded wait replaces
+/// the poll loop entirely. Elsewhere this degrades to one sleep, and the caller's
+/// loop still bounds the total wait against its own deadline.
+fn wait_for_child(child: &std::process::Child, timeout: Duration) {
+    if timeout.is_zero() {
+        return;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Foundation::HANDLE;
+        use windows_sys::Win32::System::Threading::{WaitForSingleObject, INFINITE};
+
+        let millis = u32::try_from(timeout.as_millis()).unwrap_or(INFINITE - 1);
+        unsafe {
+            WaitForSingleObject(child.as_raw_handle() as HANDLE, millis);
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = child;
+        std::thread::sleep(timeout.min(Duration::from_millis(25)));
     }
 }
 

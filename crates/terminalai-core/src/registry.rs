@@ -1492,25 +1492,45 @@ impl SessionRegistry {
         self.emit_notification_changes(notifications);
     }
 
+    /// Watch one session for exit.
+    ///
+    /// Blocks on the child's own exit signal rather than asking twenty times a
+    /// second whether it is still alive — at the thirty-session target that
+    /// polling was 600 wakeups per second doing nothing. Polling remains only as
+    /// the fallback for platforms and failure paths that expose no waitable
+    /// handle, and there it runs at the slower error cadence.
     fn spawn_monitor(&self, id: SessionId, pty: Arc<PtySession>, generation: u64) {
         let registry = self.clone();
         let _ = thread::Builder::new()
             .name(format!("terminalai-session-{id}"))
-            .spawn(move || loop {
-                match pty.try_wait() {
-                    Ok(Some(status)) => {
-                        registry.mark_process_exit(&id, generation, Some(status));
-                        break;
-                    }
-                    Err(_) => {
-                        registry.mark_process_unknown(&id, generation);
-                        thread::sleep(Duration::from_millis(250));
-                        continue;
-                    }
-                    Ok(None) => {}
+            .spawn(move || {
+                if let Ok(status) = pty.wait_for_exit() {
+                    registry.mark_process_exit(&id, generation, Some(status));
+                    return;
                 }
-                thread::sleep(Duration::from_millis(50));
+                Self::poll_until_exit(&registry, &id, &pty, generation);
             });
+    }
+
+    fn poll_until_exit(
+        registry: &SessionRegistry,
+        id: &SessionId,
+        pty: &PtySession,
+        generation: u64,
+    ) {
+        loop {
+            match pty.try_wait() {
+                Ok(Some(status)) => {
+                    registry.mark_process_exit(id, generation, Some(status));
+                    return;
+                }
+                Err(_) => {
+                    registry.mark_process_unknown(id, generation);
+                    thread::sleep(Duration::from_millis(250));
+                }
+                Ok(None) => thread::sleep(Duration::from_millis(50)),
+            }
+        }
     }
 }
 

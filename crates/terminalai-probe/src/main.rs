@@ -35,6 +35,7 @@ USAGE:
   terminalai-probe status  <session-id> --json
   terminalai-probe hook    <claude|codex>    (read one hook JSON object from stdin)
   terminalai-probe hooks   <status|preview|install|remove> <claude|codex> [options]
+  terminalai-probe cpu-idle [--sessions <n>] [--seconds <s>] [--poll]
 
 OPTIONS:
   --cwd <dir>          working directory (default: current)
@@ -68,6 +69,7 @@ fn main() {
         Some("send") => cmd_send(&args[1..]),
         Some("status") => cmd_status(&args[1..]),
         Some("exec") => cmd_exec(&args[1..]),
+        Some("cpu-idle") => cmd_cpu_idle(&args[1..]),
         Some("hook") => cmd_hook(&args[1..]),
         Some("hooks") => cmd_hooks(&args[1..]),
         Some("--help") | Some("-h") | None => {
@@ -393,6 +395,162 @@ fn cmd_exec(args: &[String]) -> i32 {
         0
     } else {
         3
+    }
+}
+
+/// Measure what supervising N idle sessions costs this process.
+///
+/// Children are separate processes, so the CPU time reported here is entirely
+/// TerminalAI's own supervision overhead — reader threads plus one exit watcher
+/// per session. `--poll` reproduces the old 50 ms `try_wait` loop so the two
+/// strategies can be compared on the same machine in the same run.
+fn cmd_cpu_idle(args: &[String]) -> i32 {
+    let mut sessions = 10usize;
+    let mut seconds = 10u64;
+    let mut poll = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--sessions" => {
+                index += 1;
+                match args.get(index).and_then(|value| value.parse().ok()) {
+                    Some(value) => sessions = value,
+                    None => {
+                        eprintln!("--sessions needs a number");
+                        return 1;
+                    }
+                }
+            }
+            "--seconds" => {
+                index += 1;
+                match args.get(index).and_then(|value| value.parse().ok()) {
+                    Some(value) => seconds = value,
+                    None => {
+                        eprintln!("--seconds needs a number");
+                        return 1;
+                    }
+                }
+            }
+            "--poll" => poll = true,
+            other => {
+                eprintln!("unknown option: {other}");
+                return 1;
+            }
+        }
+        index += 1;
+    }
+
+    // A child that blocks rather than spins, so the sample measures supervision
+    // and not the child's own work.
+    let cmd = ResolvedCommand {
+        program: PathBuf::from("cmd.exe"),
+        args: vec!["/c".into(), "pause".into()],
+        cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+    };
+
+    let mut live = Vec::with_capacity(sessions);
+    let output_bytes = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    for _ in 0..sessions {
+        let counter = output_bytes.clone();
+        match PtySession::spawn(&cmd, pty::default_size(), move |chunk| {
+            counter.fetch_add(chunk.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        }) {
+            Ok(session) => live.push(std::sync::Arc::new(session)),
+            Err(error) => {
+                eprintln!("could not spawn idle session: {error}");
+                return 3;
+            }
+        }
+    }
+
+    let watching = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let mut watchers = Vec::with_capacity(live.len());
+    for session in &live {
+        let session = session.clone();
+        let watching = watching.clone();
+        watchers.push(std::thread::spawn(move || {
+            if poll {
+                // The pre-2026-08-03 supervision loop, kept for comparison only.
+                while watching.load(std::sync::atomic::Ordering::Relaxed) {
+                    match session.try_wait() {
+                        Ok(Some(_)) => return,
+                        Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+                        Err(_) => std::thread::sleep(Duration::from_millis(250)),
+                    }
+                }
+            } else {
+                let _ = session.wait_for_exit();
+            }
+        }));
+    }
+
+    // Let the children finish drawing before sampling.
+    std::thread::sleep(Duration::from_secs(1));
+    let before = process_cpu_time();
+    std::thread::sleep(Duration::from_secs(seconds));
+    let after = process_cpu_time();
+
+    watching.store(false, std::sync::atomic::Ordering::Relaxed);
+    for session in &live {
+        let _ = session.kill();
+    }
+    for watcher in watchers {
+        let _ = watcher.join();
+    }
+
+    match (before, after) {
+        (Some(before), Some(after)) => {
+            let used = after.saturating_sub(before);
+            let strategy = if poll { "poll(50ms)" } else { "wait-on-handle" };
+            println!(
+                "strategy={strategy} sessions={sessions} window={seconds}s cpu={:.1}ms cpu_per_session_per_s={:.3}ms output_bytes={}",
+                used.as_secs_f64() * 1000.0,
+                used.as_secs_f64() * 1000.0 / (sessions.max(1) as f64 * seconds.max(1) as f64),
+                output_bytes.load(std::sync::atomic::Ordering::Relaxed),
+            );
+            0
+        }
+        _ => {
+            eprintln!("could not read process CPU time on this platform");
+            1
+        }
+    }
+}
+
+/// Kernel plus user CPU time consumed by this process so far.
+fn process_cpu_time() -> Option<Duration> {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::FILETIME;
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+
+        let mut creation = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let mut exit = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let mut kernel = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let mut user = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+        let ok = unsafe {
+            GetProcessTimes(
+                GetCurrentProcess(),
+                &mut creation,
+                &mut exit,
+                &mut kernel,
+                &mut user,
+            )
+        };
+        if ok == 0 {
+            return None;
+        }
+        let ticks = |time: FILETIME| {
+            (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime)
+        };
+        // FILETIME counts 100-nanosecond intervals.
+        Some(Duration::from_nanos(
+            (ticks(kernel) + ticks(user)).saturating_mul(100),
+        ))
+    }
+    #[cfg(not(windows))]
+    {
+        None
     }
 }
 
