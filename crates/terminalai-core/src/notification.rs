@@ -92,33 +92,41 @@ impl NotificationCenter {
         previous_status: SessionStatus,
         previous_state_since: SystemTime,
         now: SystemTime,
-    ) -> Option<NotificationChange> {
+    ) -> Vec<NotificationChange> {
         let Some(status) = attention_status(session.status) else {
             return self.retract_session(&session.id);
         };
 
         let notification = AttentionNotification::new(session, status, now);
         if self.active.contains_key(&notification.dedup_key) {
-            return None;
+            return Vec::new();
         }
+
+        let mut changes = self.retract_session(&session.id);
         if let Some(reason) = suppression_reason(previous_status, previous_state_since, now) {
-            return Some(NotificationChange::Suppressed {
+            changes.push(NotificationChange::Suppressed {
                 notification,
                 reason,
             });
+            return changes;
         }
         self.active
             .insert(notification.dedup_key.clone(), notification.clone());
-        Some(NotificationChange::Raised(notification))
+        changes.push(NotificationChange::Raised(notification));
+        changes
     }
 
-    pub fn retract_session(&mut self, id: &SessionId) -> Option<NotificationChange> {
-        let key = self
+    pub fn retract_session(&mut self, id: &SessionId) -> Vec<NotificationChange> {
+        let keys: Vec<_> = self
             .active
             .iter()
-            .find(|(_, notification)| notification.session_id == *id)
-            .map(|(key, _)| key.clone())?;
-        self.active.remove(&key).map(NotificationChange::Retracted)
+            .filter(|(_, notification)| notification.session_id == *id)
+            .map(|(key, _)| key.clone())
+            .collect();
+        keys.into_iter()
+            .filter_map(|key| self.active.remove(&key))
+            .map(NotificationChange::Retracted)
+            .collect()
     }
 
     pub fn active(&self) -> Vec<AttentionNotification> {
@@ -224,6 +232,8 @@ mod tests {
 
         let first = center
             .observe(&session, SessionStatus::Idle, session.state_since, now)
+            .into_iter()
+            .next()
             .expect("first attention event");
         let NotificationChange::Raised(first) = first else {
             panic!("expected raised event")
@@ -232,7 +242,7 @@ mod tests {
         assert!(first.dedup_key.contains("session=s0001"));
         assert!(center
             .observe(&session, SessionStatus::NeedsYou, session.state_since, now)
-            .is_none());
+            .is_empty());
         assert_eq!(center.active_by_group()["c:/repos/terminalai"].len(), 1);
     }
 
@@ -243,20 +253,71 @@ mod tests {
         session.state_since = SystemTime::UNIX_EPOCH;
         let mut center = NotificationCenter::default();
         assert!(matches!(
-            center.observe(&session, SessionStatus::Idle, session.state_since, now),
+            center
+                .observe(&session, SessionStatus::Idle, session.state_since, now)
+                .first(),
             Some(NotificationChange::Raised(_))
         ));
 
         session.status = SessionStatus::Working;
-        let change = center
-            .observe(
-                &session,
-                SessionStatus::NeedsApproval,
-                session.state_since,
-                now,
-            )
-            .expect("retraction");
-        assert!(matches!(change, NotificationChange::Retracted(_)));
+        let changes = center.observe(
+            &session,
+            SessionStatus::NeedsApproval,
+            session.state_since,
+            now,
+        );
+        assert!(matches!(
+            changes.first(),
+            Some(NotificationChange::Retracted(_))
+        ));
+        assert!(center.active().is_empty());
+    }
+
+    #[test]
+    fn attention_status_changes_retract_prior_status_and_idle_clears_all() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
+        let mut session = session("repo", SessionStatus::NeedsApproval);
+        session.state_since = SystemTime::UNIX_EPOCH;
+        let mut center = NotificationCenter::default();
+
+        assert!(matches!(
+            center
+                .observe(&session, SessionStatus::Idle, session.state_since, now)
+                .first(),
+            Some(NotificationChange::Raised(_))
+        ));
+
+        session.status = SessionStatus::AwaitingInput;
+        let changes = center.observe(
+            &session,
+            SessionStatus::NeedsApproval,
+            session.state_since,
+            now,
+        );
+        assert_eq!(
+            changes
+                .iter()
+                .filter(|change| matches!(change, NotificationChange::Retracted(_)))
+                .count(),
+            1
+        );
+        assert!(changes
+            .iter()
+            .any(|change| matches!(change, NotificationChange::Raised(_))));
+        assert_eq!(center.active().len(), 1);
+
+        session.status = SessionStatus::Idle;
+        let changes = center.observe(
+            &session,
+            SessionStatus::AwaitingInput,
+            session.state_since,
+            now,
+        );
+        assert_eq!(changes.len(), 1);
+        assert!(matches!(
+            changes.first(),
+            Some(NotificationChange::Retracted(_))
+        ));
         assert!(center.active().is_empty());
     }
 
@@ -268,7 +329,9 @@ mod tests {
         let startup_since = now - Duration::from_secs(1);
         startup.state_since = now;
         assert!(matches!(
-            center.observe(&startup, SessionStatus::Starting, startup_since, now),
+            center
+                .observe(&startup, SessionStatus::Starting, startup_since, now)
+                .first(),
             Some(NotificationChange::Suppressed {
                 reason: SuppressionReason::Startup,
                 ..
@@ -279,7 +342,9 @@ mod tests {
         let tool_since = now - Duration::from_secs(1);
         tool.state_since = now;
         assert!(matches!(
-            center.observe(&tool, SessionStatus::Working, tool_since, now),
+            center
+                .observe(&tool, SessionStatus::Working, tool_since, now)
+                .first(),
             Some(NotificationChange::Suppressed {
                 reason: SuppressionReason::LongTool,
                 ..
@@ -288,12 +353,14 @@ mod tests {
         assert!(center.active().is_empty());
 
         assert!(matches!(
-            center.observe(
-                &tool,
-                SessionStatus::Working,
-                now - Duration::from_secs(31),
-                now
-            ),
+            center
+                .observe(
+                    &tool,
+                    SessionStatus::Working,
+                    now - Duration::from_secs(31),
+                    now
+                )
+                .first(),
             Some(NotificationChange::Raised(_))
         ));
     }

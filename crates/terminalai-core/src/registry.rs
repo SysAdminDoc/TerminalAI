@@ -522,7 +522,7 @@ impl SessionRegistry {
     /// Remove a stopped row from the live fleet while preserving only the
     /// layout, cwd and exact command in the durable archive.
     pub fn archive(&self, id: &SessionId) -> Result<ArchivedSession, RegistryError> {
-        let archived = {
+        let (archived, notifications) = {
             let mut state = lock_state(&self.inner);
             let Some(entry) = state.entries.get(id) else {
                 return Err(RegistryError::Missing(id.clone()));
@@ -538,9 +538,11 @@ impl SessionRegistry {
             let archived = ArchivedSession::from_session(&entry.session, &entry.command);
             state.archives.retain(|item| item.id != *id);
             state.archives.push(archived.clone());
-            archived
+            let notifications = state.notifications.retract_session(id);
+            (archived, notifications)
         };
         self.emit(RegistryEvent::SessionRemoved { id: id.clone() });
+        self.emit_notification_changes(notifications);
         self.drain_queue();
         Ok(archived)
     }
@@ -567,15 +569,24 @@ impl SessionRegistry {
             entry.stop_requested = true;
             let Some(pty) = entry.pty.clone() else {
                 if entry.session.status == SessionStatus::Queued {
+                    let previous_status = entry.session.status;
+                    let previous_state_since = entry.session.state_since;
                     entry.generation = entry.generation.saturating_add(1);
                     let now = SystemTime::now();
                     entry
                         .session
                         .mark_resurrectable_at_from(None, now, StatusSource::Manual);
                     let session = entry.session.clone();
+                    let notifications = state.notifications.observe(
+                        &session,
+                        previous_status,
+                        previous_state_since,
+                        now,
+                    );
                     state.queue.retain(|queued| queued != id);
                     drop(state);
                     self.emit(RegistryEvent::SessionUpdated { session });
+                    self.emit_notification_changes(notifications);
                     self.drain_queue();
                     return Ok(());
                 }
@@ -588,7 +599,7 @@ impl SessionRegistry {
                         .session
                         .mark_resurrectable_at_from(None, now, StatusSource::Manual);
                     let session = entry.session.clone();
-                    let notification = state.notifications.observe(
+                    let notifications = state.notifications.observe(
                         &session,
                         previous_status,
                         previous_state_since,
@@ -596,7 +607,7 @@ impl SessionRegistry {
                     );
                     drop(state);
                     self.emit(RegistryEvent::SessionUpdated { session });
-                    self.emit_notification_change(notification);
+                    self.emit_notification_changes(notifications);
                     self.drain_queue();
                     return Ok(());
                 }
@@ -666,7 +677,7 @@ impl SessionRegistry {
         };
         let Some(id) = id else { return false };
 
-        let (session, notification) = {
+        let (session, notifications) = {
             let mut state = lock_state(&self.inner);
             let Some(entry) = state.entries.get_mut(&id) else {
                 return false;
@@ -696,16 +707,16 @@ impl SessionRegistry {
                 },
             }
             let session = entry.session.clone();
-            let notification = state.notifications.observe(
+            let notifications = state.notifications.observe(
                 &session,
                 previous_status,
                 previous_state_since,
                 SystemTime::now(),
             );
-            (session, notification)
+            (session, notifications)
         };
         self.emit(RegistryEvent::SessionUpdated { session });
-        self.emit_notification_change(notification);
+        self.emit_notification_changes(notifications);
         true
     }
 
@@ -923,9 +934,11 @@ impl SessionRegistry {
         }
     }
 
-    fn emit_notification_change(&self, change: Option<NotificationChange>) {
-        if let Some(event) = change.and_then(NotificationChange::into_event) {
-            self.emit(RegistryEvent::Notification { event });
+    fn emit_notification_changes(&self, changes: Vec<NotificationChange>) {
+        for change in changes {
+            if let Some(event) = change.into_event() {
+                self.emit(RegistryEvent::Notification { event });
+            }
         }
     }
 
@@ -1054,20 +1067,27 @@ impl SessionRegistry {
     }
 
     fn remove_entry(&self, id: &SessionId) {
-        let removed = {
+        let (removed, notifications) = {
             let mut state = lock_state(&self.inner);
             if state.focused.as_ref() == Some(id) {
                 state.focused = None;
             }
-            state.entries.remove(id).is_some()
+            let removed = state.entries.remove(id).is_some();
+            let notifications = if removed {
+                state.notifications.retract_session(id)
+            } else {
+                Vec::new()
+            };
+            (removed, notifications)
         };
         if removed {
             self.emit(RegistryEvent::SessionRemoved { id: id.clone() });
         }
+        self.emit_notification_changes(notifications);
     }
 
     fn mark_process_exit(&self, id: &SessionId, generation: u64, exit_code: Option<u32>) {
-        let (restart, session, notification, teardown) = {
+        let (restart, session, notifications, teardown) = {
             let mut state = lock_state(&self.inner);
             let Some(entry) = state.entries.get_mut(id) else {
                 return;
@@ -1107,17 +1127,17 @@ impl SessionRegistry {
                     entry.session.ports.clone(),
                 ))
             };
-            let notification =
+            let notifications =
                 state
                     .notifications
                     .observe(&session, previous_status, previous_state_since, now);
-            (restart, session, notification, teardown)
+            (restart, session, notifications, teardown)
         };
         if let Some((cwd, spec, ports)) = teardown {
             let _ = environment::run_teardown(&spec, &id.0, &cwd, &ports);
         }
         self.emit(RegistryEvent::SessionUpdated { session });
-        self.emit_notification_change(notification);
+        self.emit_notification_changes(notifications);
         self.drain_queue();
         if let Some((generation, delay)) = restart {
             self.schedule_restart(id.clone(), generation, delay);
@@ -1230,7 +1250,7 @@ impl SessionRegistry {
 }
 
 fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u8]) {
-    let (send_output, session, notification) = {
+    let (send_output, session, notifications) = {
         let mut state = lock_state(inner);
         let focused = state.focused.as_ref() == Some(id);
         let Some(entry) = state.entries.get_mut(id) else {
@@ -1252,15 +1272,17 @@ fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u
                 .set_status_from(SessionStatus::Idle, StatusSource::PtyOutput);
         }
         let session = entry.session.clone();
-        let notification = (previous_status != session.status).then(|| {
+        let notifications = if previous_status != session.status {
             state.notifications.observe(
                 &session,
                 previous_status,
                 previous_state_since,
                 SystemTime::now(),
             )
-        });
-        (focused || session.pinned, session, notification.flatten())
+        } else {
+            Vec::new()
+        };
+        (focused || session.pinned, session, notifications)
     };
     if send_output {
         emit_inner(
@@ -1272,8 +1294,14 @@ fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u
         );
     }
     emit_inner(inner, RegistryEvent::SessionUpdated { session });
-    if let Some(event) = notification.and_then(NotificationChange::into_event) {
-        emit_inner(inner, RegistryEvent::Notification { event });
+    emit_notification_changes_inner(inner, notifications);
+}
+
+fn emit_notification_changes_inner(inner: &Arc<Inner>, changes: Vec<NotificationChange>) {
+    for change in changes {
+        if let Some(event) = change.into_event() {
+            emit_inner(inner, RegistryEvent::Notification { event });
+        }
     }
 }
 
@@ -1695,33 +1723,104 @@ mod tests {
         let cwd = Path::new(".").to_path_buf();
         let spec = spec_for(Agent::Claude, &cwd);
         let id = SessionId::new(1);
-        let session = Session::new(id.clone(), &spec);
-        lock_state(&registry.inner).entries.insert(
-            id.clone(),
-            Entry {
-                session,
-                command: ResolvedCommand {
-                    program: PathBuf::from("claude.exe"),
-                    args: vec!["--resume".into(), "native-1".into()],
-                    cwd: cwd.clone(),
+        let mut session = Session::new(id.clone(), &spec);
+        session.status = SessionStatus::NeedsApproval;
+        session.state_since = std::time::SystemTime::UNIX_EPOCH;
+        {
+            let mut state = lock_state(&registry.inner);
+            state.entries.insert(
+                id.clone(),
+                Entry {
+                    session: session.clone(),
+                    command: ResolvedCommand {
+                        program: PathBuf::from("claude.exe"),
+                        args: vec!["--resume".into(), "native-1".into()],
+                        cwd: cwd.clone(),
+                    },
+                    spec,
+                    pty: None,
+                    scrollback: RingBuffer::default(),
+                    grid: TerminalGrid::default(),
+                    generation: 1,
+                    stop_requested: false,
+                    teardown_done: true,
                 },
-                spec,
-                pty: None,
-                scrollback: RingBuffer::default(),
-                grid: TerminalGrid::default(),
-                generation: 1,
-                stop_requested: false,
-                teardown_done: true,
-            },
-        );
+            );
+            state.notifications.observe(
+                &session,
+                SessionStatus::Idle,
+                std::time::SystemTime::UNIX_EPOCH,
+                std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(100),
+            );
+        }
+        let events = registry.subscribe();
 
         let archive = registry.archive(&id).expect("archive");
         assert_eq!(archive.id, id);
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            RegistryEvent::Notification {
+                event: NotificationEvent::Retracted { session_id, .. }
+            } if session_id == id
+        )));
         assert!(registry.snapshot().is_empty());
         let stored = registry.store_snapshot();
         assert!(stored.sessions.is_empty());
         assert_eq!(stored.archives.len(), 1);
         assert_eq!(stored.archives[0].command, "claude.exe --resume native-1");
+    }
+
+    #[test]
+    fn killing_queued_rows_retracts_attention_notifications() {
+        let registry = SessionRegistry::new();
+        let cwd = Path::new(".").to_path_buf();
+        let spec = spec_for(Agent::Claude, &cwd);
+        let id = SessionId::new(1);
+        let mut session = Session::new(id.clone(), &spec);
+        session.set_status(SessionStatus::Queued);
+        let mut attention = session.clone();
+        attention.status = SessionStatus::NeedsApproval;
+        attention.state_since = std::time::SystemTime::UNIX_EPOCH;
+        {
+            let mut state = lock_state(&registry.inner);
+            state.entries.insert(
+                id.clone(),
+                Entry {
+                    session,
+                    command: ResolvedCommand {
+                        program: PathBuf::from("test-agent.exe"),
+                        args: Vec::new(),
+                        cwd: cwd.clone(),
+                    },
+                    spec,
+                    pty: None,
+                    scrollback: RingBuffer::default(),
+                    grid: TerminalGrid::default(),
+                    generation: 1,
+                    stop_requested: false,
+                    teardown_done: true,
+                },
+            );
+            state.queue.push_back(id.clone());
+            state.notifications.observe(
+                &attention,
+                SessionStatus::Idle,
+                std::time::SystemTime::UNIX_EPOCH,
+                std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(100),
+            );
+        }
+        let events = registry.subscribe();
+
+        registry.kill(&id).expect("kill queued row");
+
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            RegistryEvent::Notification {
+                event: NotificationEvent::Retracted { session_id, .. }
+            } if session_id == id
+        )));
+        let state = lock_state(&registry.inner);
+        assert!(state.notifications.active().is_empty());
     }
 
     #[test]
