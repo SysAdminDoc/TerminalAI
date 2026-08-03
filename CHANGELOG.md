@@ -140,6 +140,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   laid out below it.
 - Closing the launcher, or pressing Enter in any launcher field, no longer spawns an agent —
   every dialog control is an explicit button and the form refuses submission outright.
+- The CSP now names `base-uri`, `form-action`, `frame-ancestors` and `object-src` explicitly.
+  None of them inherit from `default-src`, so the previous policy left an injected `<base>` or
+  `<form>` unconstrained.
+- Every interpolation into a markup attribute goes through `escapeHtml`, and a test enforces it —
+  agent output reaches those strings, and one unescaped attribute is enough to break out of it.
+  Agent output also still cannot reach the system clipboard: the xterm OSC 52 clipboard addon is
+  deliberately not a dependency, now asserted rather than assumed.
 - Sessions started outside TerminalAI now appear in an **Elsewhere on this machine** panel, read
   from Claude Code's per-PID session registry with `claude agents --json` as the reconciliation
   fallback. The rows are read-only and carry no controls, because the supervisor owns none of

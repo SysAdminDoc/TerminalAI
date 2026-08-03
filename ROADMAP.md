@@ -125,13 +125,6 @@ From `RESEARCH.md`. IDs R-01…R-63; the next researcher continues from R-64.
   Acceptance: the DACL names the interactive user's SID explicitly rather than `OW`; `IpcError::PeerMismatch` and the module docs state that the DACL is the boundary and the PID is diagnostic; shell hooks are opt-in per session and documented as local code execution.
   Complexity: S
 
-- [ ] R-61 · P2 — Close the CSP and clipboard gaps
-  Why: `base-uri` and `form-action` do not inherit from `default-src`, and agent output reaching the clipboard is a threat rather than a feature.
-  Evidence: `crates/terminalai-app/tauri.conf.json:15` sets only `default-src`, `connect-src`, `img-src`, `style-src 'unsafe-inline'` and `script-src`; `@xterm/xterm` 6.0.0 added OSC 52 clipboard support; `main.js:362` is the one attribute interpolation bypassing `escapeHtml`.
-  Touches: `tauri.conf.json`, `web/src/main.js`
-  Acceptance: CSP adds `base-uri 'none'` and `form-action 'none'`; OSC 52 writes are disabled or require explicit per-session opt-in; the unescaped interpolation goes through `escapeHtml`.
-  Complexity: S
-
 - [ ] R-63 · P2 — Structured logging with bounded retention
   Why: the diagnostics timeline explains one session, but nothing records what the daemon did across sessions, and the crash log grows without limit.
   Evidence: `crates/terminalai-daemon/src/persistence.rs:48-51` appends to `crash.log` with no rotation; there is no `tracing` subscriber anywhere in the workspace, so a status misattribution — the dominant bug class in this field — leaves no trail beyond the in-memory timeline.
