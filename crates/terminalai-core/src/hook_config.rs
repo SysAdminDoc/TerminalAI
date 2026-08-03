@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Map, Value as JsonValue};
-use toml_edit::{value, Array, ArrayOfTables, Document, Item, Table, Value as TomlValue};
+use toml_edit::{value, Array, ArrayOfTables, DocumentMut, Item, Table, Value as TomlValue};
 
 use crate::agent::Agent;
 use crate::atomic_file::write_atomic;
@@ -134,7 +134,7 @@ pub fn preview(agent: Agent, executable: &Path) -> String {
             serde_json::to_string_pretty(&json!({ "hooks": hooks })).unwrap_or_default()
         }
         Agent::Codex => {
-            let mut doc = Document::new();
+            let mut doc = DocumentMut::new();
             let _ = install_codex_document(&mut doc, &command);
             doc.to_string()
         }
@@ -425,7 +425,7 @@ fn remove_codex_text(text: &str) -> Result<String, HookConfigError> {
     Ok(doc.to_string())
 }
 
-fn install_codex_document(doc: &mut Document, command: &str) -> bool {
+fn install_codex_document(doc: &mut DocumentMut, command: &str) -> bool {
     {
         let hooks = doc["hooks"].or_insert(Item::Table(Table::new()));
         let Some(hooks) = hooks.as_table_mut() else {
@@ -455,7 +455,7 @@ fn install_codex_document(doc: &mut Document, command: &str) -> bool {
     true
 }
 
-fn remove_codex_document(doc: &mut Document, agent: Agent) -> bool {
+fn remove_codex_document(doc: &mut DocumentMut, agent: Agent) -> bool {
     let mut changed = false;
     if let Some(hooks) = doc.get_mut("hooks").and_then(Item::as_table_mut) {
         let mut remove_events = Vec::new();
@@ -547,16 +547,16 @@ fn codex_group(command: &str) -> Table {
     group
 }
 
-fn parse_codex(text: Option<&str>) -> Result<Document, HookConfigError> {
+fn parse_codex(text: Option<&str>) -> Result<DocumentMut, HookConfigError> {
     match text {
         Some(text) => text
-            .parse::<Document>()
+            .parse::<DocumentMut>()
             .map_err(|error| HookConfigError::Toml(error.to_string())),
-        None => Ok(Document::new()),
+        None => Ok(DocumentMut::new()),
     }
 }
 
-fn codex_hooks_disabled(doc: &Document) -> bool {
+fn codex_hooks_disabled(doc: &DocumentMut) -> bool {
     doc.get("features")
         .and_then(Item::as_table)
         .and_then(|features| features.get("hooks"))

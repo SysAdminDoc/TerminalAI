@@ -139,13 +139,6 @@ researcher continues from R-88.
   Acceptance: the WebGL addon is loaded with a documented DOM fallback when context creation fails; DEC 2026 synchronized output is honoured on both the vte and xterm sides so replay and live output do not tear; OSC 8 hyperlinks survive into the rendered pane; scrollback restore uses the serialize addon where it is cheaper than the IPC round-trip. Overlaps R-57 on sizing — do that first.
   Complexity: S
 
-- [ ] R-85 · P2 — Dependency maintenance with a testability payoff
-  Why: two pinned crates are behind in ways that bear directly on this project's hardest-to-test surface and its binary size, and one of them fixes the exact silent-miss mode agent resolution suffers from.
-  Evidence: `which` is pinned at 7 (locking 7.0.3) against 8.0.5 — 8.0.0 adds a `Sys` trait allowing agent resolution to be unit-tested against an injected filesystem rather than the real PATH (which `CLAUDE.md` currently treats as probe-only territory), 8.0.4 emits a `NonFatalError` when Windows `PATHEXT` is unpopulated and no extension was given, and 8.0.5 stops using the current directory when the provided path is absolute. `toml_edit` is pinned at 0.20.2 (2023) against 0.25.x, and the lockfile currently carries three separate parser copies (0.19.15, 0.20.2, 0.25.13) in a binary built with `opt-level = "z"`. Tested 2026-08-02: 0.20.2 handles the 0.25.x regression inputs cleanly, so this is a size and testability change, not a security one.
-  Touches: `Cargo.toml`, `crates/terminalai-core/src/agent.rs`, `hook_config.rs`
-  Acceptance: `which` 8.x adopted, with agent resolution covered by tests against an injected filesystem including a missing-`PATHEXT` case; `toml_edit` unified on one version across the lockfile; release binary size recorded before and after. Note that `toml_edit` 0.25 requires Rust 1.85 — land R-69 first.
-  Complexity: S
-
 ### P3
 
 - [ ] R-87 · P3 — Expose the fleet as a read-mostly MCP server

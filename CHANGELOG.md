@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Changed
+
+- Agent resolution now runs against an injectable filesystem (`which` 8's `Sys` trait), so the npm
+  prefix and `PATH` routes are covered by tests instead of by whatever happens to be installed on
+  the machine running the suite. Eight cases are now exercised directly, including an unpopulated
+  Windows `PATHEXT` — harmless only because the query carries an explicit `.exe`, which is now
+  asserted rather than assumed. Non-fatal search errors are logged instead of collapsing into an
+  indistinguishable "not installed".
+- Updated `toml_edit` 0.20.2 → 0.25 (`Document` → `DocumentMut`). Release binaries shrank: daemon
+  2,214,912 → 2,192,896 bytes, probe 1,693,184 → 1,643,008 bytes. Note the lockfile still carries
+  three `toml_edit` copies, but only one was ever compiled into a Windows binary — the other two
+  reach the lockfile through `glib-macros` (Linux GTK) and `num_enum_derive` (Android) and are
+  excluded by target. The direct dependency now shares the 0.25 copy rather than adding a fourth.
+
 ### Added
 
 - Added Windows process-hygiene controls: background ConPTY sessions use reversible EcoQoS and
