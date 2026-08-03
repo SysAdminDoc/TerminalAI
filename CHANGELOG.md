@@ -3,20 +3,7 @@
 All notable changes to TerminalAI are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
-
-### Fixed
-
-- Environment teardown failures during a failed launch were discarded with `let _`, so a leaked
-  database or a compose stack left running was indistinguishable from a clean unwind. They are now
-  logged with the session and the cause. Teardown also reports *every* failure rather than the
-  first, since a container left running matters even when the database also failed to drop.
-- A session that opened a synchronized update (DEC 2026) and then stopped writing — killed
-  mid-frame, or with its write truncated — froze that session's terminal grid permanently. `vte`
-  buffers everything between `ESC[?2026h` and `ESC[?2026l`, and arms a 150ms deadline when the
-  update opens, but reports only that a deadline *exists*, never that it expired, so the buffer was
-  never flushed and every status inferred from the grid went quietly stale. Expiry is the caller's
-  job and now happens on both the write and the read side.
+## [0.3.0] — 2026-08-03
 
 ### Added
 
@@ -61,26 +48,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   clicking did nothing. The URI is agent-controlled, so it is opened only after Rust accepts the
   scheme: `http`, `https` and `mailto` only, control characters refused, and every refusal reported.
 
-### Changed
-
-- xterm now measures character widths with the unicode11 addon. It defaulted to Unicode 6 (confirmed
-  by reading `unicode.activeVersion` in a real browser) while the Rust grid uses `unicode-width`
-  against a modern table, so the two disagreed about where a line wraps and the status inferred from
-  the Rust grid could stop describing what the pane showed.
-
-- Agent resolution now runs against an injectable filesystem (`which` 8's `Sys` trait), so the npm
-  prefix and `PATH` routes are covered by tests instead of by whatever happens to be installed on
-  the machine running the suite. Eight cases are now exercised directly, including an unpopulated
-  Windows `PATHEXT` — harmless only because the query carries an explicit `.exe`, which is now
-  asserted rather than assumed. Non-fatal search errors are logged instead of collapsing into an
-  indistinguishable "not installed".
-- Updated `toml_edit` 0.20.2 → 0.25 (`Document` → `DocumentMut`). Release binaries shrank: daemon
-  2,214,912 → 2,192,896 bytes, probe 1,693,184 → 1,643,008 bytes. Note the lockfile still carries
-  three `toml_edit` copies, but only one was ever compiled into a Windows binary — the other two
-  reach the lockfile through `glib-macros` (Linux GTK) and `num_enum_derive` (Android) and are
-  excluded by target. The direct dependency now shares the 0.25 copy rather than adding a fourth.
-
-### Added
 
 - Added Windows process-hygiene controls: background ConPTY sessions use reversible EcoQoS and
   memory-priority settings, focus and pin changes restore normal priority, waiting-session counts
@@ -124,6 +91,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   PID and a concrete stop command; the desktop shell refuses to spawn a second daemon in that case.
 - The control endpoint now has a stable name with a legacy v2 fallback, so protocol negotiation can
   detect upgrades without stranding a daemon that still owns live sessions.
+
+### Changed
+
+- xterm now measures character widths with the unicode11 addon. It defaulted to Unicode 6 (confirmed
+  by reading `unicode.activeVersion` in a real browser) while the Rust grid uses `unicode-width`
+  against a modern table, so the two disagreed about where a line wraps and the status inferred from
+  the Rust grid could stop describing what the pane showed.
+
+- Agent resolution now runs against an injectable filesystem (`which` 8's `Sys` trait), so the npm
+  prefix and `PATH` routes are covered by tests instead of by whatever happens to be installed on
+  the machine running the suite. Eight cases are now exercised directly, including an unpopulated
+  Windows `PATHEXT` — harmless only because the query carries an explicit `.exe`, which is now
+  asserted rather than assumed. Non-fatal search errors are logged instead of collapsing into an
+  indistinguishable "not installed".
+- Updated `toml_edit` 0.20.2 → 0.25 (`Document` → `DocumentMut`). Release binaries shrank: daemon
+  2,214,912 → 2,192,896 bytes, probe 1,693,184 → 1,643,008 bytes. Note the lockfile still carries
+  three `toml_edit` copies, but only one was ever compiled into a Windows binary — the other two
+  reach the lockfile through `glib-macros` (Linux GTK) and `num_enum_derive` (Android) and are
+  excluded by target. The direct dependency now shares the 0.25 copy rather than adding a fourth.
+
+### Fixed
+
+- Environment teardown failures during a failed launch were discarded with `let _`, so a leaked
+  database or a compose stack left running was indistinguishable from a clean unwind. They are now
+  logged with the session and the cause. Teardown also reports *every* failure rather than the
+  first, since a container left running matters even when the database also failed to drop.
+- A session that opened a synchronized update (DEC 2026) and then stopped writing — killed
+  mid-frame, or with its write truncated — froze that session's terminal grid permanently. `vte`
+  buffers everything between `ESC[?2026h` and `ESC[?2026l`, and arms a 150ms deadline when the
+  update opens, but reports only that a deadline *exists*, never that it expired, so the buffer was
+  never flushed and every status inferred from the grid went quietly stale. Expiry is the caller's
+  job and now happens on both the write and the read side.
 
 ## [0.2.0] — 2026-08-03
 

@@ -1,6 +1,6 @@
 # TerminalAI
 
-[![version](https://img.shields.io/badge/version-0.2.0-blue.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.3.0-blue.svg)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#requirements)
 [![rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
@@ -45,7 +45,7 @@ when waiting on the handle.
 
 ## Status
 
-**v0.2.0 — core and desktop shell built, installed, and verified end to end.**
+**v0.3.0 — core and desktop shell built, installed, and verified end to end.**
 
 Working today (`terminalai-probe`, headless):
 

@@ -3856,7 +3856,7 @@ dependencies = [
 
 [[package]]
 name = "terminalai-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "dirs",
  "open",
@@ -3874,7 +3874,7 @@ dependencies = [
 
 [[package]]
 name = "terminalai-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "dirs",
  "fluent-bundle",
@@ -3895,7 +3895,7 @@ dependencies = [
 
 [[package]]
 name = "terminalai-daemon"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "dirs",
  "getrandom 0.3.4",
@@ -3913,7 +3913,7 @@ dependencies = [
 
 [[package]]
 name = "terminalai-probe"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
