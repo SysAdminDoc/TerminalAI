@@ -35,6 +35,7 @@ pub mod session;
 pub mod tail;
 pub mod store;
 pub mod transcript;
+pub mod worktree;
 
 pub use agent::{Agent, AgentBinary, ResolveError};
 pub use app_server::{

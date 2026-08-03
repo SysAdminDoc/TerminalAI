@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- A private Git worktree per session, requested from the launcher and cleaned up with the row.
+  Two agents on one repository was the fleet's most obvious use and its worst failure: one
+  session's uncommitted edit became another's unexplained diff. Each isolated session gets its own
+  checkout on its own `terminalai/<id>` branch, cut outside the repository so it is not untracked
+  clutter in the parent's status. Nothing is ever reused — an existing branch or directory is
+  refused rather than adopted, because neither this code nor the operator can tell leftovers from
+  unlanded work. Removal takes the checkout but offers the branch to `git branch -d`, so a branch
+  holding unmerged commits is kept and reported instead of deleted; a checkout deleted behind
+  Git's back is repaired by pruning rather than left as a registration that breaks every later
+  add. Repository leases now copy their untracked config from the repository the checkout was cut
+  from, which is what makes an isolated session runnable at all. `--worktree` on
+  `terminalai-probe start`.
+
 - Scrollback to disk, under the bounded in-memory ring. Each session appends to a rotating pair of
   segments capped at 8 MB total, so history outlives the 512 KB the ring can hold, and survives a
   daemon restart. The bound is in bytes rather than lines because a line costs whatever the pane is

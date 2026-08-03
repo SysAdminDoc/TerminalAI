@@ -53,6 +53,16 @@ pub(crate) fn default_path() -> Option<PathBuf> {
     dirs::data_local_dir().map(|root| root.join("TerminalAI").join("sessions.json"))
 }
 
+/// Where per-session Git worktrees are cut, given the store path.
+///
+/// Under the daemon's own data directory rather than beside the repository: a
+/// checkout inside the repository shows up in its parent's `git status`, gets
+/// walked by every build tool in the tree, and makes one careless delete lose
+/// every session's work at once.
+pub(crate) fn worktree_directory(store: &Path) -> Option<PathBuf> {
+    store.parent().map(|parent| parent.join("worktrees"))
+}
+
 /// Where session history is spooled, given the store path.
 ///
 /// A sibling directory rather than the store's own sidecar folder: the sidecar

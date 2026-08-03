@@ -128,6 +128,10 @@ pub struct LaunchSpec {
     /// Per-session setup/teardown hooks and deterministic service ports.
     #[serde(default)]
     pub environment: EnvironmentSpec,
+    /// Give this session its own Git worktree and branch instead of sharing the
+    /// repository's working tree with every other session on it.
+    #[serde(default)]
+    pub worktree: bool,
     pub model: Option<String>,
     pub effort: Option<Effort>,
     pub permission: Option<Permission>,

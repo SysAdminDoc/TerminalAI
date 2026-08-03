@@ -262,6 +262,9 @@ struct Inner {
     /// in tests and in the in-process app-server, where a session's history
     /// dies with the process that owns it anyway.
     spool: Mutex<Option<Arc<ScrollbackSpool>>>,
+    /// Where per-session Git worktrees are cut. Absent means isolation was
+    /// never configured, so a session that requests it is refused.
+    worktree_root: Mutex<Option<std::path::PathBuf>>,
 }
 
 impl Inner {
@@ -339,6 +342,7 @@ impl SessionRegistry {
             }),
             domain,
             spool: Mutex::new(None),
+            worktree_root: Mutex::new(None),
             dropped_events: AtomicU64::new(0),
             restart_tx,
             restart_sequence: AtomicU64::new(0),
@@ -707,6 +711,22 @@ impl SessionRegistry {
     /// Remove a stopped row from the live fleet while preserving only the
     /// layout, cwd and exact command in the durable archive.
     pub fn archive(&self, id: &SessionId) -> Result<ArchivedSession, RegistryError> {
+        {
+            let state = lock_state(&self.inner);
+            match state.entries.get(id) {
+                None => return Err(RegistryError::Missing(id.clone())),
+                Some(entry) if entry.pty.is_some() => {
+                    return Err(RegistryError::StillRunning(id.clone()))
+                }
+                Some(_) => {}
+            }
+        }
+        // Before the entry is dropped, while its worktree is still recorded.
+        // A branch holding unmerged work is kept and reported, never deleted.
+        let worktree_failures = self.release_worktree(id);
+        if !worktree_failures.is_empty() {
+            tracing::warn!(session = %id, ?worktree_failures, "session worktree was not fully removed");
+        }
         let (archived, notifications) = {
             let mut state = lock_state(&self.inner);
             let Some(entry) = state.entries.get(id) else {
@@ -1454,7 +1474,15 @@ impl SessionRegistry {
         command: &ResolvedCommand,
         generation: u64,
     ) -> Result<(), RegistryError> {
+        // Before anything reads the working directory: a session that asked for
+        // its own checkout must have one by the time the lease copies config
+        // into it and the agent is told where to run.
+        self.provision_worktree(id)?;
         let (cwd, environment_spec, ports) = self.runtime_environment(id)?;
+        let command = &ResolvedCommand {
+            cwd: cwd.clone(),
+            ..command.clone()
+        };
         tracing::debug!("preparing session environment");
         let mut environment = environment::variables(&id.0, &ports);
 
@@ -1650,11 +1678,112 @@ impl SessionRegistry {
 
     /// Where leased config is copied from. `None` when the session runs in the
     /// repository itself and there is nothing to copy across.
-    fn lease_source(&self, _id: &SessionId) -> Option<std::path::PathBuf> {
-        // Worktree-per-session (a separate roadmap item) is what makes this
-        // meaningful; until then the source and destination are the same
-        // directory and `copy_files` short-circuits.
-        None
+    /// Where leased config is copied *from*.
+    ///
+    /// A worktree is a fresh checkout, so it has the tracked files and none of
+    /// the untracked ones — which is exactly where `.env` and its neighbours
+    /// live. Copying from the repository the checkout was cut from is what
+    /// makes an isolated session actually runnable.
+    fn lease_source(&self, id: &SessionId) -> Option<std::path::PathBuf> {
+        let state = lock_state(&self.inner);
+        state
+            .entries
+            .get(id)
+            .and_then(|entry| entry.session.worktree.as_ref())
+            .map(|worktree| worktree.repo.clone())
+    }
+
+    /// Attach the directory session worktrees are cut into.
+    ///
+    /// Unset means the registry has no place on disk it owns, so a session that
+    /// asks for isolation is refused rather than checked out somewhere
+    /// arbitrary. The daemon sets this; tests set it explicitly.
+    pub fn set_worktree_root(&self, root: std::path::PathBuf) {
+        if let Ok(mut slot) = self.inner.worktree_root.lock() {
+            *slot = Some(root);
+        }
+    }
+
+    /// Create this session's worktree, if it asked for one.
+    ///
+    /// Runs on the worker thread that starts the session, because `git worktree
+    /// add` copies a checkout and the launch call must not block on it.
+    fn provision_worktree(&self, id: &SessionId) -> Result<(), RegistryError> {
+        let (wanted, cwd) = {
+            let state = lock_state(&self.inner);
+            match state.entries.get(id) {
+                // Already provisioned — a restart of an existing session must
+                // reuse its checkout, not cut a second one.
+                Some(entry) if entry.session.worktree.is_some() => return Ok(()),
+                Some(entry) => (entry.spec.worktree, entry.spec.cwd.clone()),
+                None => return Err(RegistryError::Missing(id.clone())),
+            }
+        };
+        if !wanted {
+            return Ok(());
+        }
+        let root = self
+            .inner
+            .worktree_root
+            .lock()
+            .ok()
+            .and_then(|root| root.clone())
+            .ok_or_else(|| {
+                RegistryError::Environment(EnvironmentError::HookSpawn {
+                    phase: "worktree",
+                    cause: "no directory is configured for session worktrees".to_owned(),
+                })
+            })?;
+        let created = crate::worktree::create(&root, &cwd, &id.0).map_err(|error| {
+            // Refused, never downgraded to a shared tree: a session the
+            // operator asked to isolate that quietly runs in the repository is
+            // the collision this feature exists to prevent.
+            RegistryError::Environment(EnvironmentError::HookSpawn {
+                phase: "worktree",
+                cause: error.to_string(),
+            })
+        })?;
+        tracing::info!(
+            path = %created.path.display(),
+            branch = %created.branch,
+            "session worktree created"
+        );
+        let session = {
+            let mut state = lock_state(&self.inner);
+            let Some(entry) = state.entries.get_mut(id) else {
+                // The session went away while git was working. Leaving the
+                // checkout behind would orphan it, since nothing records it.
+                drop(state);
+                let failures = crate::worktree::remove(&created);
+                if !failures.is_empty() {
+                    tracing::warn!(?failures, "could not clean up an orphaned worktree");
+                }
+                return Err(RegistryError::Missing(id.clone()));
+            };
+            entry.session.cwd = created.path.clone();
+            entry.session.branch = Some(created.branch.clone());
+            entry.session.worktree = Some(created);
+            entry.spec.cwd = entry.session.cwd.clone();
+            entry.command.cwd = entry.session.cwd.clone();
+            entry.session.clone()
+        };
+        self.emit(RegistryEvent::SessionUpdated { session });
+        Ok(())
+    }
+
+    /// Remove a session's checkout, returning what could not be cleaned up.
+    fn release_worktree(&self, id: &SessionId) -> Vec<String> {
+        let worktree = {
+            let state = lock_state(&self.inner);
+            state
+                .entries
+                .get(id)
+                .and_then(|entry| entry.session.worktree.clone())
+        };
+        match worktree {
+            Some(worktree) => crate::worktree::remove(&worktree),
+            None => Vec::new(),
+        }
     }
 
     /// Release a session's leased resources, returning every failure rather than
@@ -1863,6 +1992,10 @@ impl SessionRegistry {
     }
 
     fn remove_entry(&self, id: &SessionId) {
+        let worktree_failures = self.release_worktree(id);
+        if !worktree_failures.is_empty() {
+            tracing::warn!(session = %id, ?worktree_failures, "session worktree was not fully removed");
+        }
         let (removed, notifications) = {
             let mut state = lock_state(&self.inner);
             if state.focused.as_ref() == Some(id) {

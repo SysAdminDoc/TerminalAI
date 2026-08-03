@@ -57,6 +57,7 @@ OPTIONS:
   --sandbox <read-only|workspace-write|danger-full-access>   (codex only)
   --name <label>                                             (claude only)
   --prompt <text>
+  --worktree                                                 (private Git checkout + branch)
   --setup-hook <command>                                     (optional per-session setup)
   --teardown-hook <command>                                  (optional per-session teardown)
   --port-base <1024..65535>                                  (default 42000)
@@ -1527,6 +1528,9 @@ fn parse_launch_spec(
             "--model" => spec.model = Some(take_value(args, &mut index, flag)?),
             "--name" => spec.name = Some(take_value(args, &mut index, flag)?),
             "--prompt" => spec.initial_prompt = Some(take_value(args, &mut index, flag)?),
+            "--worktree" => {
+                spec.worktree = true;
+            }
             "--setup-hook" => {
                 spec.environment.setup = Some(take_value(args, &mut index, flag)?);
             }

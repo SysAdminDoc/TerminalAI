@@ -420,6 +420,9 @@ impl DaemonServer {
                         tracing::warn!(%error, "scrollback history is memory-only this run");
                     }
                 }
+                if let Some(worktrees) = persistence::worktree_directory(&path) {
+                    registry.set_worktree_root(worktrees);
+                }
                 (
                     registry.clone(),
                     Some(StoreWriter::spawn(path, registry)),

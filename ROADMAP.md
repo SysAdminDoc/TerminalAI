@@ -4,9 +4,6 @@ Single task tracker for this repo. Newest phase at the top; completed items are 
 
 ## v0.4.0 — many sessions, one operator
 
-- [ ] Git worktree per session, created and cleaned up from the launcher
-      — *2026-08-02 research: git isolation alone is insufficient; see R-22 for the non-git half (ports, services,
-      databases), which HN 46424131 identifies as universally unserved.*
 - [ ] Broadcast a prompt to a selected set of sessions
 - [ ] Cost and token rollup across the fleet
       — *2026-08-02 research: dedupe on `requestId` before summing (R-10), and pair display with enforcement (R-17).

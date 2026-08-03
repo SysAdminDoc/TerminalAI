@@ -403,7 +403,7 @@ fn patch_file_count(patch: &str) -> usize {
 /// error and discards stdout. A refusal has to quote the verify command's exit
 /// code and output, and `git apply` needs a patch on stdin, so this one keeps a
 /// failing exit as data rather than as an error.
-enum ProcessRun {
+pub(crate) enum ProcessRun {
     Completed {
         status: Option<i32>,
         stdout: String,
@@ -420,7 +420,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// grow the daemon without bound.
 const MAX_CAPTURED_BYTES: usize = 256 * 1024;
 
-fn run_program(
+pub(crate) fn run_program(
     program: &str,
     cwd: &Path,
     args: &[&str],

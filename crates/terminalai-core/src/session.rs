@@ -209,6 +209,13 @@ pub struct Session {
     /// Deterministic service ports reserved for this session's environment.
     #[serde(default)]
     pub ports: Vec<u16>,
+    /// The private checkout this session was given, when it asked for one.
+    ///
+    /// Recorded on the session rather than the spec because it is a fact about
+    /// what was created, not what was requested — and because cleaning it up
+    /// after a daemon restart needs the path and branch that actually exist.
+    #[serde(default)]
+    pub worktree: Option<crate::worktree::Worktree>,
     pub model: Option<String>,
     pub effort: Option<Effort>,
     pub status: SessionStatus,
@@ -279,6 +286,7 @@ impl Session {
             cwd: spec.cwd.clone(),
             branch: None,
             ports,
+            worktree: None,
             model: spec.model.clone(),
             effort: spec.effort.clone(),
             status: SessionStatus::Starting,

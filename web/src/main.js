@@ -1518,6 +1518,7 @@ function defaultSpec() {
     initial_prompt: null,
     extra_args: [],
     environment: { setup: null, teardown: null, port_base: 42000, port_count: 4 },
+    worktree: false,
   };
 }
 
@@ -1544,6 +1545,7 @@ function readSpec() {
     web_search: agent === "codex" && $("search-input").checked,
     initial_prompt: $("prompt-input").value.trim() || null,
     extra_args: [],
+    worktree: $("worktree-input").checked,
     environment: {
       setup: $("setup-hook-input").value.trim() || null,
       teardown: $("teardown-hook-input").value.trim() || null,
@@ -1566,6 +1568,7 @@ function writeSpec(spec) {
   $("resume-id-input").value = spec.resume?.id ?? "";
   $("budget-input").value = spec.max_budget_usd ?? "";
   $("search-input").checked = Boolean(spec.web_search);
+  $("worktree-input").checked = Boolean(spec.worktree);
   $("port-base-input").value = spec.environment?.port_base ?? 42000;
   $("port-count-input").value = spec.environment?.port_count ?? 4;
   $("setup-hook-input").value = spec.environment?.setup ?? "";
