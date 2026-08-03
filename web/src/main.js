@@ -7,6 +7,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { reconcileKeyedRows } from "./fleetRows.js";
 import { countMessage, localizeDom, relativeDwell, t } from "./i18n.js";
+import { rateLimitTitle, rateLimitedLabel } from "./rateLimit.js";
 import "./styles.css";
 
 const WDIO_BUILD = import.meta.env.VITE_TERMINALAI_WDIO === "1";
@@ -19,6 +20,9 @@ const STATUS_ORDER = {
   "needs-approval": 8,
   "awaiting-input": 7,
   "needs-you": 6,
+  // Sorts with the attention states, not with the busy ones: a rate-limited
+  // session renders like a working one and would otherwise sink in a busy fleet.
+  "rate-limited": 5.5,
   working: 5,
   thinking: 4,
   idle: 3,
@@ -32,6 +36,7 @@ const STATUS_META = {
   "needs-approval": { glyph: "⚠", label: "status-needs-approval", short: "status-needs-approval", tone: "peach" },
   "awaiting-input": { glyph: "?", label: "status-awaiting-input", short: "status-awaiting-input", tone: "yellow" },
   "needs-you": { glyph: "!", label: "status-needs-you", short: "status-needs-you", tone: "peach" },
+  "rate-limited": { glyph: "⧗", label: "status-rate-limited", short: "status-rate-limited", tone: "red" },
   working: { glyph: "◒", label: "status-working", short: "status-working", tone: "yellow" },
   thinking: { glyph: "✦", label: "status-thinking", short: "status-thinking", tone: "mauve" },
   idle: { glyph: "·", label: "status-idle", short: "status-idle", tone: "surface2" },
@@ -53,6 +58,9 @@ const FALLBACK_APP_VERSION = "0.1.0";
 function lifecycleLabel(session) {
   if (session?.phase === "preparing") return t("status-preparing");
   if (session?.phase === "tearing-down") return t("status-tearing-down");
+  // Carries which quota tripped and when it reopens, so the row says why the
+  // session is going nowhere rather than only that it is.
+  if (session?.status === "rate-limited") return rateLimitedLabel(session, t);
   return statusLabel(session?.status);
 }
 
@@ -549,7 +557,10 @@ function sortedSessions() {
 }
 
 function renderSummary() {
-  const live = state.sessions.filter((session) => !["exited", "queued"].includes(session.status)).length;
+  // Matches the daemon's admission count, which excludes rate-limited sessions:
+  // they hold no slot, so counting them as live would contradict the queue.
+  const live = state.sessions.filter((session) => !["exited", "queued", "rate-limited"].includes(session.status)).length;
+  const limited = state.sessions.filter((session) => session.status === "rate-limited");
   const queued = state.sessions.filter((session) => session.status === "queued").length;
   const needsYou = state.sessions.filter((session) => ["needs-you", "needs-approval", "awaiting-input"].includes(session.status)).length;
   const working = state.sessions.filter((session) => ["working", "thinking"].includes(session.status)).length;
@@ -563,7 +574,10 @@ function renderSummary() {
     ? t("pricing-reporting", { pricing: pricingVersion, reporting: reporting.length, sessions: state.sessions.length })
     : t("pricing-none", { pricing: pricingVersion });
   const maxLive = state.admission.max_live_sessions ?? 3;
-  $("fleet-summary").innerHTML = `<span class="summary-item"><b>${live}/${maxLive}</b> ${escapeHtml(t("fleet-live"))}</span><span class="summary-separator">/</span><span class="summary-item">${escapeHtml(countMessage("count-queued", queued))}</span><span class="summary-separator">/</span><span class="summary-item summary-attention">${escapeHtml(countMessage("count-needs-you", needsYou))}</span><span class="summary-separator">/</span><span class="summary-item">${escapeHtml(countMessage("count-active", working))}</span><span class="summary-separator">/</span><span class="summary-item" title="${escapeHtml(spendTitle)}"><b>${spendLabel}</b> ${escapeHtml(t("fleet-spent"))}</span>`;
+  const limitedSummary = limited.length
+    ? `<span class="summary-separator">/</span><span class="summary-item summary-limited" title="${escapeHtml(rateLimitTitle(limited, t))}">${escapeHtml(countMessage("count-rate-limited", limited.length))}</span>`
+    : "";
+  $("fleet-summary").innerHTML = `<span class="summary-item"><b>${live}/${maxLive}</b> ${escapeHtml(t("fleet-live"))}</span><span class="summary-separator">/</span><span class="summary-item">${escapeHtml(countMessage("count-queued", queued))}</span><span class="summary-separator">/</span><span class="summary-item summary-attention">${escapeHtml(countMessage("count-needs-you", needsYou))}</span><span class="summary-separator">/</span><span class="summary-item">${escapeHtml(countMessage("count-active", working))}</span>${limitedSummary}<span class="summary-separator">/</span><span class="summary-item" title="${escapeHtml(spendTitle)}"><b>${spendLabel}</b> ${escapeHtml(t("fleet-spent"))}</span>`;
   const droppedEvents = Number(state.admission.dropped_events) || 0;
   $("fleet-count").textContent = droppedEvents
     ? `${countMessage("count-session", state.sessions.length)} · ${t("event-drops", { count: droppedEvents })}`

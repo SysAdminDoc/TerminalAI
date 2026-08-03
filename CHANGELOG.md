@@ -16,6 +16,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Rate limiting is now a first-class row state. A session a provider is refusing renders as
+  `Rate limited` with which quota tripped and when it reopens, sorts with the attention states
+  rather than with the busy ones, and releases its admission slot so a queued session can take it.
+  The fleet header counts limited sessions and shows the soonest reset across the fleet. The state
+  is only ever entered from an explicit agent report — Codex's `rate_limits` table (the
+  most-consumed window wins) or a Claude retry carrying a `rate_limit`/`overloaded` category — never
+  from a session going quiet, which is indistinguishable from a long tool call. A missing reset time
+  is said out loud rather than guessed, and a plain transport error is not treated as a quota.
+  Verified end to end against a running daemon: a `weekly` window at 100% won over `primary` at 31%,
+  live sessions went 1 → 0, and a later report with room left returned the row to the fleet.
 - The focused pane now runs the WebGL renderer. xterm 6.0 removed `addon-canvas`, so with no WebGL
   addon the DOM renderer — the slowest of the three — was the only one available. Context creation,
   addon construction, and later context loss each fall back to the DOM renderer rather than blanking

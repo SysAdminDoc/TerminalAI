@@ -133,6 +133,7 @@ fn status_key(status: SessionStatus) -> &'static str {
         SessionStatus::Idle => "idle",
         SessionStatus::Thinking => "thinking",
         SessionStatus::Working => "working",
+        SessionStatus::RateLimited => "rate-limited",
         SessionStatus::NeedsYou => "needs-you",
         SessionStatus::AwaitingInput => "awaiting-input",
         SessionStatus::NeedsApproval => "needs-approval",

@@ -37,7 +37,7 @@ button { cursor: pointer; }
 .brand-mark span:nth-child(1) { height: 36%; }.brand-mark span:nth-child(2) { height: 68%; }.brand-mark span:nth-child(3) { height: 100%; }
 .brand-name { font-size: 16px; font-weight: 720; letter-spacing: -.03em; color: var(--text); }.brand-name span { color: var(--mauve); }
 .brand-subtitle, .eyebrow { color: var(--subtext0); font-size: 9px; font-weight: 760; letter-spacing: .14em; text-transform: uppercase; }
-.fleet-summary { display: flex; align-items: center; gap: 10px; color: var(--subtext0); font-size: 12px; flex: 1; }.summary-item b { color: var(--text); font-size: 14px; font-weight: 650; }.summary-attention b { color: var(--peach); }.summary-separator { color: var(--subtext0); }
+.fleet-summary { display: flex; align-items: center; gap: 10px; color: var(--subtext0); font-size: 12px; flex: 1; }.summary-item b { color: var(--text); font-size: 14px; font-weight: 650; }.summary-attention b { color: var(--peach); }.summary-limited, .summary-limited b { color: var(--red); }.summary-separator { color: var(--subtext0); }
 .top-actions { display: flex; align-items: center; gap: 8px; }
 .button { border: 1px solid transparent; border-radius: 7px; padding: 8px 12px; color: var(--text); font-size: 12px; font-weight: 650; transition: border-color .16s ease, background .16s ease, transform .16s ease; }.button:hover { transform: translateY(-1px); }.button:active { transform: translateY(0); }
 .button-primary { background: linear-gradient(135deg, #cba6f7, #b4befe); color: #1e1e2e; box-shadow: 0 6px 20px rgba(203, 166, 247, .16); }.button-primary:hover { background: linear-gradient(135deg, #d8b9ff, #c3ccff); }

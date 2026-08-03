@@ -49,6 +49,7 @@ label-what-will-run = WHAT WILL RUN
 status-needs-approval = Needs approval
 status-awaiting-input = Awaiting input
 status-needs-you = Needs you
+status-rate-limited = Rate limited
 status-working = Working
 status-thinking = Thinking
 status-idle = Idle
@@ -78,6 +79,8 @@ count-needs-you-one = { $count } needs you
 count-needs-you-other = { $count } need you
 count-active-one = { $count } active
 count-active-other = { $count } active
+count-rate-limited-one = { $count } rate limited
+count-rate-limited-other = { $count } rate limited
 count-check-one = { $count } check needs attention before the fleet can be trusted.
 count-check-other = { $count } checks need attention before the fleet can be trusted.
 count-pending-one = { $count } pending
@@ -204,3 +207,14 @@ store-quarantined = Session store quarantined
 store-quarantined-detail = The unreadable session store was moved to { $path }. New sessions start empty.
 diagnostics-unavailable = Unavailable
 session-created = Session created
+
+rate-limit-resets-in = { $count ->
+    [one] 1 session is rate limited; the soonest window reopens in { $minutes } min
+   *[other] { $count } sessions are rate limited; the soonest window reopens in { $minutes } min
+}
+rate-limit-reset-unknown = { $count ->
+    [one] 1 session is rate limited; it did not report a reset time
+   *[other] { $count } sessions are rate limited; none reported a reset time
+}
+rate-limit-row = { $scope } quota
+rate-limit-in-minutes = reopens in { $minutes } min

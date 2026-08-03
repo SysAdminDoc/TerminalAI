@@ -61,6 +61,10 @@ pub enum SessionStatus {
     Thinking,
     /// Running a tool — the long tail where sessions get stuck.
     Working,
+    /// The provider is refusing work until a quota window resets. Sorts above
+    /// the working states because a limited session looks identical to a busy
+    /// one from the outside and would otherwise read as a healthy fleet.
+    RateLimited,
     /// Blocked on a permission prompt or a question. Demands attention.
     NeedsYou,
     /// Waiting for the user to answer an idle prompt.
@@ -80,14 +84,27 @@ impl SessionStatus {
             SessionStatus::Idle => "surface2",
             SessionStatus::Thinking => "mauve",
             SessionStatus::Working => "yellow",
+            SessionStatus::RateLimited => "red",
             SessionStatus::NeedsApproval => "peach",
             SessionStatus::AwaitingInput => "yellow",
             SessionStatus::NeedsYou => "peach",
         }
     }
 
+    /// Whether the session still has a process behind it. Used to route hook
+    /// events to a session, so a rate-limited session must stay live here — it
+    /// is still running and will report again when its window resets.
     pub fn is_live(self) -> bool {
         !matches!(self, SessionStatus::Exited | SessionStatus::Queued)
+    }
+
+    /// Whether the session should hold an admission slot.
+    ///
+    /// Distinct from [`Self::is_live`]: a rate-limited session is running but
+    /// cannot make progress until its window resets, so holding a slot would
+    /// keep a queued session waiting behind work that provably is not happening.
+    pub fn occupies_admission_slot(self) -> bool {
+        self.is_live() && self != SessionStatus::RateLimited
     }
 }
 
@@ -106,6 +123,7 @@ pub enum SessionPhase {
     Working,
     AwaitingInput,
     NeedsApproval,
+    RateLimited,
     Backoff,
     Failed,
     Resurrectable,
@@ -129,6 +147,45 @@ pub enum SessionHealth {
 pub struct ToolProgress {
     pub completed: u32,
     pub total: u32,
+}
+
+/// A provider quota window that is currently refusing work.
+///
+/// Every field is optional because the two agents report different subsets:
+/// Codex's rollout carries `used_percent`, `window_minutes`, `resets_at` and
+/// `plan_type`; Claude's retry events carry a category and sometimes a retry
+/// delay. A missing `resets_at` renders as "reset time unknown" rather than
+/// being guessed — the whole point of this state is that it is reported, not
+/// inferred, and a fabricated reset time would send an operator away from a
+/// session that is actually available.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RateLimit {
+    /// Which quota tripped, verbatim from the agent (`primary`, `weekly`,
+    /// `overloaded`, …). Shown so two limits are distinguishable in the row.
+    pub scope: String,
+    #[serde(default)]
+    pub used_percent: Option<f64>,
+    #[serde(default)]
+    pub window_minutes: Option<u64>,
+    /// When the window resets, if the agent said. Never computed from a guess.
+    #[serde(default)]
+    pub resets_at: Option<SystemTime>,
+    #[serde(default)]
+    pub plan: Option<String>,
+    /// When this limit was reported, so a stale one can be aged out.
+    pub reported_at: SystemTime,
+}
+
+impl RateLimit {
+    /// True once the reported reset time has passed.
+    ///
+    /// A limit with no reset time never expires on a clock: it is cleared by the
+    /// next event that proves the session is working again, because guessing
+    /// would silently return the row to normal while the provider is still
+    /// refusing.
+    pub fn is_expired(&self, now: SystemTime) -> bool {
+        self.resets_at.is_some_and(|resets| now >= resets)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,6 +232,11 @@ pub struct Session {
     pub status_since: SystemTime,
     /// Accumulated spend, when the agent reports it.
     pub cost_usd: Option<f64>,
+    /// Set while a provider quota is refusing work for this session. Populated
+    /// only from an explicit agent report — never from silence, which is
+    /// indistinguishable from a long tool call.
+    #[serde(default)]
+    pub rate_limit: Option<RateLimit>,
     /// Set when the session enters an attention state and cleared when the user looks.
     pub unread: bool,
     /// Pinned sessions keep a live terminal grid even when not focused.
@@ -223,6 +285,7 @@ impl Session {
             started_at: now,
             status_since: now,
             cost_usd: None,
+            rate_limit: None,
             unread: false,
             pinned: false,
             status_history: Vec::new(),
@@ -273,6 +336,7 @@ impl Session {
             SessionStatus::Starting => SessionPhase::Starting,
             SessionStatus::Idle => SessionPhase::Idle,
             SessionStatus::Thinking | SessionStatus::Working => SessionPhase::Working,
+            SessionStatus::RateLimited => SessionPhase::RateLimited,
             SessionStatus::NeedsYou | SessionStatus::AwaitingInput => SessionPhase::AwaitingInput,
             SessionStatus::NeedsApproval => SessionPhase::NeedsApproval,
             SessionStatus::Exited => SessionPhase::Resurrectable,

@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::agent::{AgentBinary, Origin};
 use crate::app_server::{AgentEvent, AppServerEvent};
@@ -25,7 +25,7 @@ use crate::notification::{NotificationCenter, NotificationChange, NotificationEv
 use crate::pty::PtySize;
 use crate::review::{collect_reviews, ReviewItem};
 use crate::session::{
-    fleet_order, RestartDecision, Session, SessionId, SessionPhase, SessionStatus,
+    fleet_order, RateLimit, RestartDecision, Session, SessionId, SessionPhase, SessionStatus,
 };
 use crate::store::{ArchivedSession, SessionStoreSnapshot, StoredSession};
 
@@ -131,6 +131,15 @@ pub struct AdmissionSnapshot {
     /// unknown, not zero.
     #[serde(default)]
     pub sessions_reporting_cost: usize,
+    /// Sessions a provider is currently refusing work. Surfaced in the header
+    /// because a limited fleet otherwise reads as a busy one.
+    #[serde(default)]
+    pub rate_limited_sessions: usize,
+    /// The earliest reported reset among them, if any of them said. `None` with
+    /// a nonzero count means no session reported a reset time — the header says
+    /// so rather than showing a guess.
+    #[serde(default)]
+    pub earliest_rate_limit_reset: Option<SystemTime>,
 }
 
 /// Events are deliberately coarse: a view can rebuild its rows from a session
@@ -420,6 +429,17 @@ impl SessionRegistry {
                 .values()
                 .filter(|entry| entry.session.cost_usd.is_some())
                 .count(),
+            rate_limited_sessions: state
+                .entries
+                .values()
+                .filter(|entry| entry.session.status == SessionStatus::RateLimited)
+                .count(),
+            earliest_rate_limit_reset: state
+                .entries
+                .values()
+                .filter(|entry| entry.session.status == SessionStatus::RateLimited)
+                .filter_map(|entry| entry.session.rate_limit.as_ref()?.resets_at)
+                .min(),
         }
     }
 
@@ -962,7 +982,60 @@ impl SessionRegistry {
                         .set_status_from(SessionStatus::AwaitingInput, source),
                     HookNotification::Other => {}
                 },
+                HookSignal::RateLimited { ref limit } => {
+                    let now = SystemTime::now();
+                    entry.session.rate_limit = Some(RateLimit {
+                        scope: limit.scope.clone(),
+                        used_percent: limit.used_percent,
+                        window_minutes: limit.window_minutes,
+                        resets_at: limit
+                            .resets_at_unix
+                            .map(|seconds| UNIX_EPOCH + Duration::from_secs(seconds))
+                            .or_else(|| {
+                                limit
+                                    .resets_in_seconds
+                                    .map(|seconds| now + Duration::from_secs(seconds))
+                            }),
+                        plan: limit.plan.clone(),
+                        reported_at: now,
+                    });
+                    entry
+                        .session
+                        .set_status_from(SessionStatus::RateLimited, source);
+                }
+                HookSignal::RateLimitCleared => {
+                    // Positive evidence the window has room. Only move the row
+                    // off the limited state — a session that was working is left
+                    // alone, since a routine quota report says nothing about it.
+                    if entry.session.rate_limit.take().is_some()
+                        && entry.session.status == SessionStatus::RateLimited
+                    {
+                        entry
+                            .session
+                            .set_status_from(SessionStatus::Thinking, source);
+                    }
+                }
                 HookSignal::Unknown { .. } => {}
+            }
+            // Any signal at all is proof the provider answered, so a limit whose
+            // window has since reset stops holding the row down. Runs after the
+            // match so a fresh limit in this same event is not immediately
+            // undone by its own predecessor's expiry.
+            if !matches!(event.signal, HookSignal::RateLimited { .. }) {
+                let now = SystemTime::now();
+                if entry
+                    .session
+                    .rate_limit
+                    .as_ref()
+                    .is_some_and(|limit| limit.is_expired(now))
+                {
+                    entry.session.rate_limit = None;
+                    if entry.session.status == SessionStatus::RateLimited {
+                        entry
+                            .session
+                            .set_status_from(SessionStatus::Thinking, source);
+                    }
+                }
             }
             let session = entry.session.clone();
             let notifications = state.notifications.observe(
@@ -1996,11 +2069,16 @@ fn next_sequence(id: &SessionId) -> u64 {
         .saturating_add(1)
 }
 
+/// Sessions holding an admission slot.
+///
+/// Rate-limited sessions are excluded: they are running, but the provider is
+/// refusing them work, so counting them would keep a queued session waiting
+/// behind a process that provably cannot progress.
 fn admitted_count(state: &State) -> usize {
     state
         .entries
         .values()
-        .filter(|entry| entry.session.status.is_live())
+        .filter(|entry| entry.session.status.occupies_admission_slot())
         .count()
 }
 
@@ -3023,5 +3101,181 @@ mod tests {
         assert!(registry.is_poisoned());
         assert!(registry.snapshot().is_empty());
         assert_eq!(registry.admission_snapshot().live_sessions, 0);
+    }
+
+    /// Insert a session in a chosen state without spawning a process.
+    fn insert_session(registry: &SessionRegistry, id: &SessionId, status: SessionStatus) {
+        let cwd = Path::new(".").to_path_buf();
+        let spec = spec_for(Agent::Claude, &cwd);
+        let mut session = Session::new(id.clone(), &spec);
+        session.status = status;
+        lock_state(&registry.inner).entries.insert(
+            id.clone(),
+            Entry {
+                session,
+                spec,
+                command: ResolvedCommand {
+                    program: PathBuf::from("agent"),
+                    args: Vec::new(),
+                    cwd,
+                },
+                pty: None,
+                scrollback: RingBuffer::default(),
+                grid: TerminalGrid::default(),
+                generation: 1,
+                stop_requested: false,
+                teardown_done: true,
+                branch_checked: None,
+                span: tracing::Span::none(),
+            },
+        );
+    }
+
+    fn rate_limit_event(resets_in_seconds: u64) -> HookEvent {
+        HookEvent {
+            agent: Agent::Claude,
+            session_id: None,
+            cwd: Some(Path::new(".").to_path_buf()),
+            signal: HookSignal::RateLimited {
+                limit: crate::hooks::HookRateLimit {
+                    scope: "rate-limit".to_owned(),
+                    used_percent: Some(100.0),
+                    window_minutes: Some(300),
+                    resets_in_seconds: Some(resets_in_seconds),
+                    resets_at_unix: None,
+                    plan: Some("max".to_owned()),
+                },
+            },
+            progress: None,
+        }
+    }
+
+    #[test]
+    fn a_rate_limited_session_releases_its_admission_slot() {
+        // The failure this prevents: a fleet at its cap, every session waiting
+        // on a quota, and a queued session that never starts because the
+        // blocked ones still count as live.
+        let registry = SessionRegistry::with_admission(AdmissionConfig::new(2, None));
+        let limited = SessionId::new(1);
+        insert_session(&registry, &limited, SessionStatus::Working);
+        insert_session(&registry, &SessionId::new(2), SessionStatus::Working);
+        assert_eq!(registry.admission_snapshot().live_sessions, 2);
+
+        assert!(registry.apply_hook(rate_limit_event(1800)));
+
+        let snapshot = registry.admission_snapshot();
+        assert_eq!(
+            snapshot.live_sessions, 1,
+            "a session the provider is refusing must not hold a slot"
+        );
+        assert_eq!(snapshot.rate_limited_sessions, 1);
+        assert!(snapshot.earliest_rate_limit_reset.is_some());
+    }
+
+    #[test]
+    fn a_rate_limited_row_sorts_above_the_working_states() {
+        // It sorts with the states that want the operator's attention, because a
+        // limited session is indistinguishable from a busy one at a glance.
+        assert!(SessionStatus::RateLimited > SessionStatus::Working);
+        assert!(SessionStatus::RateLimited > SessionStatus::Thinking);
+        assert!(SessionStatus::RateLimited > SessionStatus::Idle);
+        assert!(SessionStatus::RateLimited < SessionStatus::NeedsApproval);
+    }
+
+    #[test]
+    fn the_header_reports_the_earliest_reset_across_the_fleet() {
+        let registry = SessionRegistry::with_admission(AdmissionConfig::new(4, None));
+        insert_session(&registry, &SessionId::new(1), SessionStatus::Working);
+        assert!(registry.apply_hook(rate_limit_event(7200)));
+        let far = registry
+            .admission_snapshot()
+            .earliest_rate_limit_reset
+            .expect("a reset was reported");
+
+        insert_session(&registry, &SessionId::new(2), SessionStatus::Working);
+        assert!(registry.apply_hook(rate_limit_event(60)));
+
+        let snapshot = registry.admission_snapshot();
+        assert_eq!(snapshot.rate_limited_sessions, 2);
+        assert!(
+            snapshot.earliest_rate_limit_reset.expect("still reported") < far,
+            "the header must show the soonest reset, not the first one seen"
+        );
+    }
+
+    #[test]
+    fn the_limited_state_is_never_entered_from_silence() {
+        // Every other status here can be reached by inference. This one must not
+        // be: a quiet session is indistinguishable from a long tool call, and a
+        // fleet that invents quota states is worse than one that shows none.
+        let registry = SessionRegistry::with_admission(AdmissionConfig::new(2, None));
+        insert_session(&registry, &SessionId::new(1), SessionStatus::Working);
+
+        for signal in [
+            HookSignal::Stop,
+            HookSignal::PostToolUse,
+            HookSignal::Unknown {
+                event: "idle_timeout".to_owned(),
+            },
+            HookSignal::Notification {
+                notification: crate::hooks::HookNotification::IdlePrompt,
+            },
+        ] {
+            registry.apply_hook(HookEvent {
+                agent: Agent::Claude,
+                session_id: None,
+                cwd: Some(Path::new(".").to_path_buf()),
+                signal,
+                progress: None,
+            });
+            assert_ne!(
+                registry.snapshot()[0].status,
+                SessionStatus::RateLimited,
+                "no signal short of a reported quota may produce this state"
+            );
+        }
+        assert_eq!(registry.admission_snapshot().rate_limited_sessions, 0);
+    }
+
+    #[test]
+    fn a_reset_window_returns_the_row_to_the_fleet() {
+        let registry = SessionRegistry::with_admission(AdmissionConfig::new(2, None));
+        insert_session(&registry, &SessionId::new(1), SessionStatus::Working);
+        // A window that has already elapsed by the time the next event lands.
+        assert!(registry.apply_hook(rate_limit_event(0)));
+        assert_eq!(registry.snapshot()[0].status, SessionStatus::RateLimited);
+
+        std::thread::sleep(Duration::from_millis(20));
+        registry.apply_hook(HookEvent {
+            agent: Agent::Claude,
+            session_id: None,
+            cwd: Some(Path::new(".").to_path_buf()),
+            signal: HookSignal::PostToolUse,
+            progress: None,
+        });
+
+        assert_ne!(registry.snapshot()[0].status, SessionStatus::RateLimited);
+        assert!(registry.snapshot()[0].rate_limit.is_none());
+        assert_eq!(registry.admission_snapshot().live_sessions, 1);
+    }
+
+    #[test]
+    fn a_quota_report_with_room_left_clears_the_limit() {
+        let registry = SessionRegistry::with_admission(AdmissionConfig::new(2, None));
+        insert_session(&registry, &SessionId::new(1), SessionStatus::Working);
+        assert!(registry.apply_hook(rate_limit_event(9_000)));
+        assert_eq!(registry.snapshot()[0].status, SessionStatus::RateLimited);
+
+        // Positive evidence, not silence: the provider answered with a window
+        // that still has room.
+        registry.apply_hook(HookEvent {
+            agent: Agent::Claude,
+            session_id: None,
+            cwd: Some(Path::new(".").to_path_buf()),
+            signal: HookSignal::RateLimitCleared,
+            progress: None,
+        });
+        assert_ne!(registry.snapshot()[0].status, SessionStatus::RateLimited);
+        assert!(registry.snapshot()[0].rate_limit.is_none());
     }
 }

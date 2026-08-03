@@ -13,7 +13,8 @@ use crate::hooks::HookEvent;
 
 pub type RpcId = Value;
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+// `Eq` is not derivable: a reported quota carries a `used_percent` float.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "source", content = "event", rename_all = "snake_case")]
 pub enum AgentEvent {
     Hook(HookEvent),
