@@ -140,6 +140,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   laid out below it.
 - Closing the launcher, or pressing Enter in any launcher field, no longer spawns an agent —
   every dialog control is an explicit button and the form refuses submission outright.
+- The daemon restricts library loading to System32 before any pseudo-console is created.
+  `portable-pty` asks for `conpty.dll` by bare name and no such file exists in System32 on this
+  OS build, so the search reached the application and working directories — both writable by a
+  non-administrator — in the process that owns every supervised agent.
 - The app's own commands are now covered by declared Tauri ACL policy rather than only a runtime
   patch: `build.rs` declares an `AppManifest` listing all 26 commands, and the capability drops
   from the nine sets `core:default` expands to down to the four actually used, marked local-only.

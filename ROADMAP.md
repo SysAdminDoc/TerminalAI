@@ -197,13 +197,6 @@ researcher continues from R-88.
   Acceptance: a repeatable measurement counts console-window creations and input latency for N supervised sessions versus N terminal-launched sessions, and the result is published in the README with its method; background sessions (neither focused nor pinned) get EcoQoS and lowered memory priority, restored on focus; the taskbar shows the waiting-session count via overlay or badge. Depends on R-40 for job objects.
   Complexity: M
 
-- [ ] R-80 · P2 — Harden the ConPTY DLL search path
-  Why: the pty layer asks Windows to load `conpty.dll` by bare name before falling back to the system copy, and no such file exists in System32 on this OS build — so the search reaches directories a non-administrator can write.
-  Evidence: `portable-pty` 0.9.0 `src/win/psuedocon.rs:52-55` calls `ConPtyFuncs::open(Path::new("conpty.dll"))` first; verified 2026-08-02 that `C:\Windows\System32\conpty.dll` does not exist on 26100, and no `SetDefaultDllDirectories` or `SetDllDirectory` call exists anywhere in `crates/`. wezterm#7775 separately documents that the older bundled ConPTY pair crashes shells using the alternate screen buffer on exit, fixed by the matched 1.24 pair.
-  Touches: `crates/terminalai-daemon/src/main.rs`, release checklist
-  Acceptance: the daemon calls `SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32)` before any pty is created; optionally the matched `conpty.dll` and `OpenConsole.exe` pair ships beside the daemon so the application directory wins deterministically, with its version pinned and recorded; a note in `CLAUDE.md` records why bare-name loading is unsafe here.
-  Complexity: S
-
 - [ ] R-81 · P2 — Per-session environment leases beyond ports
   Why: this is the most-repeated unsolved complaint in the entire community corpus — worktrees isolate files and nothing else, so parallel agents collide on ports, databases, docker projects and untracked config, and several people abandoned parallel agents specifically over it.
   Evidence: HN 46424131 ("none of them mention databases... ten different copies of my database"), 47870590 (quit after a sprint over test-data isolation and a shared migration), 47871667 ("can't easily copy secrets, ports conflict"), 48244818 (per-worktree docker compose prefix, hand-rolled), 47004368 ("two weeks just getting a second copy of the dev environment running"). Both Superset and Conductor explicitly punt to a user-written setup script. R-22 already ships deterministic port blocks and setup/teardown hooks; this extends that seam.

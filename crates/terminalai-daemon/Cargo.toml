@@ -28,3 +28,6 @@ serde_json.workspace = true
 thiserror.workspace = true
 widestring.workspace = true
 dirs.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true

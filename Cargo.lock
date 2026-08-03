@@ -3807,6 +3807,7 @@ dependencies = [
  "terminalai-core",
  "thiserror 2.0.19",
  "widestring",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
