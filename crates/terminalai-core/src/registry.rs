@@ -6,7 +6,8 @@
 //! shell. This makes closing or reloading a view harmless to live agents.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, SystemTime};
@@ -30,6 +31,7 @@ use crate::store::{ArchivedSession, SessionStoreSnapshot, StoredSession};
 /// older bytes to disk without changing the registry-facing API.
 pub const MAX_SCROLLBACK_BYTES: usize = 512 * 1024;
 const MAX_LAST_LINE_BYTES: usize = 8 * 1024;
+const SUBSCRIBER_QUEUE_CAPACITY: usize = 256;
 pub const DEFAULT_MAX_LIVE_SESSIONS: usize = 3;
 pub const DEFAULT_SESSION_BUDGET_USD: f64 = 5.0;
 
@@ -98,6 +100,11 @@ pub struct AdmissionSnapshot {
     pub live_sessions: usize,
     pub queued_sessions: usize,
     pub aggregate_cost_usd: f64,
+    /// Nonblocking event delivery drops since daemon start. Output and row
+    /// updates are deliberately lossy when a subscriber is stalled; clients
+    /// can recover authoritative state with Snapshot/Reattach.
+    #[serde(default)]
+    pub dropped_events: u64,
 }
 
 /// Events are deliberately coarse: a view can rebuild its rows from a session
@@ -157,11 +164,12 @@ struct State {
     queue: VecDeque<SessionId>,
     admission: AdmissionConfig,
     notifications: NotificationCenter,
-    subscribers: Vec<Sender<RegistryEvent>>,
+    subscribers: Vec<SyncSender<RegistryEvent>>,
 }
 
 struct Inner {
     state: Mutex<State>,
+    dropped_events: AtomicU64,
 }
 
 impl Inner {
@@ -215,6 +223,7 @@ impl SessionRegistry {
                     notifications: NotificationCenter::default(),
                     subscribers: Vec::new(),
                 }),
+                dropped_events: AtomicU64::new(0),
             }),
         }
     }
@@ -288,7 +297,14 @@ impl SessionRegistry {
                 .values()
                 .filter_map(|entry| entry.session.cost_usd)
                 .sum(),
+            dropped_events: self.inner.dropped_events.load(Ordering::Relaxed),
         }
+    }
+
+    /// Add a drop observed by a downstream bounded event queue to the same
+    /// diagnostic counter used by registry subscribers.
+    pub fn record_dropped_event(&self) {
+        self.inner.dropped_events.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn is_queued(&self, id: &SessionId) -> Result<bool, RegistryError> {
@@ -322,7 +338,7 @@ impl SessionRegistry {
 
     /// Subscribe to pushed changes. Closed receivers are removed automatically.
     pub fn subscribe(&self) -> Receiver<RegistryEvent> {
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = mpsc::sync_channel(SUBSCRIBER_QUEUE_CAPACITY);
         lock_state(&self.inner).subscribers.push(sender);
         receiver
     }
@@ -1019,9 +1035,22 @@ impl SessionRegistry {
 
     fn emit(&self, event: RegistryEvent) {
         let mut state = lock_state(&self.inner);
+        let mut dropped = 0;
         state
             .subscribers
-            .retain(|subscriber| subscriber.send(event.clone()).is_ok());
+            .retain(|subscriber| match subscriber.try_send(event.clone()) {
+                Ok(()) => true,
+                Err(TrySendError::Full(_)) => {
+                    dropped += 1;
+                    true
+                }
+                Err(TrySendError::Disconnected(_)) => false,
+            });
+        if dropped != 0 {
+            self.inner
+                .dropped_events
+                .fetch_add(dropped, Ordering::Relaxed);
+        }
     }
 
     fn remove_entry(&self, id: &SessionId) {
@@ -1250,9 +1279,20 @@ fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u
 
 fn emit_inner(inner: &Arc<Inner>, event: RegistryEvent) {
     let mut state = lock_state(inner);
+    let mut dropped = 0;
     state
         .subscribers
-        .retain(|subscriber| subscriber.send(event.clone()).is_ok());
+        .retain(|subscriber| match subscriber.try_send(event.clone()) {
+            Ok(()) => true,
+            Err(TrySendError::Full(_)) => {
+                dropped += 1;
+                true
+            }
+            Err(TrySendError::Disconnected(_)) => false,
+        });
+    if dropped != 0 {
+        inner.dropped_events.fetch_add(dropped, Ordering::Relaxed);
+    }
 }
 
 fn app_server_thread_id(event: &AppServerEvent) -> Option<&str> {
@@ -1427,6 +1467,30 @@ mod tests {
             ring.last_line().as_deref(),
             Some("x".repeat(MAX_LAST_LINE_BYTES).as_str())
         );
+    }
+
+    #[test]
+    fn subscriber_queue_drops_newest_events_and_reports_the_count() {
+        let registry = SessionRegistry::new();
+        let events = registry.subscribe();
+        let id = SessionId::new(1);
+        let spec = spec_for(Agent::Claude, Path::new("."));
+        let session = Session::new(id.clone(), &spec);
+
+        for _ in 0..SUBSCRIBER_QUEUE_CAPACITY {
+            registry.emit(RegistryEvent::SessionUpdated {
+                session: session.clone(),
+            });
+        }
+        for _ in 0..3 {
+            registry.emit(RegistryEvent::Output {
+                id: id.clone(),
+                data: b"output".to_vec(),
+            });
+        }
+
+        assert_eq!(events.try_iter().count(), SUBSCRIBER_QUEUE_CAPACITY);
+        assert_eq!(registry.admission_snapshot().dropped_events, 3);
     }
 
     #[test]

@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -36,6 +36,8 @@ use persistence::StoreWriter;
 
 pub const PROTOCOL_VERSION: u16 = 2;
 pub const PIPE_NAME: &str = "terminalai.control.v2";
+const OUTGOING_QUEUE_CAPACITY: usize = 256;
+const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 pub fn install_panic_hook() {
     persistence::install_panic_hook();
@@ -344,7 +346,7 @@ fn handle_connection(
 ) -> Result<(), IpcError> {
     let peer_pid = stream.peer_creds()?.pid();
     let (receive, send) = stream.split();
-    let (outgoing_tx, outgoing_rx) = mpsc::channel::<WireMessage>();
+    let (outgoing_tx, outgoing_rx) = mpsc::sync_channel::<WireMessage>(OUTGOING_QUEUE_CAPACITY);
     let writer = thread::Builder::new()
         .name("terminalai-daemon-writer".into())
         .spawn(move || write_messages(send, outgoing_rx))
@@ -354,102 +356,124 @@ fn handle_connection(
     let mut authenticated = false;
     let mut subscribed = false;
     let mut line = String::new();
-    loop {
-        line.clear();
-        if reader.read_line(&mut line)? == 0 {
-            break;
-        }
-        let message: WireMessage = serde_json::from_str(&line)
-            .map_err(|error| IpcError::InvalidMessage(error.to_string()))?;
-        let WireMessage::Request { id, request } = message else {
-            send_response(
-                &outgoing_tx,
-                0,
-                Response::Error {
-                    message: "client messages must be requests".into(),
-                },
-            )?;
-            continue;
-        };
-
-        if !authenticated {
-            let Request::Hello {
-                protocol,
-                client_pid,
-            } = request
-            else {
+    let (event_stop_tx, event_stop_rx) = mpsc::channel();
+    let mut event_stop_rx = Some(event_stop_rx);
+    let mut event_thread = None;
+    let result = (|| -> Result<(), IpcError> {
+        loop {
+            line.clear();
+            if reader.read_line(&mut line)? == 0 {
+                break;
+            }
+            let message: WireMessage = serde_json::from_str(&line)
+                .map_err(|error| IpcError::InvalidMessage(error.to_string()))?;
+            let WireMessage::Request { id, request } = message else {
                 send_response(
                     &outgoing_tx,
-                    id,
+                    0,
                     Response::Error {
-                        message: "Hello must be the first request".into(),
+                        message: "client messages must be requests".into(),
                     },
                 )?;
-                break;
+                continue;
             };
-            if protocol != PROTOCOL_VERSION {
-                send_response(
-                    &outgoing_tx,
-                    id,
-                    Response::Error {
-                        message: IpcError::VersionMismatch {
-                            daemon: PROTOCOL_VERSION,
-                            client: protocol,
-                        }
-                        .to_string(),
-                    },
-                )?;
-                break;
-            }
-            if peer_pid != Some(client_pid) {
-                send_response(
-                    &outgoing_tx,
-                    id,
-                    Response::Error {
-                        message: IpcError::PeerMismatch {
-                            expected: client_pid,
-                            actual: peer_pid,
-                        }
-                        .to_string(),
-                    },
-                )?;
-                break;
-            }
-            authenticated = true;
-            send_response(
-                &outgoing_tx,
-                id,
-                Response::Hello {
-                    protocol: PROTOCOL_VERSION,
-                    daemon_pid: std::process::id(),
-                },
-            )?;
-            continue;
-        }
 
-        match request {
-            Request::Close => {
-                send_response(&outgoing_tx, id, Response::Ok)?;
-                break;
-            }
-            Request::Subscribe => {
-                if !subscribed {
-                    subscribed = true;
-                    bridge_events(registry.subscribe(), outgoing_tx.clone());
+            if !authenticated {
+                let Request::Hello {
+                    protocol,
+                    client_pid,
+                } = request
+                else {
+                    send_response(
+                        &outgoing_tx,
+                        id,
+                        Response::Error {
+                            message: "Hello must be the first request".into(),
+                        },
+                    )?;
+                    break;
+                };
+                if protocol != PROTOCOL_VERSION {
+                    send_response(
+                        &outgoing_tx,
+                        id,
+                        Response::Error {
+                            message: IpcError::VersionMismatch {
+                                daemon: PROTOCOL_VERSION,
+                                client: protocol,
+                            }
+                            .to_string(),
+                        },
+                    )?;
+                    break;
                 }
-                send_response(&outgoing_tx, id, Response::Ok)?;
+                if peer_pid != Some(client_pid) {
+                    send_response(
+                        &outgoing_tx,
+                        id,
+                        Response::Error {
+                            message: IpcError::PeerMismatch {
+                                expected: client_pid,
+                                actual: peer_pid,
+                            }
+                            .to_string(),
+                        },
+                    )?;
+                    break;
+                }
+                authenticated = true;
+                send_response(
+                    &outgoing_tx,
+                    id,
+                    Response::Hello {
+                        protocol: PROTOCOL_VERSION,
+                        daemon_pid: std::process::id(),
+                    },
+                )?;
+                continue;
             }
-            request => {
-                let response =
-                    dispatch_with_quarantine(request, &registry, store_quarantine.as_deref());
-                send_response(&outgoing_tx, id, response)?;
+
+            match request {
+                Request::Close => {
+                    send_response(&outgoing_tx, id, Response::Ok)?;
+                    break;
+                }
+                Request::Subscribe => {
+                    if !subscribed {
+                        let stop = event_stop_rx
+                            .take()
+                            .expect("event stop receiver only used once");
+                        event_thread = Some(bridge_events(
+                            registry.subscribe(),
+                            outgoing_tx.clone(),
+                            registry.clone(),
+                            stop,
+                        )?);
+                        subscribed = true;
+                    }
+                    send_response(&outgoing_tx, id, Response::Ok)?;
+                }
+                request => {
+                    let response =
+                        dispatch_with_quarantine(request, &registry, store_quarantine.as_deref());
+                    send_response(&outgoing_tx, id, response)?;
+                }
             }
         }
-    }
+        Ok(())
+    })();
     drop(outgoing_tx);
-    writer
+    let _ = event_stop_tx.send(());
+    if let Some(event_thread) = event_thread {
+        event_thread
+            .join()
+            .map_err(|_| IpcError::Io(io::Error::other("event thread panicked")))?;
+    }
+    let writer_result = writer
         .join()
-        .map_err(|_| IpcError::Io(io::Error::other("writer thread panicked")))??;
+        .map_err(|_| IpcError::Io(io::Error::other("writer thread panicked")))?;
+    result?;
+    writer_result?;
     Ok(())
 }
 
@@ -463,7 +487,7 @@ fn write_messages(mut send: SendHalf, outgoing: Receiver<WireMessage>) -> Result
 }
 
 fn send_response(
-    outgoing: &Sender<WireMessage>,
+    outgoing: &SyncSender<WireMessage>,
     id: u64,
     response: Response,
 ) -> Result<(), IpcError> {
@@ -472,16 +496,30 @@ fn send_response(
         .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "client disconnected").into())
 }
 
-fn bridge_events(events: Receiver<RegistryEvent>, outgoing: Sender<WireMessage>) {
-    let _ = thread::Builder::new()
+fn bridge_events(
+    events: Receiver<RegistryEvent>,
+    outgoing: SyncSender<WireMessage>,
+    registry: SessionRegistry,
+    stop: Receiver<()>,
+) -> Result<thread::JoinHandle<()>, IpcError> {
+    thread::Builder::new()
         .name("terminalai-daemon-events".into())
-        .spawn(move || {
-            for event in events {
-                if outgoing.send(WireMessage::Event { event }).is_err() {
-                    break;
-                }
+        .spawn(move || loop {
+            match stop.try_recv() {
+                Ok(()) | Err(mpsc::TryRecvError::Disconnected) => break,
+                Err(mpsc::TryRecvError::Empty) => {}
             }
-        });
+            match events.recv_timeout(EVENT_POLL_INTERVAL) {
+                Ok(event) => match outgoing.try_send(WireMessage::Event { event }) {
+                    Ok(()) => {}
+                    Err(TrySendError::Full(_)) => registry.record_dropped_event(),
+                    Err(TrySendError::Disconnected(_)) => break,
+                },
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        })
+        .map_err(IpcError::Io)
 }
 
 #[cfg(test)]
@@ -979,5 +1017,68 @@ mod tests {
             .join()
             .expect("server thread")
             .expect("serve client");
+    }
+
+    #[cfg(windows)]
+    fn process_thread_count() -> usize {
+        let script = format!(
+            "(Get-Process -Id {} -ErrorAction Stop).Threads.Count",
+            std::process::id()
+        );
+        let output = std::process::Command::new("powershell.exe")
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                &script,
+            ])
+            .output()
+            .expect("count process threads");
+        assert!(output.status.success());
+        String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .parse()
+            .expect("thread count")
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn subscribed_connections_do_not_leave_event_or_writer_threads() {
+        let baseline = process_thread_count();
+        for index in 0..100 {
+            let name = format!(
+                "terminalai-r47-{}-{}-{}",
+                std::process::id(),
+                index,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("clock")
+                    .as_nanos()
+            );
+            let server = DaemonServer::bind_named(&name).expect("bind test socket");
+            let server_thread = thread::spawn(move || server.serve_one());
+            let client = DaemonClient::connect_named(&name).expect("connect test socket");
+            client.subscribe().expect("subscribe test socket");
+            assert!(matches!(client.call(Request::Close), Ok(Response::Ok)));
+            drop(client);
+            server_thread
+                .join()
+                .expect("server thread")
+                .expect("serve client");
+        }
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let after = loop {
+            let count = process_thread_count();
+            if count <= baseline + 2 || std::time::Instant::now() >= deadline {
+                break count;
+            }
+            thread::sleep(Duration::from_millis(25));
+        };
+        assert!(
+            after <= baseline + 2,
+            "connection threads leaked: baseline={baseline}, after={after}"
+        );
     }
 }

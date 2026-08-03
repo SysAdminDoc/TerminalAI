@@ -61,6 +61,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   streams and arbitrary-byte parser coverage.
 - A poisoned registry lock is now recovered safely; the daemon keeps serving health and metadata
   requests while returning an explicit state-unavailable error for fleet mutations and snapshots.
+- Registry and IPC event delivery now use bounded nonblocking queues with counted drops, and each
+  subscribed connection stops and joins its event bridge before the writer thread is joined.
 - R-16 adds lifecycle-aware attention notifications with stable dedup keys, repository grouping,
   automatic retraction on progress, and startup/long-tool grace suppression. The shell consumes
   raised notifications as deduplicated, click-to-focus in-app alerts.

@@ -58,7 +58,7 @@ const state = {
   fitAddon: null,
   previewTimer: null,
   attentionToasts: new Map(),
-  admission: { max_live_sessions: 3, live_sessions: 0, queued_sessions: 0, aggregate_cost_usd: 0 },
+  admission: { max_live_sessions: 3, live_sessions: 0, queued_sessions: 0, aggregate_cost_usd: 0, dropped_events: 0 },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -346,7 +346,10 @@ function renderSummary() {
   const spend = state.sessions.reduce((total, session) => total + (Number(session.cost_usd) || 0), 0);
   const maxLive = state.admission.max_live_sessions ?? 3;
   $("fleet-summary").innerHTML = `<span class="summary-item"><b>${live}/${maxLive}</b> live</span><span class="summary-separator">/</span><span class="summary-item"><b>${queued}</b> queued</span><span class="summary-separator">/</span><span class="summary-item summary-attention"><b>${needsYou}</b> needs you</span><span class="summary-separator">/</span><span class="summary-item"><b>${working}</b> active</span><span class="summary-separator">/</span><span class="summary-item"><b>$${spend.toFixed(2)}</b> spent</span>`;
-  $("fleet-count").textContent = `${state.sessions.length} tracked`;
+  const droppedEvents = Number(state.admission.dropped_events) || 0;
+  $("fleet-count").textContent = droppedEvents
+    ? `${state.sessions.length} tracked · ${droppedEvents} event drops`
+    : `${state.sessions.length} tracked`;
   const counts = Object.fromEntries(STATUS_KEYS.map((status) => [status, 0]));
   for (const session of state.sessions) {
     if (session.status in counts) counts[session.status] += 1;
