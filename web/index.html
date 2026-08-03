@@ -32,6 +32,10 @@
             <div class="toolbar-title"><span class="eyebrow">LIVE FLEET</span><span id="fleet-count">0 tracked</span></div>
             <div class="fleet-tools"><label class="filter-wrap" aria-label="Filter sessions"><span aria-hidden="true">⌕</span><input id="filter-input" type="search" aria-keyshortcuts="/" placeholder="Filter fleet (/)" /></label><button class="button button-quiet wide-toggle" id="wide-toggle" type="button" aria-pressed="false" title="Show model, effort, and cost">Wide</button><button class="attention-filter" id="attention-filter" type="button" aria-pressed="false">Needs input</button></div>
           </div>
+          <div id="store-quarantine-banner" class="store-quarantine-banner view-hidden" role="alert">
+            <div class="store-quarantine-copy"><strong>Session store quarantined</strong><span id="store-quarantine-message"></span></div>
+            <button class="button button-quiet" id="dismiss-store-quarantine" type="button">Dismiss</button>
+          </div>
           <div id="review-view" class="review-view view-hidden" aria-label="Pending review">
             <div class="review-toolbar"><span class="eyebrow">PENDING REVIEW</span><span id="review-summary"></span><button class="button button-quiet" id="review-refresh" type="button">Refresh</button></div>
             <div id="review-list" class="review-list" role="list" aria-label="Session changes pending review"></div>

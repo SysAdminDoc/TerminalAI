@@ -24,6 +24,7 @@ struct FleetSnapshot {
     sessions: Vec<Session>,
     focused: Option<SessionId>,
     admission: AdmissionSnapshot,
+    store_quarantine: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -61,10 +62,12 @@ fn fleet_snapshot(state: State<'_, AppState>) -> Result<FleetSnapshot, String> {
             sessions,
             focused,
             admission,
+            store_quarantine,
         } => Ok(FleetSnapshot {
             sessions,
             focused,
             admission,
+            store_quarantine,
         }),
         Response::Error { message } => Err(message),
         other => Err(format!("unexpected snapshot response: {other:?}")),

@@ -34,6 +34,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - R-14 restore actions now reattach live rows with bounded replay, revive stopped rows through
   Claude/Codex native resume ids, or archive layout/cwd/command metadata. A debounced daemon worker
   persists the versioned JSON store without automatically restarting recovered agents.
+- Corrupt, truncated, and unsupported-version session stores are quarantined with a timestamped
+  filename so the daemon starts with an empty fleet and the desktop shell names the saved path in a
+  dismissible banner.
 - R-16 adds lifecycle-aware attention notifications with stable dedup keys, repository grouping,
   automatic retraction on progress, and startup/long-tool grace suppression. The shell consumes
   raised notifications as deduplicated, click-to-focus in-app alerts.

@@ -45,9 +45,9 @@ Working today (`terminalai-probe`, headless):
 - Spawns and drives either agent on a live ConPTY
 - Runs a Tauri 2.11.5/WebView2 shell with the Catppuccin fleet list, launcher, presets and one
   reused xterm renderer
-- 103 default tests over the flag mapping, real-pty boundary, supervision state machine, registry,
+- 107 default tests over the flag mapping, real-pty boundary, supervision state machine, registry,
   diagnostics, review aggregation, daemon protocol, presets, launch golden fixtures, atomic file
-  recovery, prompt safety and fleet-row model; 105
+  recovery, corrupt-store quarantine, prompt safety and fleet-row model; 109
   with the opt-in app-server
   transport enabled
 
@@ -58,7 +58,9 @@ daemon keeps live sessions independent of the window; see
 [ROADMAP.md](ROADMAP.md).
 
 The daemon writes a versioned, human-readable session store to
-`%LOCALAPPDATA%\TerminalAI\sessions.json`. Reconnecting the window reattaches to live rows and
+`%LOCALAPPDATA%\TerminalAI\sessions.json`. If the file is unreadable or has an unsupported schema,
+the daemon moves it to a timestamped `sessions.corrupt-...json` quarantine and starts with an empty
+fleet; the window shows the quarantine path in a dismissible banner. Reconnecting the window reattaches to live rows and
 replays bounded scrollback; rows recovered after a daemon restart remain stopped until the operator
 chooses native resume or archive.
 

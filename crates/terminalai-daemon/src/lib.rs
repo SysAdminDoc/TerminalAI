@@ -155,6 +155,8 @@ pub enum Response {
         sessions: Vec<Session>,
         focused: Option<SessionId>,
         admission: AdmissionSnapshot,
+        #[serde(default)]
+        store_quarantine: Option<String>,
     },
     ReviewSnapshot {
         entries: Vec<ReviewItem>,
@@ -213,32 +215,37 @@ pub struct DaemonServer {
     listener: LocalSocketListener,
     registry: SessionRegistry,
     store_writer: Option<StoreWriter>,
+    store_quarantine: Option<String>,
 }
 
 impl DaemonServer {
     pub fn bind() -> Result<Self, IpcError> {
         let admission = AdmissionConfig::from_environment().map_err(IpcError::Configuration)?;
-        let (registry, store_writer) = match persistence::default_path() {
-            Some(path) => (
-                SessionRegistry::from_store_with_admission(
-                    persistence::load(&path).map_err(IpcError::Store)?,
-                    admission,
-                ),
-                Some(StoreWriter::spawn(path)),
-            ),
-            None => (SessionRegistry::with_admission(admission), None),
+        let (registry, store_writer, store_quarantine) = match persistence::default_path() {
+            Some(path) => {
+                let loaded = persistence::load(&path).map_err(IpcError::Store)?;
+                (
+                    SessionRegistry::from_store_with_admission(loaded.snapshot, admission),
+                    Some(StoreWriter::spawn(path)),
+                    loaded
+                        .quarantined_path
+                        .map(|path| path.to_string_lossy().into_owned()),
+                )
+            }
+            None => (SessionRegistry::with_admission(admission), None, None),
         };
-        Self::bind_named_with_state(PIPE_NAME, registry, store_writer)
+        Self::bind_named_with_state(PIPE_NAME, registry, store_writer, store_quarantine)
     }
 
     pub fn bind_named(name: &str) -> Result<Self, IpcError> {
-        Self::bind_named_with_state(name, SessionRegistry::new(), None)
+        Self::bind_named_with_state(name, SessionRegistry::new(), None, None)
     }
 
     fn bind_named_with_state(
         name: &str,
         registry: SessionRegistry,
         store_writer: Option<StoreWriter>,
+        store_quarantine: Option<String>,
     ) -> Result<Self, IpcError> {
         let name = socket_name(name)?;
         let mut options = ListenerOptions::new().name(name);
@@ -255,11 +262,12 @@ impl DaemonServer {
             listener,
             registry,
             store_writer,
+            store_quarantine,
         })
     }
 
     pub fn with_registry(name: &str, registry: SessionRegistry) -> Result<Self, IpcError> {
-        Self::bind_named_with_state(name, registry, None)
+        Self::bind_named_with_state(name, registry, None, None)
     }
 
     /// Serve connections until the daemon process is terminated.
@@ -271,10 +279,13 @@ impl DaemonServer {
             match connection {
                 Ok(stream) => {
                     let registry = self.registry.clone();
+                    let store_quarantine = self.store_quarantine.clone();
                     thread::Builder::new()
                         .name("terminalai-daemon-client".into())
                         .spawn(move || {
-                            if let Err(error) = handle_connection(stream, registry) {
+                            if let Err(error) =
+                                handle_connection(stream, registry, store_quarantine)
+                            {
                                 eprintln!("terminalai-daemon client: {error}");
                             }
                         })
@@ -293,7 +304,7 @@ impl DaemonServer {
             .incoming()
             .next()
             .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "listener closed"))??;
-        handle_connection(stream, self.registry.clone())
+        handle_connection(stream, self.registry.clone(), self.store_quarantine.clone())
     }
 }
 
@@ -318,7 +329,11 @@ pub fn run() -> Result<(), IpcError> {
     DaemonServer::bind()?.serve()
 }
 
-fn handle_connection(stream: LocalSocketStream, registry: SessionRegistry) -> Result<(), IpcError> {
+fn handle_connection(
+    stream: LocalSocketStream,
+    registry: SessionRegistry,
+    store_quarantine: Option<String>,
+) -> Result<(), IpcError> {
     let peer_pid = stream.peer_creds()?.pid();
     let (receive, send) = stream.split();
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<WireMessage>();
@@ -417,7 +432,8 @@ fn handle_connection(stream: LocalSocketStream, registry: SessionRegistry) -> Re
                 send_response(&outgoing_tx, id, Response::Ok)?;
             }
             request => {
-                let response = dispatch(request, &registry);
+                let response =
+                    dispatch_with_quarantine(request, &registry, store_quarantine.as_deref());
                 send_response(&outgoing_tx, id, response)?;
             }
         }
@@ -460,7 +476,16 @@ fn bridge_events(events: Receiver<RegistryEvent>, outgoing: Sender<WireMessage>)
         });
 }
 
+#[cfg(test)]
 fn dispatch(request: Request, registry: &SessionRegistry) -> Response {
+    dispatch_with_quarantine(request, registry, None)
+}
+
+fn dispatch_with_quarantine(
+    request: Request,
+    registry: &SessionRegistry,
+    store_quarantine: Option<&str>,
+) -> Response {
     match request {
         Request::Hello { .. } => Response::Error {
             message: "Hello was already completed".into(),
@@ -474,6 +499,7 @@ fn dispatch(request: Request, registry: &SessionRegistry) -> Response {
             sessions: registry.snapshot(),
             focused: registry.focused(),
             admission: registry.admission_snapshot(),
+            store_quarantine: store_quarantine.map(str::to_owned),
         },
         Request::ReviewSnapshot => Response::ReviewSnapshot {
             entries: registry.review_snapshot(),
@@ -881,6 +907,21 @@ mod tests {
         assert!(matches!(
             dispatch(Request::Ping, &SessionRegistry::new()),
             Response::Pong
+        ));
+    }
+
+    #[test]
+    fn snapshot_includes_the_quarantined_store_path() {
+        assert!(matches!(
+            dispatch_with_quarantine(
+                Request::Snapshot,
+                &SessionRegistry::new(),
+                Some(r"C:\Users\me\sessions.corrupt-2026-08-02T12-34-56Z.json"),
+            ),
+            Response::Snapshot {
+                store_quarantine: Some(path),
+                ..
+            } if path == r"C:\Users\me\sessions.corrupt-2026-08-02T12-34-56Z.json"
         ));
     }
 

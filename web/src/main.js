@@ -50,6 +50,8 @@ const state = {
   reviews: [],
   diagnosticsMode: false,
   appVersion: null,
+  storeQuarantine: null,
+  storeQuarantineDismissed: false,
   terminal: null,
   fitAddon: null,
   previewTimer: null,
@@ -82,6 +84,16 @@ function showToast(message, tone = "error") {
     toast.classList.remove("toast-visible");
     setTimeout(() => toast.remove(), 240);
   }, 4200);
+}
+
+function renderStoreQuarantine() {
+  const banner = $("store-quarantine-banner");
+  const path = state.storeQuarantine;
+  const visible = Boolean(path) && !state.storeQuarantineDismissed;
+  banner.classList.toggle("view-hidden", !visible);
+  $("store-quarantine-message").textContent = path
+    ? `The unreadable session store was moved to ${path}. New sessions start empty.`
+    : "";
 }
 
 function showAttentionToast(notification) {
@@ -514,6 +526,10 @@ async function loadSnapshot() {
     state.sessions = snapshot.sessions ?? [];
     state.focused = snapshot.focused ?? null;
     state.admission = snapshot.admission ?? state.admission;
+    const storeQuarantine = snapshot.store_quarantine ?? null;
+    if (storeQuarantine !== state.storeQuarantine) state.storeQuarantineDismissed = false;
+    state.storeQuarantine = storeQuarantine;
+    renderStoreQuarantine();
     renderRows();
     updateTerminalHeader();
     if (state.focused) {
@@ -822,6 +838,10 @@ function bindEvents() {
   $("new-session-button").addEventListener("click", openLauncher);
   $("empty-new-button").addEventListener("click", openLauncher);
   $("refresh-button").addEventListener("click", loadSnapshot);
+  $("dismiss-store-quarantine").addEventListener("click", () => {
+    state.storeQuarantineDismissed = true;
+    renderStoreQuarantine();
+  });
   $("review-toggle").addEventListener("click", () => setReviewMode(!state.reviewMode));
   $("review-refresh").addEventListener("click", loadReview);
   $("review-list").addEventListener("click", (event) => {
