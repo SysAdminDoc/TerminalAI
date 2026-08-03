@@ -140,6 +140,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   laid out below it.
 - Closing the launcher, or pressing Enter in any launcher field, no longer spawns an agent —
   every dialog control is an explicit button and the form refuses submission outright.
+- The declared MSRV is now 1.88, the real floor set by resolved dependencies. The workspace
+  claimed 1.82, which cannot build the tree — the README documents the `cargo metadata` command
+  that re-derives the floor so the next dependency bump is caught rather than discovered.
 - The NSIS and MSI bundles now ship `terminalai-daemon.exe` and `terminalai-probe.exe` as Tauri
   sidecars, so an installed copy can start. Previously the app resolved a sibling daemon the
   bundle never placed next to it, and every installed copy exited before drawing a window.

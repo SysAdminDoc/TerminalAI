@@ -191,13 +191,6 @@ researcher continues from R-88.
   Acceptance: the daemon binary is built under a profile without `panic = "abort"` (the GUI may keep it) and R-46's recovery path is exercised under that profile; or, if abort is kept deliberately, every worker-thread body is audited free of `unwrap`/`expect`/indexing and the decision plus its blast radius is recorded in `CLAUDE.md`.
   Complexity: S
 
-- [ ] R-69 · P1 — Correct the MSRV declaration and the README badge
-  Why: the workspace claims a minimum Rust it cannot build on, so the first person to trust the badge — or to add an MSRV CI job — gets a failure that looks like a broken toolchain.
-  Evidence: `Cargo.toml:13` sets `rust-version = "1.82"` and `README.md:6` badges 1.82+. Verified 2026-08-02 via `cargo metadata --filter-platform x86_64-pc-windows-msvc`: 28 resolved packages declare MSRV 1.85 or higher, seven declare 1.88.0 (`darling`, `plist`, `time`, `serde_with` and friends, via the Tauri bundler chain), and 12 are edition 2024.
-  Touches: `Cargo.toml`, `README.md`, `CLAUDE.md`
-  Acceptance: `rust-version` states the true floor (1.88 today) and the badge matches; a documented command re-derives the floor from `cargo metadata` so the next dependency bump is caught rather than discovered.
-  Complexity: S
-
 - [ ] R-70 · P1 — Populate or retract `branch`, `tool_progress` and `cost_usd`
   Why: three columns the README sells as working are hard-wired to nothing, so the fleet row shows em dashes and the header shows a computed-looking `$0.00` — the product currently advertises fields no code writes.
   Evidence: `crates/terminalai-core/src/session.rs:201,214,218` set all three to `None` at construction; verified by grep, no writer exists anywhere in `crates/` for `branch` or `tool_progress`, and `cost_usd` is only ever read (`registry.rs:265`). `README.md:80-81` documents all three as visible in the compact and Wide rows.

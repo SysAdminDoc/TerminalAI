@@ -3,7 +3,7 @@
 [![version](https://img.shields.io/badge/version-0.1.0-blue.svg)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#requirements)
-[![rust](https://img.shields.io/badge/rust-1.82%2B-orange.svg)](https://www.rust-lang.org/)
+[![rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
 
 A control surface for running many Claude Code and Codex sessions at once.
 
@@ -108,7 +108,7 @@ resolves, or commits changes.
 
 ## Requirements
 
-- Rust 1.82+
+- Rust 1.88+ (the true floor; see Build for how to re-derive it)
 - Claude Code and/or Codex CLI installed
 - Windows 10 1809+ for ConPTY (macOS and Linux use the platform pty)
 
@@ -129,6 +129,16 @@ cargo tauri build --ci --no-sign --bundles nsis,msi -- --manifest-path Cargo.tom
 # Release gate: install into a scratch prefix, launch, assert the window and the
 # daemon, then uninstall. Non-zero exit means do not publish.
 pwsh -NoProfile -File scripts/verify-installer.ps1
+
+# Re-derive the MSRV floor after any dependency bump. The workspace rust-version
+# must be at least what this prints, or the badge promises a toolchain that cannot
+# build the tree.
+cargo metadata --format-version 1 --filter-platform x86_64-pc-windows-msvc |
+  ConvertFrom-Json |
+  Select-Object -ExpandProperty packages |
+  Where-Object rust_version |
+  Sort-Object { [version]$_.rust_version } -Descending |
+  Select-Object -First 5 name, version, rust_version
 ```
 
 Note that plain `cargo build --release` is only for the probe, daemon and tests: the
