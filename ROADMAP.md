@@ -184,13 +184,6 @@ researcher continues from R-88.
 
 ### P1
 
-- [ ] R-68 · P1 — Give the daemon unwinding, or stop it panicking
-  Why: `panic = "abort"` in the one process whose entire job is survival means a single panic on any worker thread kills every supervised session at once — the blast radius is the whole fleet, and no dependency upgrade can fix it.
-  Evidence: `Cargo.toml:37`. The daemon runs a thread per connection (`crates/terminalai-daemon/src/lib.rs:274`), per writer (`lib.rs:325`), per PTY reader (`crates/terminalai-core/src/pty.rs:108,331`), per restart timer and per process monitor (`registry.rs:1081,1146`), with roughly 40 `.expect("registry poisoned")` sites. Secondary effect: every `PoisonError` arm is dead code in release while the test profile forces unwind, so R-46's tests will pass without proving anything about the shipped binary.
-  Touches: `Cargo.toml`, `crates/terminalai-daemon/`, release checklist
-  Acceptance: the daemon binary is built under a profile without `panic = "abort"` (the GUI may keep it) and R-46's recovery path is exercised under that profile; or, if abort is kept deliberately, every worker-thread body is audited free of `unwrap`/`expect`/indexing and the decision plus its blast radius is recorded in `CLAUDE.md`.
-  Complexity: S
-
 - [ ] R-70 · P1 — Populate or retract `branch`, `tool_progress` and `cost_usd`
   Why: three columns the README sells as working are hard-wired to nothing, so the fleet row shows em dashes and the header shows a computed-looking `$0.00` — the product currently advertises fields no code writes.
   Evidence: `crates/terminalai-core/src/session.rs:201,214,218` set all three to `None` at construction; verified by grep, no writer exists anywhere in `crates/` for `branch` or `tool_progress`, and `cost_usd` is only ever read (`registry.rs:265`). `README.md:80-81` documents all three as visible in the compact and Wide rows.

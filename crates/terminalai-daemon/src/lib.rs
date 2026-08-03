@@ -5,6 +5,23 @@
 //! over a local socket (a Windows named pipe on the primary platform). Events
 //! are sent only after an explicit `Subscribe` request, so broadcasts cannot be
 //! mistaken for RPC responses.
+//!
+//! # The daemon must unwind
+//!
+//! This process runs a thread per connection, per writer, per PTY reader, per
+//! restart timer and per process monitor, and it is the sole owner of every live
+//! agent. Under `panic = "abort"` a single panic on any one of those threads
+//! terminates every supervised session at once, and the recovery arms for
+//! poisoned locks become dead code in the shipped binary while the test profile
+//! silently forces unwinding — so those tests would pass without proving
+//! anything. The guard below fails the build rather than shipping that.
+
+#[cfg(panic = "abort")]
+compile_error!(
+    "terminalai-daemon must be built with unwinding: `panic = \"abort\"` makes one panic on any \
+     worker thread kill every supervised session, and turns the poisoned-lock recovery paths into \
+     dead code. Remove `panic = \"abort\"` from the active cargo profile."
+);
 
 mod persistence;
 
