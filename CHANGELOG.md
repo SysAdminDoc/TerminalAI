@@ -39,6 +39,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   dismissible banner.
 - Fleet ordering now compares persisted status-transition timestamps and stable session ids, so a
   snapshot cannot become non-transitive while it is being sorted.
+- Fleet rows now reconcile by session id, mutating existing row content while preserving focused
+  reply inputs and their caret across live updates and filtered views; frontend coverage runs with
+  `npm --prefix web test`.
 - R-16 adds lifecycle-aware attention notifications with stable dedup keys, repository grouping,
   automatic retraction on progress, and startup/long-tool grace suppression. The shell consumes
   raised notifications as deduplicated, click-to-focus in-app alerts.

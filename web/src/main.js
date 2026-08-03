@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
+import { reconcileKeyedRows } from "./fleetRows.js";
 import "./styles.css";
 
 const STATUS_ORDER = {
@@ -364,38 +365,130 @@ function renderRows() {
   $("wide-toggle").setAttribute("aria-pressed", String(state.wideMode));
   $("wide-toggle").textContent = state.wideMode ? "Compact" : "Wide";
   $("wide-toggle").classList.toggle("wide-toggle-active", state.wideMode);
-  list.innerHTML = sessions.map(renderRow).join("");
-  for (const row of list.querySelectorAll(".fleet-row")) {
-    const rowSession = state.sessions.find((session) => session.id === row.dataset.id);
-    const portBadge = document.createElement("span");
-    portBadge.className = "row-ports";
-    portBadge.title = "Allocated ports";
-    portBadge.textContent = "ports " + ports(rowSession?.ports);
-    row.querySelector(".row-folder")?.append(portBadge);
-    row.setAttribute("aria-label", row.getAttribute("aria-label") + ", ports " + ports(rowSession?.ports));
-    row.addEventListener("click", () => focusSession(row.dataset.id));
-    row.addEventListener("keydown", (event) => {
-      if (event.target !== row || !["Enter", " "].includes(event.key)) return;
-      event.preventDefault();
-      void focusSession(row.dataset.id);
+  reconcileKeyedRows(
+    list,
+    sessions,
+    (session) => session.id,
+    createFleetRow,
+    updateFleetRow,
+    (row) => state.sessions.some((session) => session.id === row.dataset.id)
+      && (row.contains(document.activeElement) || Boolean(row.querySelector("input[data-reply]")?.value)),
+  );
+}
+
+function createFleetRow(session) {
+  const template = document.createElement("template");
+  template.innerHTML = renderRow(session).trim();
+  const row = template.content.firstElementChild;
+  bindFleetRow(row);
+  return row;
+}
+
+function bindFleetRow(row) {
+  row.addEventListener("click", () => focusSession(row.dataset.id));
+  row.addEventListener("keydown", (event) => {
+    if (event.target !== row || !["Enter", " "].includes(event.key)) return;
+    event.preventDefault();
+    void focusSession(row.dataset.id);
+  });
+  for (const button of row.querySelectorAll("button[data-action]")) {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      rowAction(button.dataset.action, row.dataset.id, row);
     });
-    for (const button of row.querySelectorAll("button[data-action]")) {
-      button.addEventListener("click", (event) => {
-        event.stopPropagation();
-        rowAction(button.dataset.action, row.dataset.id, row);
-      });
-    }
-    const reply = row.querySelector("input[data-reply]");
-    if (reply) {
-      reply.addEventListener("click", (event) => event.stopPropagation());
-      reply.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          rowAction("reply", row.dataset.id, row);
-        }
-      });
-    }
   }
+  const reply = row.querySelector("input[data-reply]");
+  reply?.addEventListener("click", (event) => event.stopPropagation());
+  reply?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    rowAction("reply", row.dataset.id, row);
+  });
+}
+
+function updateFleetRow(row, session) {
+  const meta = STATUS_META[session.status] ?? STATUS_META.exited;
+  const active = session.id === state.focused;
+  const unread = Boolean(session.unread);
+  const agentLabel = session.agent === "codex" ? "CX" : "CC";
+  const model = session.model || "default";
+  const effort = session.effort || "—";
+  const repo = folderLabel(session.cwd);
+  const branch = session.branch || "—";
+  const progress = toolProgress(session.tool_progress);
+  const restartCount = Number.isInteger(Number(session.restarts)) ? Number(session.restarts) : 0;
+  const lastLine = session.last_line || "No output yet";
+  const pinLabel = session.pinned ? "Unpin" : "Pin";
+  const sessionLabel = `${session.name}, ${meta.label}, ${repo}, ${branch}, progress ${progress}, ${restartCount} restarts, ports ${ports(session.ports)}`;
+
+  row.className = `fleet-row${active ? " row-focused" : ""}${unread ? " row-unread" : ""}`;
+  row.dataset.id = session.id;
+  row.setAttribute("aria-label", sessionLabel);
+
+  const glyph = row.querySelector(".status-glyph");
+  glyph.className = `status-glyph tone-${meta.tone}`;
+  glyph.title = meta.label;
+  glyph.textContent = meta.glyph;
+
+  row.querySelector(".row-name-text").textContent = session.name;
+  const unreadDot = row.querySelector(".unread-dot");
+  if (unread && !unreadDot) {
+    const dot = document.createElement("span");
+    dot.className = "unread-dot";
+    dot.title = "Unread attention";
+    row.querySelector(".row-name").append(dot);
+  } else if (!unread && unreadDot) {
+    unreadDot.remove();
+  }
+  row.querySelector(".row-repo").textContent = repo;
+  row.querySelector(".row-branch").textContent = branch;
+  row.querySelector(".row-status-label").textContent = meta.label;
+  const portBadge = row.querySelector(".row-ports");
+  portBadge.textContent = "ports " + ports(session.ports);
+
+  const agentBadge = row.querySelector(".agent-badge");
+  agentBadge.className = `agent-badge agent-${session.agent}`;
+  agentBadge.title = session.agent === "codex" ? "Codex" : "Claude Code";
+  agentBadge.setAttribute("aria-label", agentBadge.title);
+  agentBadge.textContent = agentLabel;
+  row.querySelector(".row-progress b").textContent = progress;
+  row.querySelector(".row-restarts").textContent = `↻ ${restartCount}`;
+  row.querySelector(".row-dwell > span").textContent = dwell(session.status_since);
+  const lastLineElement = row.querySelector(".row-last-line");
+  lastLineElement.title = lastLine;
+  lastLineElement.textContent = lastLine;
+
+  const pin = row.querySelector('[data-action="pin"]');
+  pin.classList.toggle("row-action-active", session.pinned);
+  pin.title = pinLabel;
+  pin.setAttribute("aria-label", `${pinLabel} ${session.name}`);
+  pin.textContent = session.pinned ? "◆" : "◇";
+  const focus = row.querySelector('[data-action="focus"]');
+  focus.setAttribute("aria-label", `Focus ${session.name} terminal`);
+  const revive = row.querySelector('[data-action="revive"]');
+  revive.hidden = !(session.status === "exited" && session.resume_id);
+  revive.title = `Revive ${session.name} with native resume`;
+  revive.setAttribute("aria-label", `Revive ${session.name} with native resume`);
+  const archive = row.querySelector('[data-action="archive"]');
+  archive.hidden = session.status !== "exited";
+  archive.setAttribute("aria-label", `Archive ${session.name}`);
+  const stop = row.querySelector('[data-action="kill"]');
+  stop.hidden = session.status === "exited";
+  const stopLabel = session.status === "queued" ? "Cancel queued session" : `Stop ${session.name}`;
+  stop.title = stopLabel;
+  stop.setAttribute("aria-label", stopLabel);
+
+  const wideMeta = row.querySelector(".row-wide-meta");
+  wideMeta.hidden = !state.wideMode;
+  wideMeta.querySelector("[data-row-model]").textContent = model;
+  wideMeta.querySelector("[data-row-effort]").textContent = effort;
+  wideMeta.querySelector("[data-row-cost]").textContent = cost(session.cost_usd);
+
+  const reply = row.querySelector(".row-reply");
+  const replyInput = row.querySelector("input[data-reply]");
+  reply.hidden = !isAttention(session) && !replyInput.value;
+  replyInput.setAttribute("aria-label", `Reply to ${session.name}`);
+  row.querySelector(".row-reply-send").setAttribute("aria-label", `Send reply to ${session.name}`);
 }
 
 function isAttention(session) {
@@ -422,24 +515,20 @@ function renderRow(session) {
   const restartCount = Number.isInteger(Number(session.restarts)) ? Number(session.restarts) : 0;
   const lastLine = session.last_line || "No output yet";
   const pinLabel = session.pinned ? "Unpin" : "Pin";
-  const revive = session.status === "exited" && session.resume_id
-    ? `<button type="button" data-action="revive" class="row-action" title="Revive with native resume" aria-label="Revive ${escapeHtml(session.name)} with native resume">↻</button>`
-    : "";
-  const archive = session.status === "exited"
-    ? `<button type="button" data-action="archive" class="row-action" title="Archive stopped session" aria-label="Archive ${escapeHtml(session.name)}">▣</button>`
-    : "";
-  const stop = session.status === "exited"
-    ? ""
-    : `<button type="button" data-action="kill" class="row-action row-action-danger" title="${session.status === "queued" ? "Cancel queued session" : "Stop session"}" aria-label="${session.status === "queued" ? "Cancel queued session" : `Stop ${escapeHtml(session.name)}`}">×</button>`;
-  const reply = isAttention(session) ? `<div class="row-reply"><input data-reply type="text" maxlength="500" placeholder="Reply without opening terminal" aria-label="Reply to ${escapeHtml(session.name)}" /><button type="button" data-action="reply" class="row-reply-send" title="Send reply" aria-label="Send reply to ${escapeHtml(session.name)}">↵</button></div>` : "";
-  const wideMeta = state.wideMode ? `<div class="row-wide-meta"><span><small>MODEL</small><b>${escapeHtml(model)}</b></span><span><small>EFFORT</small><b>${escapeHtml(effort)}</b></span><span><small>COST</small><b>${escapeHtml(cost(session.cost_usd))}</b></span></div>` : "";
-  return `<article class="fleet-row${active}${unread}" data-id="${escapeHtml(session.id)}" role="listitem" tabindex="0" aria-keyshortcuts="Enter Space" aria-label="${escapeHtml(`${session.name}, ${meta.label}, ${repo}, ${branch}, progress ${progress}, ${restartCount} restarts`)}">
-    <div class="row-identity"><span class="status-glyph tone-${meta.tone}" title="${meta.label}" aria-hidden="true">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name">${escapeHtml(session.name)}${session.unread ? '<span class="unread-dot" title="Unread attention"></span>' : ""}</div><div class="row-folder"><span class="row-repo" title="Repository">${escapeHtml(repo)}</span><span class="row-branch" title="Branch">${escapeHtml(branch)}</span><span class="row-status-label">${escapeHtml(meta.label)}</span></div></div></div>
+  const reviveHidden = session.status === "exited" && session.resume_id ? "" : " hidden";
+  const archiveHidden = session.status === "exited" ? "" : " hidden";
+  const stopHidden = session.status === "exited" ? " hidden" : "";
+  const stopLabel = session.status === "queued" ? "Cancel queued session" : `Stop ${session.name}`;
+  const replyHidden = isAttention(session) ? "" : " hidden";
+  const wideHidden = state.wideMode ? "" : " hidden";
+  const portsLabel = ports(session.ports);
+  return `<article class="fleet-row${active}${unread}" data-id="${escapeHtml(session.id)}" role="listitem" tabindex="0" aria-keyshortcuts="Enter Space" aria-label="${escapeHtml(`${session.name}, ${meta.label}, ${repo}, ${branch}, progress ${progress}, ${restartCount} restarts, ports ${portsLabel}`)}">
+    <div class="row-identity"><span class="status-glyph tone-${meta.tone}" title="${escapeHtml(meta.label)}" aria-hidden="true">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name"><span class="row-name-text">${escapeHtml(session.name)}</span>${session.unread ? '<span class="unread-dot" title="Unread attention"></span>' : ""}</div><div class="row-folder"><span class="row-repo" title="Repository">${escapeHtml(repo)}</span><span class="row-branch" title="Branch">${escapeHtml(branch)}</span><span class="row-status-label">${escapeHtml(meta.label)}</span><span class="row-ports" title="Allocated ports">ports ${escapeHtml(portsLabel)}</span></div></div></div>
     <div class="row-metrics"><span class="agent-badge agent-${session.agent}" title="${session.agent === "codex" ? "Codex" : "Claude Code"}" aria-label="${session.agent === "codex" ? "Codex" : "Claude Code"}">${agentLabel}</span><span class="row-progress" title="Tool progress"><small>PROG</small><b>${escapeHtml(progress)}</b></span><span class="row-restarts" title="Restart count">↻ ${restartCount}</span></div>
     <div class="row-dwell"><span>${dwell(session.status_since)}</span><small class="row-last-line" title="${escapeHtml(lastLine)}">${escapeHtml(lastLine)}</small></div>
-    <div class="row-actions"><button type="button" data-action="pin" class="row-action ${session.pinned ? "row-action-active" : ""}" title="${pinLabel}" aria-label="${pinLabel} ${escapeHtml(session.name)}">${session.pinned ? "◆" : "◇"}</button><button type="button" data-action="focus" class="row-action" title="Focus terminal" aria-label="Focus ${escapeHtml(session.name)} terminal">↗</button>${revive}${archive}${stop}</div>
-    ${wideMeta}
-    ${reply}
+    <div class="row-actions"><button type="button" data-action="pin" class="row-action ${session.pinned ? "row-action-active" : ""}" title="${pinLabel}" aria-label="${pinLabel} ${escapeHtml(session.name)}">${session.pinned ? "◆" : "◇"}</button><button type="button" data-action="focus" class="row-action" title="Focus terminal" aria-label="Focus ${escapeHtml(session.name)} terminal">↗</button><button type="button" data-action="revive" class="row-action" title="Revive ${escapeHtml(session.name)} with native resume" aria-label="Revive ${escapeHtml(session.name)} with native resume"${reviveHidden}>↻</button><button type="button" data-action="archive" class="row-action" title="Archive stopped session" aria-label="Archive ${escapeHtml(session.name)}"${archiveHidden}>▣</button><button type="button" data-action="kill" class="row-action row-action-danger" title="${escapeHtml(stopLabel)}" aria-label="${escapeHtml(stopLabel)}"${stopHidden}>×</button></div>
+    <div class="row-wide-meta"${wideHidden}><span><small>MODEL</small><b data-row-model>${escapeHtml(model)}</b></span><span><small>EFFORT</small><b data-row-effort>${escapeHtml(effort)}</b></span><span><small>COST</small><b data-row-cost>${escapeHtml(cost(session.cost_usd))}</b></span></div>
+    <div class="row-reply"${replyHidden}><input data-reply type="text" maxlength="500" placeholder="Reply without opening terminal" aria-label="Reply to ${escapeHtml(session.name)}" /><button type="button" data-action="reply" class="row-reply-send" title="Send reply" aria-label="Send reply to ${escapeHtml(session.name)}">↵</button></div>
   </article>`;
 }
 
