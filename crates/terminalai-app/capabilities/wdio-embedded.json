@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "wdio-embedded",
+  "description": "Embedded WebdriverIO capability for isolated UI tests",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "wdio:allow-execute",
+    "wdio-webdriver:default"
+  ]
+}

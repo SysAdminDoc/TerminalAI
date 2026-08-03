@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "wdio",
+  "description": "WebdriverIO-only capability for isolated UI tests",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "wdio:allow-execute"
+  ]
+}

@@ -880,7 +880,26 @@ fn flush_output_batches(
 }
 
 fn run_app() -> Result<(), String> {
-    tauri::Builder::default()
+    #[cfg(feature = "wdio")]
+    {
+        // tauri-driver passes this through msedgedriver, but EdgeDriver may not
+        // preserve it when it launches the application binary. Set it before
+        // Tauri creates the first WebView2 environment so external and embedded
+        // WDIO providers have the same automation contract.
+        std::env::set_var("TAURI_AUTOMATION", "true");
+        std::env::set_var("TAURI_WEBVIEW_AUTOMATION", "true");
+    }
+    #[cfg_attr(not(feature = "wdio"), allow(unused_mut))]
+    let mut builder = tauri::Builder::default();
+    #[cfg(feature = "wdio")]
+    {
+        builder = builder.plugin(tauri_plugin_wdio::init());
+    }
+    #[cfg(feature = "wdio-embedded")]
+    {
+        builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+    }
+    builder
         .invoke_handler(tauri::generate_handler![
             app_version,
             fleet_snapshot,
@@ -909,17 +928,21 @@ fn run_app() -> Result<(), String> {
             preflight_fix
         ])
         .setup(|app| {
-            let client = match connect_or_start_daemon() {
-                Ok(client) => match client.subscribe() {
-                    Ok(()) => Some(client),
+            let client = if cfg!(feature = "wdio") {
+                None
+            } else {
+                match connect_or_start_daemon() {
+                    Ok(client) => match client.subscribe() {
+                        Ok(()) => Some(client),
+                        Err(error) => {
+                            eprintln!("TerminalAI daemon subscription unavailable: {error}");
+                            None
+                        }
+                    },
                     Err(error) => {
-                        eprintln!("TerminalAI daemon subscription unavailable: {error}");
+                        eprintln!("TerminalAI daemon unavailable: {error}");
                         None
                     }
-                },
-                Err(error) => {
-                    eprintln!("TerminalAI daemon unavailable: {error}");
-                    None
                 }
             };
             let presets = PresetStore::load_default().map_err(|error| {

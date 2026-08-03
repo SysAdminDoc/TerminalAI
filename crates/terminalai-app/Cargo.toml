@@ -12,6 +12,11 @@ authors.workspace = true
 name = "terminalai"
 path = "src/main.rs"
 
+[features]
+default = []
+wdio = ["dep:tauri-plugin-wdio"]
+wdio-embedded = ["wdio", "dep:tauri-plugin-wdio-webdriver"]
+
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }
 
@@ -24,3 +29,5 @@ serde_json.workspace = true
 thiserror.workspace = true
 dirs.workspace = true
 rfd = { version = "0.17.2", default-features = false, features = ["common-controls-v6"] }
+tauri-plugin-wdio = { version = "1.2.0", optional = true }
+tauri-plugin-wdio-webdriver = { version = "1.2.0", optional = true }

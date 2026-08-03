@@ -32,3 +32,4 @@ desktop.ini
 # Local config and captures
 *.local.toml
 screenshots/tmp/
+web/artifacts/

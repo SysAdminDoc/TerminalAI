@@ -6,6 +6,12 @@ import "@xterm/xterm/css/xterm.css";
 import { reconcileKeyedRows } from "./fleetRows.js";
 import "./styles.css";
 
+const WDIO_BUILD = import.meta.env.VITE_TERMINALAI_WDIO === "1";
+
+if (WDIO_BUILD) {
+  await import("@wdio/tauri-plugin");
+}
+
 const STATUS_ORDER = {
   "needs-approval": 8,
   "awaiting-input": 7,
@@ -73,6 +79,7 @@ const state = {
   preflightMode: false,
   preflightLoading: false,
   preflightReason: null,
+  snapshotLoading: true,
   announcementQueue: new Map(),
   announcementTimer: null,
   orderFreeze: null,
@@ -518,6 +525,10 @@ function renderRows() {
   );
 }
 
+function renderSnapshotLoading() {
+  $("fleet-loading").classList.toggle("view-hidden", !state.snapshotLoading);
+}
+
 function currentFleetOrder() {
   return Array.from($("fleet-list").querySelectorAll('[role="option"]'))
     .filter((row) => !row.hidden)
@@ -877,6 +888,8 @@ async function markReviewed(id, button) {
 }
 
 async function loadSnapshot() {
+  state.snapshotLoading = true;
+  renderSnapshotLoading();
   try {
     const snapshot = await invoke("fleet_snapshot");
     state.sessions = snapshot.sessions ?? [];
@@ -900,6 +913,9 @@ async function loadSnapshot() {
     syncPreflightVisibility();
     syncReviewVisibility();
     void loadPreflight(true);
+  } finally {
+    state.snapshotLoading = false;
+    renderSnapshotLoading();
   }
 }
 
@@ -1330,4 +1346,13 @@ async function start() {
   }, 1000);
 }
 
-start();
+async function startWhenReady() {
+  if (WDIO_BUILD) {
+    await new Promise((resolve) => {
+      window.addEventListener("terminalai-wdio-ready", resolve, { once: true });
+    });
+  }
+  await start();
+}
+
+void startWhenReady();
