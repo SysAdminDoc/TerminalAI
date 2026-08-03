@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.sysadmindoc.terminalai",
   "build": {
-    "beforeBuildCommand": "npm run build",
-    "beforeDevCommand": "npm run dev -- --host 127.0.0.1",
+    "beforeBuildCommand": { "script": "npm run build", "cwd": "../../web" },
+    "beforeDevCommand": { "script": "npm run dev -- --host 127.0.0.1", "cwd": "../../web" },
     "devUrl": "http://127.0.0.1:5173",
     "frontendDist": "../../web/dist"
   },
