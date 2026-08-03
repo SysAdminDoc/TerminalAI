@@ -140,6 +140,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   laid out below it.
 - Closing the launcher, or pressing Enter in any launcher field, no longer spawns an agent —
   every dialog control is an explicit button and the form refuses submission outright.
+- The NSIS and MSI bundles now ship `terminalai-daemon.exe` and `terminalai-probe.exe` as Tauri
+  sidecars, so an installed copy can start. Previously the app resolved a sibling daemon the
+  bundle never placed next to it, and every installed copy exited before drawing a window.
+- New release gate `scripts/verify-installer.ps1` installs the bundle into a scratch prefix,
+  asserts every declared sidecar arrived, launches the installed binary on the isolated display
+  with placement proof, waits for the daemon control pipe, then uninstalls.
 - An operator-configured agent path is now positively identified before it is spawned: its file
   stem must match the agent and a cached, deadline-bounded `--version` probe must name it.
   Previously the downstream agent/binary guard compared two values that were equal by

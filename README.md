@@ -125,6 +125,10 @@ cargo deny --target x86_64-pc-windows-msvc check advisories
 
 # Build unsigned Windows NSIS and MSI installers (from the repository root).
 cargo tauri build --ci --no-sign --bundles nsis,msi -- --manifest-path Cargo.toml
+
+# Release gate: install into a scratch prefix, launch, assert the window and the
+# daemon, then uninstall. Non-zero exit means do not publish.
+pwsh -NoProfile -File scripts/verify-installer.ps1
 ```
 
 Note that plain `cargo build --release` is only for the probe, daemon and tests: the
@@ -133,7 +137,13 @@ Note that plain `cargo build --release` is only for the probe, daemon and tests:
 shippable app binary comes from `cargo tauri build`, which enables Tauri's `custom-protocol`
 feature and embeds the built frontend.
 
-The Tauri build runs the Vite frontend build automatically. The installer is written to
+The Tauri build stages `terminalai-daemon.exe` and `terminalai-probe.exe` as sidecars and runs
+the Vite frontend build automatically (`scripts/prebuild.ps1`). The app spawns the daemon from
+its own directory, so a bundle without those sidecars installs cleanly and then exits before
+drawing a window — `scripts/verify-installer.ps1` exists to catch exactly that, because a build
+tree always has the sibling executables and never reproduces the failure.
+
+The installer is written to
 `target/release/bundle/nsis/` and `target/release/bundle/msi/`; both artifacts are intentionally
 unsigned. Windows SmartScreen may warn on first launch: choose **More info**, then **Run anyway**
 only if the installer came from your verified build or release source. The WebView2 dependency uses

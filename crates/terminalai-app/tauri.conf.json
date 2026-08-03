@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.sysadmindoc.terminalai",
   "build": {
-    "beforeBuildCommand": { "script": "npm run build", "cwd": "../../web" },
+    "beforeBuildCommand": { "script": "pwsh -NoProfile -File scripts/prebuild.ps1", "cwd": "../.." },
     "beforeDevCommand": { "script": "npm run dev -- --host 127.0.0.1", "cwd": "../../web" },
     "devUrl": "http://127.0.0.1:5173",
     "frontendDist": "../../web/dist"
@@ -30,6 +30,7 @@
     "active": true,
     "targets": ["nsis", "msi"],
     "icon": ["icons/icon.ico"],
+    "externalBin": ["binaries/terminalai-daemon", "binaries/terminalai-probe"],
     "windows": {
       "webviewInstallMode": {
         "type": "downloadBootstrapper"

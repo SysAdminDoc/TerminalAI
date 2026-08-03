@@ -10,6 +10,8 @@ dist/
 src-tauri/target/
 src-tauri/gen/
 crates/terminalai-app/gen/
+# Staged Tauri sidecars — rebuilt by scripts/stage-sidecars.ps1 on every bundle.
+crates/terminalai-app/binaries/
 
 # Editors
 .vscode/

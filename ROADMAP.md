@@ -182,13 +182,6 @@ researcher continues from R-88.
 
 ### P0
 
-- [ ] R-64 · P0 — Ship the daemon and probe inside the installer
-  Why: the installed application cannot start — the app requires a sibling `terminalai-daemon.exe` that the bundle never places next to it, so every user who installs rather than builds gets a process that exits before drawing a window.
-  Evidence: `crates/terminalai-app/tauri.conf.json` declares `bundle.targets` and `webviewInstallMode` but no `externalBin` or `resources`; `crates/terminalai-app/src/main.rs:266-273` resolves `terminalai-daemon.exe` beside `current_exe()` and errors if absent. Verified 2026-08-02: `TerminalAI_0.1.0_x64-setup.exe` is 1.1 MB against a 3.4 MB `terminalai.exe` plus a 924 KB daemon.
-  Touches: `crates/terminalai-app/tauri.conf.json`, release checklist, `README.md`
-  Acceptance: the NSIS and MSI bundles contain `terminalai-daemon.exe` (and `terminalai-probe.exe` if it is a supported entry point); a release-gate step installs into a scratch prefix, launches the installed binary, asserts the fleet window appears and the daemon starts, then uninstalls; the check fails loudly if any declared sidecar is missing from the bundle.
-  Complexity: S
-
 ### P1
 
 - [ ] R-68 · P1 — Give the daemon unwinding, or stop it panicking
