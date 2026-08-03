@@ -36,6 +36,7 @@ USAGE:
   terminalai-probe start   <claude|codex> [options] --json
   terminalai-probe stop    <session-id> --json
   terminalai-probe send    <session-id> <text> --json
+  terminalai-probe broadcast <session-id>... -- <text> [--json]  (one prompt, many sessions)
   terminalai-probe status  <session-id> --json
   terminalai-probe shutdown
   terminalai-probe pin     <session-id> --json      (toggle a pinned live grid)
@@ -81,6 +82,7 @@ fn main() {
         Some("start") => cmd_start(&args[1..]),
         Some("stop") => cmd_stop(&args[1..]),
         Some("send") => cmd_send(&args[1..]),
+        Some("broadcast") => cmd_broadcast(&args[1..]),
         Some("status") => cmd_status(&args[1..]),
         Some("shutdown") => cmd_shutdown(&args[1..]),
         Some("exec") => cmd_exec(&args[1..]),
@@ -181,6 +183,43 @@ fn cmd_send(args: &[String]) -> i32 {
     let text = args[1..].join(" ");
     let data = bracketed_paste(&text);
     match control_call(Request::Write { id, data }) {
+        Ok(response) => print_control_response(response, machine),
+        Err(error) => print_control_error(error, machine),
+    }
+}
+
+/// Send one prompt to several sessions.
+///
+/// Exits non-zero if any target refused, so a script broadcasting to a fleet
+/// finds out rather than reading "ok" and assuming every agent got it.
+fn cmd_broadcast(args: &[String]) -> i32 {
+    let (machine, args) = without_json(args);
+    let Some(separator) = args.iter().position(|arg| arg == "--") else {
+        return control_usage("broadcast <session-id>... -- <text> [--json]");
+    };
+    if separator == 0 || separator + 1 >= args.len() {
+        return control_usage("broadcast <session-id>... -- <text> [--json]");
+    }
+    let ids: Vec<SessionId> = args[..separator]
+        .iter()
+        .map(|id| SessionId(id.clone()))
+        .collect();
+    let data = bracketed_paste(&args[separator + 1..].join(" "));
+    match control_call(Request::Broadcast { ids, data }) {
+        Ok(Response::Broadcast { results }) if machine => print_json(results),
+        Ok(Response::Broadcast { results }) => {
+            let mut refused = 0;
+            for result in &results {
+                match &result.refusal {
+                    None => println!("{} delivered", result.id.0),
+                    Some(refusal) => {
+                        refused += 1;
+                        println!("{} skipped: {refusal}", result.id.0);
+                    }
+                }
+            }
+            i32::from(refused > 0)
+        }
         Ok(response) => print_control_response(response, machine),
         Err(error) => print_control_error(error, machine),
     }

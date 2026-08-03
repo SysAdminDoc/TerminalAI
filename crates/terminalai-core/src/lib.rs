@@ -73,7 +73,8 @@ pub use notification::{
 };
 pub use pty::{PtySession, PtySize};
 pub use registry::{
-    AdmissionConfig, AdmissionSnapshot, RegistryError, RegistryEvent, SessionRegistry,
+    AdmissionConfig, AdmissionSnapshot, BroadcastRefusal, BroadcastResult, RegistryError,
+    RegistryEvent, SessionRegistry,
     DEFAULT_MAX_LIVE_SESSIONS, DEFAULT_SESSION_BUDGET_USD,
 };
 pub use review::{collect_review, ReviewItem, MAX_REVIEW_DIFF_BYTES, REVIEW_REPOSITORY_TIMEOUT};

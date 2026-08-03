@@ -94,6 +94,12 @@ const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// their length, so the ceiling here is well under the frame limit rather than
 /// equal to it — a reply that cannot be framed is worse than a short one.
 pub const MAX_HISTORY_BYTES: u64 = 128 * 1024;
+/// Most sessions one broadcast may target.
+///
+/// Well above the fleet's ~30-session design point, and bounded so a malformed
+/// client cannot make the daemon iterate an arbitrary list while holding the
+/// registry lock once per entry.
+pub const MAX_BROADCAST_TARGETS: usize = 256;
 
 /// Sessions the supervisor did not start, reconciled from the agent's own
 /// registry with the CLI as a fallback when that registry is unreadable.
@@ -255,6 +261,16 @@ pub enum Request {
     TogglePin {
         id: SessionId,
     },
+    /// Send the same bytes to several sessions at once.
+    ///
+    /// Answered with one result per session rather than a single status: a
+    /// broadcast that says only "ok" or "failed" leaves the operator unable to
+    /// tell which agents received the prompt, and re-sending to find out
+    /// delivers it twice to the ones that already had it.
+    Broadcast {
+        ids: Vec<SessionId>,
+        data: String,
+    },
     Scrollback {
         id: SessionId,
     },
@@ -347,6 +363,9 @@ pub enum Response {
     },
     ScrollbackHistory {
         data: Vec<u8>,
+    },
+    Broadcast {
+        results: Vec<terminalai_core::BroadcastResult>,
     },
     GridSnapshot {
         grid: terminalai_core::TerminalGridSnapshot,
@@ -1060,6 +1079,27 @@ fn dispatch_with_endpoint(
                     Err(error) => Response::Error {
                         message: error.to_string(),
                     },
+                }
+            }
+        }
+        Request::Broadcast { ids, data } => {
+            if data.len() > MAX_WRITE_BYTES {
+                Response::Error {
+                    message: format!(
+                        "broadcast payload of {} bytes exceeds the {MAX_WRITE_BYTES}-byte limit",
+                        data.len()
+                    ),
+                }
+            } else if ids.len() > MAX_BROADCAST_TARGETS {
+                Response::Error {
+                    message: format!(
+                        "broadcast to {} sessions exceeds the {MAX_BROADCAST_TARGETS}-session limit",
+                        ids.len()
+                    ),
+                }
+            } else {
+                Response::Broadcast {
+                    results: registry.broadcast(&ids, data.as_bytes()),
                 }
             }
         }

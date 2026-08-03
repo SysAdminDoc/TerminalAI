@@ -9,6 +9,7 @@ import { reconcileKeyedRows } from "./fleetRows.js";
 import { countMessage, localizeDom, relativeDwell, t } from "./i18n.js";
 import { rateLimitTitle, rateLimitedLabel } from "./rateLimit.js";
 import { coverage, fleetTotals, folderOf, formatCost, formatTokens, rollupBy, TOKEN_FIELDS } from "./rollup.js";
+import { defaultSelection, isEligible, summarize, targets } from "./broadcast.js";
 import "./styles.css";
 
 const WDIO_BUILD = import.meta.env.VITE_TERMINALAI_WDIO === "1";
@@ -133,6 +134,7 @@ const state = {
   capabilityRequest: 0,
   snapshotLoading: true,
   historyLoading: false,
+  broadcastSelection: [],
   announcementQueue: new Map(),
   announcementTimer: null,
   orderFreeze: null,
@@ -1461,6 +1463,79 @@ function openRollup() {
   if (!dialog.open) dialog.showModal();
 }
 
+/**
+ * Send one prompt to several sessions.
+ *
+ * Every session is listed, ineligible ones included and greyed with the reason,
+ * because hiding them makes the fleet look smaller than it is at the moment the
+ * operator is deciding who to send to. Only eligible ones start ticked.
+ */
+function renderBroadcast() {
+  const rows = targets(state.sessions);
+  const eligible = rows.filter((row) => !row.reason).length;
+  $("broadcast-coverage").textContent = eligible
+    ? t("broadcast-eligible", { count: eligible })
+    : t("broadcast-none-eligible");
+  $("broadcast-list").innerHTML = rows
+    .map(({ session, reason }) => {
+      const checked = !reason && state.broadcastSelection.includes(session.id) ? " checked" : "";
+      const disabled = reason ? " disabled" : "";
+      const why = reason ? `<small class="broadcast-why">${escapeHtml(t(reason))}</small>` : "";
+      return `<label class="broadcast-row${reason ? " is-ineligible" : ""}"><input type="checkbox" data-broadcast-id="${escapeHtml(session.id)}"${checked}${disabled} /><span>${escapeHtml(session.id)} · ${escapeHtml(session.name)}</span>${why}</label>`;
+    })
+    .join("");
+  $("send-broadcast-button").disabled = eligible === 0;
+}
+
+function openBroadcast() {
+  state.broadcastSelection = defaultSelection(state.sessions);
+  renderBroadcast();
+  const dialog = $("broadcast-dialog");
+  if (!dialog.open) dialog.showModal();
+}
+
+function readBroadcastSelection() {
+  return [...$("broadcast-list").querySelectorAll("input[data-broadcast-id]")]
+    .filter((box) => box.checked && !box.disabled)
+    .map((box) => box.dataset.broadcastId);
+}
+
+async function sendBroadcast() {
+  const text = $("broadcast-input").value.trim();
+  if (!text) {
+    showToast(t("broadcast-empty-prompt"));
+    return;
+  }
+  // Re-checked at send time rather than trusted from when the dialog opened: a
+  // session can enter a permission prompt while the operator is typing, and the
+  // daemon would refuse it anyway.
+  const ids = readBroadcastSelection().filter((id) =>
+    isEligible(state.sessions.find((session) => session.id === id)),
+  );
+  if (!ids.length) {
+    showToast(t("broadcast-none-eligible"));
+    return;
+  }
+  try {
+    const results = await invoke("broadcast_prompt", { ids, text });
+    const { delivered, refused, total } = summarize(results);
+    // Both numbers, always. "Sent" alone, when four of nine were skipped, is
+    // the failure the per-session protocol exists to prevent.
+    const message = refused
+      ? `${t("broadcast-sent", { delivered, total })} · ${t("broadcast-refused", { count: refused })}`
+      : t("broadcast-sent", { delivered, total });
+    showToast(message, refused ? "" : "success");
+    if (!refused) {
+      $("broadcast-input").value = "";
+      $("broadcast-dialog").close();
+    } else {
+      renderBroadcast();
+    }
+  } catch (error) {
+    showToast(`Could not broadcast: ${error}`);
+  }
+}
+
 function createOutputChannel(id) {
   const generation = state.focusGeneration;
   const channel = new Channel();
@@ -2086,6 +2161,9 @@ function bindEvents() {
   $("cancel-launch-button").addEventListener("click", () => $("launcher-dialog").close());
   $("close-launcher-button").addEventListener("click", () => $("launcher-dialog").close());
   $("close-rollup-button").addEventListener("click", () => $("rollup-dialog").close());
+  $("broadcast-toggle").addEventListener("click", () => openBroadcast());
+  $("cancel-broadcast-button").addEventListener("click", () => $("broadcast-dialog").close());
+  $("send-broadcast-button").addEventListener("click", () => void sendBroadcast());
   // Launching costs tokens and writes to a real repository, so it is reachable only
   // from the launch button. The form never submits: implicit submission on Enter in
   // any field would otherwise spawn an agent the operator never asked for.

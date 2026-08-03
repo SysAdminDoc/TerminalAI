@@ -60,6 +60,17 @@ button { cursor: pointer; }
    qualifies them rather than being one. */
 .rollup-unpriced { color: var(--subtext0); font-weight: 400; }
 .rollup-total p { margin: 0; font-size: 13px; color: var(--subtext0); }
+.broadcast-dialog { max-width: 620px; width: min(620px, 92vw); }
+.broadcast-body { display: grid; gap: 14px; }
+.broadcast-targets { border: 1px solid var(--surface0); border-radius: 8px; padding: 10px 12px; margin: 0; }
+.broadcast-targets legend { padding: 0 6px; color: var(--subtext0); font-size: 12px; }
+#broadcast-list { display: grid; gap: 2px; max-height: 32vh; overflow-y: auto; }
+.broadcast-row { display: flex; align-items: baseline; gap: 8px; padding: 3px 4px; border-radius: 4px; font-size: 13px; }
+.broadcast-row:hover { background: var(--surface0); }
+/* Listed but clearly not a target, with the reason beside it — hiding these
+   would make the fleet look smaller than it is. */
+.broadcast-row.is-ineligible { color: var(--subtext0); }
+.broadcast-why { color: var(--subtext0); font-size: 11px; margin-left: auto; }
 .top-actions { display: flex; align-items: center; gap: 8px; }
 .button { border: 1px solid transparent; border-radius: 7px; padding: 8px 12px; color: var(--text); font-size: 12px; font-weight: 650; transition: border-color .16s ease, background .16s ease, transform .16s ease; }.button:hover { transform: translateY(-1px); }.button:active { transform: translateY(0); }
 .button-primary { background: linear-gradient(135deg, #cba6f7, #b4befe); color: #1e1e2e; box-shadow: 0 6px 20px rgba(203, 166, 247, .16); }.button-primary:hover { background: linear-gradient(135deg, #d8b9ff, #c3ccff); }

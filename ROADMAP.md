@@ -2,10 +2,6 @@
 
 Single task tracker for this repo. Newest phase at the top; completed items are removed.
 
-## v0.4.0 — many sessions, one operator
-
-- [ ] Broadcast a prompt to a selected set of sessions
-
 ## v0.5.0 — beyond the terminal
 
 - [ ] ACP transport as an alternative to the pty, for a compact native chat view

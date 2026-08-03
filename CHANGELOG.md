@@ -7,6 +7,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Broadcast one prompt to several sessions, from a dialog in the fleet toolbar or with
+  `terminalai-probe broadcast <id>... -- <text>`. The result is reported per session, never as one
+  status: a broadcast that says only "sent" leaves the operator unable to tell which agents got the
+  prompt, and re-sending to find out delivers it twice to the ones that already had it. A session
+  waiting on a permission decision is refused by name — a permission prompt is a specific question
+  with a small set of valid answers, and prompt text answers something, just not what was meant —
+  while a session merely asking a question does receive it. Ineligible sessions are listed in the
+  dialog with their reason rather than hidden, the selection is re-checked at send time because a
+  session can enter a permission prompt while the operator is typing, and the CLI exits non-zero if
+  anything was refused.
+
 - Cost and token rollup across the fleet. The header's spend figure is now a control that opens a
   breakdown by agent, by project folder, and by session, each with its own token totals — cost and
   tokens answer different questions, and a run heavy in cache reads costs about what one heavy in

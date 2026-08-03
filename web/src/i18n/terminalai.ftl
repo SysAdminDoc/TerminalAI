@@ -104,6 +104,24 @@ count-unknown-external-other = { $count } unknown
 fleet-live = live
 fleet-spent = spent
 rollup-title = Fleet spend
+broadcast-title = Broadcast a prompt
+label-broadcast = Broadcast a prompt to several sessions
+broadcast-targets = Send to
+broadcast-prompt = Prompt
+broadcast-placeholder = Sent to every selected session
+button-broadcast = Send to selected
+button-broadcast-short = Broadcast
+button-broadcast-open = Send one prompt to several sessions
+broadcast-none-eligible = No session can take a prompt right now
+broadcast-eligible = { $count } { $count ->
+    [one] session can receive it
+   *[other] sessions can receive it
+  }
+broadcast-skip-approval = waiting for a permission decision — answer it directly
+broadcast-skip-not-running = not running
+broadcast-sent = Sent to { $delivered } of { $total }
+broadcast-refused = { $count } skipped
+broadcast-empty-prompt = Type a prompt first
 label-rollup = Fleet cost and token rollup
 button-open-rollup = Break down what the fleet has spent
 rollup-empty = No sessions yet

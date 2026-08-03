@@ -279,6 +279,51 @@ impl Inner {
     }
 }
 
+/// Why one session did not receive a broadcast.
+///
+/// Named cases rather than a message, so the UI can tell "this one is not
+/// running" from "this one is waiting for a permission decision" — the operator
+/// does something different about each.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BroadcastRefusal {
+    /// No such session.
+    Missing,
+    /// The row exists but has no live process behind it.
+    NotRunning,
+    /// Waiting on a permission decision, where prompt text is not an answer.
+    NeedsApproval,
+    /// The write itself failed.
+    WriteFailed(String),
+}
+
+impl std::fmt::Display for BroadcastRefusal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Missing => write!(formatter, "no such session"),
+            Self::NotRunning => write!(formatter, "not running"),
+            Self::NeedsApproval => {
+                write!(formatter, "waiting for a permission decision; answer it directly")
+            }
+            Self::WriteFailed(detail) => write!(formatter, "write failed: {detail}"),
+        }
+    }
+}
+
+/// What happened to one session in a broadcast.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BroadcastResult {
+    pub id: SessionId,
+    /// `None` means the bytes were written.
+    pub refusal: Option<BroadcastRefusal>,
+}
+
+impl BroadcastResult {
+    pub fn delivered(&self) -> bool {
+        self.refusal.is_none()
+    }
+}
+
 /// A panic while holding the registry lock must not turn the daemon into a
 /// second, silent failure. Recover the guard so callers can inspect or shut
 /// down the fleet, while the daemon checks [`SessionRegistry::is_poisoned`]
@@ -625,6 +670,56 @@ impl SessionRegistry {
     pub fn write(&self, id: &SessionId, bytes: &[u8]) -> Result<(), RegistryError> {
         let pty = self.pty(id)?;
         pty.write(bytes).map_err(RegistryError::from)
+    }
+
+    /// Send the same bytes to several sessions, reporting each one separately.
+    ///
+    /// The per-session result is the whole point. A broadcast that returns one
+    /// success or one error leaves the operator unable to tell which agents got
+    /// the prompt, and re-sending to find out delivers it twice to the ones
+    /// that already had it.
+    ///
+    /// Nothing here is best-effort in the other direction either: a session
+    /// that cannot take the prompt is named and skipped rather than dropped.
+    pub fn broadcast(&self, ids: &[SessionId], bytes: &[u8]) -> Vec<BroadcastResult> {
+        ids.iter()
+            .map(|id| {
+                let refusal = self.broadcast_eligibility(id);
+                if let Some(refusal) = refusal {
+                    return BroadcastResult {
+                        id: id.clone(),
+                        refusal: Some(refusal),
+                    };
+                }
+                match self.write(id, bytes) {
+                    Ok(()) => BroadcastResult {
+                        id: id.clone(),
+                        refusal: None,
+                    },
+                    Err(error) => BroadcastResult {
+                        id: id.clone(),
+                        refusal: Some(BroadcastRefusal::WriteFailed(error.to_string())),
+                    },
+                }
+            })
+            .collect()
+    }
+
+    /// Why this session cannot take a broadcast, if it cannot.
+    fn broadcast_eligibility(&self, id: &SessionId) -> Option<BroadcastRefusal> {
+        let state = lock_state(&self.inner);
+        let Some(entry) = state.entries.get(id) else {
+            return Some(BroadcastRefusal::Missing);
+        };
+        match entry.session.status {
+            // A permission prompt is a specific question with a small set of
+            // valid answers. Typing a paragraph of prompt text at it answers
+            // something — just not what the operator meant, and possibly
+            // "yes". These are answered one at a time, deliberately.
+            SessionStatus::NeedsApproval => Some(BroadcastRefusal::NeedsApproval),
+            _ if entry.pty.is_none() => Some(BroadcastRefusal::NotRunning),
+            _ => None,
+        }
     }
 
     /// Focus a live process and return the bounded raw tail for renderer
@@ -4020,5 +4115,71 @@ mod tests {
             spool.history(&id, 1024).is_empty(),
             "an archived row kept its history on disk"
         );
+    }
+
+    #[test]
+    fn a_broadcast_reports_every_session_separately() {
+        // One overall status would leave the operator unable to tell which
+        // agents got the prompt, and re-sending to find out delivers it twice
+        // to the ones that already had it.
+        let registry = SessionRegistry::new();
+        let running = SessionId::new(1);
+        let stopped = SessionId::new(2);
+        insert_session(&registry, &running, SessionStatus::Working);
+        insert_session(&registry, &stopped, SessionStatus::Exited);
+        let missing = SessionId::new(9);
+
+        let results = registry.broadcast(&[running.clone(), stopped.clone(), missing.clone()], b"hi");
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].id, running);
+        assert_eq!(results[1].refusal, Some(BroadcastRefusal::NotRunning));
+        assert_eq!(results[2].refusal, Some(BroadcastRefusal::Missing));
+    }
+
+    #[test]
+    fn a_session_waiting_for_a_permission_decision_is_never_broadcast_to() {
+        // A permission prompt is a specific question with a small set of valid
+        // answers. Typing a paragraph at it answers something — just not what
+        // the operator meant, and possibly "yes".
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        insert_session(&registry, &id, SessionStatus::NeedsApproval);
+        let results = registry.broadcast(&[id], b"go ahead and refactor everything");
+        assert_eq!(results[0].refusal, Some(BroadcastRefusal::NeedsApproval));
+        assert!(!results[0].delivered());
+    }
+
+    #[test]
+    fn a_session_that_is_merely_asking_a_question_still_receives_the_prompt() {
+        // AwaitingInput is free-text; refusing it too would make broadcast
+        // useless for the case it is most obviously for.
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        insert_session(&registry, &id, SessionStatus::AwaitingInput);
+        // No pty is attached in this fixture, so the refusal must be about the
+        // process rather than about the status.
+        let results = registry.broadcast(&[id], b"the answer");
+        assert_eq!(results[0].refusal, Some(BroadcastRefusal::NotRunning));
+    }
+
+    #[test]
+    fn broadcasting_to_nothing_is_an_empty_report_rather_than_an_error() {
+        let registry = SessionRegistry::new();
+        assert!(registry.broadcast(&[], b"hi").is_empty());
+    }
+
+    #[test]
+    fn every_refusal_reads_differently_to_the_operator() {
+        // They are acted on differently: start it, answer it, or look at why
+        // the write failed.
+        let refusals = [
+            BroadcastRefusal::Missing.to_string(),
+            BroadcastRefusal::NotRunning.to_string(),
+            BroadcastRefusal::NeedsApproval.to_string(),
+            BroadcastRefusal::WriteFailed("pipe closed".into()).to_string(),
+        ];
+        let unique: std::collections::BTreeSet<_> = refusals.iter().collect();
+        assert_eq!(unique.len(), 4, "{refusals:?}");
+        assert!(refusals[3].contains("pipe closed"));
     }
 }

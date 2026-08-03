@@ -359,6 +359,29 @@ fn stream_scrollback(
     }
 }
 
+/// Send one prompt to several sessions, returning what happened to each.
+///
+/// The per-session result is returned to the caller rather than collapsed into
+/// a status, so the UI can say "sent to 5 of 9" instead of "sent" — a broadcast
+/// that reports only success is one the operator has to verify by hand.
+#[tauri::command]
+fn broadcast_prompt(
+    ids: Vec<SessionId>,
+    text: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<terminalai_core::BroadcastResult>, String> {
+    let client = daemon_client(&state)?;
+    // The same bracketed-paste framing a single reply uses. Without it a
+    // multi-line prompt is submitted a line at a time, so the agent acts on the
+    // first fragment.
+    let data = format!("\u{1b}[200~{text}\u{1b}[201~\r");
+    match daemon_response(&client, Request::Broadcast { ids, data })? {
+        Response::Broadcast { results } => Ok(results),
+        Response::Error { message } => Err(message),
+        other => Err(format!("unexpected broadcast response: {other:?}")),
+    }
+}
+
 /// Output the in-memory ring has already dropped, read from the disk tier.
 ///
 /// Streamed on a channel like the ring is, because it is the same kind of
@@ -1347,6 +1370,7 @@ fn run_app() -> Result<(), String> {
             subscribe_output,
             stream_scrollback,
             stream_scrollback_history,
+            broadcast_prompt,
             attach_session_output,
             revive_session,
             archive_session,
