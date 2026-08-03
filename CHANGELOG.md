@@ -60,6 +60,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   structured JSONL crash records for daemon or app panics.
 - R-28 adds unsigned NSIS/MSI packaging with Evergreen WebView2 bootstrapper mode and a read-only
   GitHub release check in the shell; update checks never download or install an artifact.
+- R-34 routes hook settings, session state and launcher presets through one fsync-backed atomic
+  writer with advisory locking and `.bak` recovery copies.
 - Claude/Codex hook payloads now share one parser, including session/thread id aliases and
   permission/idle notification normalization for approval and awaiting-input states.
 - The fleet now has a needs-input filter and per-row reply controls that send bracketed paste

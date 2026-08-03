@@ -11,6 +11,7 @@
 
 pub mod agent;
 pub mod app_server;
+pub mod atomic_file;
 pub mod diagnostics;
 pub mod environment;
 pub mod grid;

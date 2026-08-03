@@ -10,6 +10,7 @@ use serde_json::{json, Map, Value as JsonValue};
 use toml_edit::{value, Array, ArrayOfTables, Document, Item, Table, Value as TomlValue};
 
 use crate::agent::Agent;
+use crate::atomic_file::write_atomic;
 
 pub const MANAGED_MARKER: &str = "--terminalai-managed";
 
@@ -539,7 +540,7 @@ fn write_if_changed(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, after)?;
+    write_atomic(path, after.as_bytes(), true)?;
     Ok(true)
 }
 

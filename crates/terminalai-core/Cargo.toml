@@ -17,3 +17,9 @@ thiserror.workspace = true
 vte.workspace = true
 dirs.workspace = true
 which.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true

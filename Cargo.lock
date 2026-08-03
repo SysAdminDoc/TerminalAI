@@ -3370,6 +3370,7 @@ name = "terminalai-core"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "libc",
  "portable-pty",
  "serde",
  "serde_json",
@@ -3377,6 +3378,7 @@ dependencies = [
  "toml_edit 0.20.2",
  "vte",
  "which",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

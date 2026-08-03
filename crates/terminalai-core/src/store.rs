@@ -9,6 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::agent::Agent;
+use crate::atomic_file::write_atomic;
 use crate::launch::{LaunchSpec, ResolvedCommand};
 use crate::session::{Session, SessionId};
 
@@ -99,7 +100,7 @@ impl SessionStoreSnapshot {
         }
         let mut text = serde_json::to_string_pretty(self)?;
         text.push('\n');
-        fs::write(path, text)?;
+        write_atomic(path, text.as_bytes(), true)?;
         Ok(())
     }
 }

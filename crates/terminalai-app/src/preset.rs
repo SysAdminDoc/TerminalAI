@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
+use terminalai_core::atomic_file::write_atomic;
 use terminalai_core::launch::LaunchSpec;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,14 +88,7 @@ impl PresetStore {
         fs::create_dir_all(parent).map_err(|error| format!("create preset directory: {error}"))?;
         let json = serde_json::to_vec_pretty(entries)
             .map_err(|error| format!("encode presets: {error}"))?;
-        let temp = self
-            .path
-            .with_extension(format!("json.tmp-{}", std::process::id()));
-        fs::write(&temp, json).map_err(|error| format!("write presets: {error}"))?;
-        if self.path.exists() {
-            fs::remove_file(&self.path).map_err(|error| format!("replace presets: {error}"))?;
-        }
-        fs::rename(&temp, &self.path).map_err(|error| format!("commit presets: {error}"))
+        write_atomic(&self.path, &json, true).map_err(|error| format!("write presets: {error}"))
     }
 }
 
