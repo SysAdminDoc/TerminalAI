@@ -16,6 +16,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::agent::{AgentBinary, Origin};
 use crate::app_server::{AgentEvent, AppServerEvent};
 use crate::diagnostics::{LogEntry, StatusSource};
+use crate::lease;
 use crate::domain::{AgentDomain, AgentSession, DomainError, LocalPtyDomain};
 use crate::environment::{self, EnvironmentError, EnvironmentSpec};
 use crate::grid::{TerminalGrid, TerminalGridSnapshot};
@@ -1347,19 +1348,46 @@ impl SessionRegistry {
     ) -> Result<(), RegistryError> {
         let (cwd, environment_spec, ports) = self.runtime_environment(id)?;
         tracing::debug!("preparing session environment");
-        let environment = environment::variables(&id.0, &ports);
+        let mut environment = environment::variables(&id.0, &ports);
+
+        // The repository's own lease, applied before the raw setup hook so the
+        // hook sees the copied config, the compose project name and the session
+        // database URL it is meant to build on.
+        let lease = match lease::Lease::load(&cwd) {
+            Ok(lease) => lease,
+            Err(error) => {
+                // A lease the operator wrote but that cannot be read is refused,
+                // not ignored: starting anyway would produce a session that
+                // looks isolated and shares a database.
+                return Err(RegistryError::Environment(EnvironmentError::HookSpawn {
+                    phase: "lease",
+                    cause: error.to_string(),
+                }));
+            }
+        };
+        let resolved_lease = lease.as_ref().map(|lease| lease.resolve(&id.0, &cwd));
+        if let Some(resolved) = &resolved_lease {
+            if let Err(error) = self.apply_lease(id, resolved, &cwd, &mut environment) {
+                self.report_failed_teardown(
+                    id,
+                    environment::run_teardown(&environment_spec, &id.0, &cwd, &ports),
+                );
+                return Err(error);
+            }
+        }
+
         if let Err(error) = environment::run_setup(&environment_spec, &id.0, &cwd, &ports) {
-            let _ = environment::run_teardown(&environment_spec, &id.0, &cwd, &ports);
+            self.report_failed_teardown(id, environment::run_teardown(&environment_spec, &id.0, &cwd, &ports));
             return Err(error.into());
         }
         if !self.start_is_current(id, generation) {
-            let _ = environment::run_teardown(&environment_spec, &id.0, &cwd, &ports);
+            self.report_failed_teardown(id, environment::run_teardown(&environment_spec, &id.0, &cwd, &ports));
             return Err(RegistryError::NotRunning(id.clone()));
         }
         let pty = match self.spawn_pty(id, command, generation, &environment) {
             Ok(pty) => pty,
             Err(error) => {
-                let _ = environment::run_teardown(&environment_spec, &id.0, &cwd, &ports);
+                self.report_failed_teardown(id, environment::run_teardown(&environment_spec, &id.0, &cwd, &ports));
                 return Err(error);
             }
         };
@@ -1382,7 +1410,7 @@ impl SessionRegistry {
         };
         if !accepted {
             let _ = pty.kill();
-            let _ = environment::run_teardown(&environment_spec, &id.0, &cwd, &ports);
+            self.report_failed_teardown(id, environment::run_teardown(&environment_spec, &id.0, &cwd, &ports));
             return Err(RegistryError::NotRunning(id.clone()));
         }
         let background = {
@@ -1451,6 +1479,113 @@ impl SessionRegistry {
                 && !entry.stop_requested
                 && entry.session.phase == SessionPhase::Preparing
         })
+    }
+
+    /// Provision one session's declared lease.
+    ///
+    /// Ordered cheapest-first so a failure leaves as little behind as possible:
+    /// copying files cannot fail halfway in a way that needs undoing, while the
+    /// database is the one step that creates state outside the working tree.
+    fn apply_lease(
+        &self,
+        id: &SessionId,
+        lease: &lease::ResolvedLease,
+        cwd: &std::path::Path,
+        environment: &mut Vec<(String, String)>,
+    ) -> Result<(), RegistryError> {
+        // Copying is from the repository into itself for an in-place session,
+        // which `copy_files` treats as a no-op; it matters once a session runs
+        // in its own worktree.
+        if !lease.copy.is_empty() {
+            let source = self.lease_source(id).unwrap_or_else(|| cwd.to_path_buf());
+            match lease::copy_files(&source, cwd, &lease.copy) {
+                Ok(copied) if !copied.is_empty() => {
+                    tracing::debug!(session = %id, "copied {} leased config file(s)", copied.len());
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    return Err(RegistryError::Environment(EnvironmentError::HookSpawn {
+                        phase: "lease-copy",
+                        cause: error.to_string(),
+                    }))
+                }
+            }
+        }
+
+        let admin_url = lease
+            .database
+            .as_ref()
+            .and_then(|database| std::env::var(&database.admin_url_env).ok());
+        if let (Some(database), Some(args)) = (&lease.database, lease.create_database_args()) {
+            let Some(admin) = admin_url.as_deref() else {
+                // Declared but unprovisioned is refused rather than skipped: a
+                // session that quietly falls back to the shared database is the
+                // exact collision this lease exists to prevent.
+                return Err(RegistryError::Environment(EnvironmentError::HookSpawn {
+                    phase: "lease-database",
+                    cause: format!(
+                        "{} declares a database lease but {} is not set",
+                        lease::LEASE_FILE,
+                        database.admin_url_env
+                    ),
+                }));
+            };
+            run_lease_command("psql", cwd, &args, Some(admin), "lease-database")?;
+        }
+
+        for (key, value) in lease.variables(admin_url.as_deref()) {
+            environment.retain(|(existing, _)| existing != &key);
+            environment.push((key, value));
+        }
+        Ok(())
+    }
+
+    /// Where leased config is copied from. `None` when the session runs in the
+    /// repository itself and there is nothing to copy across.
+    fn lease_source(&self, _id: &SessionId) -> Option<std::path::PathBuf> {
+        // Worktree-per-session (a separate roadmap item) is what makes this
+        // meaningful; until then the source and destination are the same
+        // directory and `copy_files` short-circuits.
+        None
+    }
+
+    /// Release a session's leased resources, returning every failure rather than
+    /// the first: a compose stack that failed to come down must still be
+    /// reported even if the database also failed to drop.
+    fn release_lease(&self, id: &SessionId, cwd: &std::path::Path) -> Vec<String> {
+        let mut failures = Vec::new();
+        let lease = match lease::Lease::load(cwd) {
+            Ok(Some(lease)) => lease,
+            Ok(None) => return failures,
+            Err(error) => {
+                failures.push(format!("lease could not be re-read for teardown: {error}"));
+                return failures;
+            }
+        };
+        let resolved = lease.resolve(&id.0, cwd);
+
+        if let Some(args) = resolved.compose_down_args() {
+            if let Err(error) = run_lease_command("docker", cwd, &args, None, "lease-compose") {
+                failures.push(error.to_string());
+            }
+        }
+        if let Some(args) = resolved.drop_database_args() {
+            let database = resolved.database.as_ref().expect("args imply a database");
+            match std::env::var(&database.admin_url_env) {
+                Ok(admin) => {
+                    if let Err(error) =
+                        run_lease_command("psql", cwd, &args, Some(&admin), "lease-database")
+                    {
+                        failures.push(error.to_string());
+                    }
+                }
+                Err(_) => failures.push(format!(
+                    "session database {} could not be dropped: {} is not set",
+                    database.name, database.admin_url_env
+                )),
+            }
+        }
+        failures
     }
 
     fn runtime_environment(
@@ -1643,14 +1778,22 @@ impl SessionRegistry {
             .name(format!("terminalai-environment-teardown-{id}"))
             .spawn(move || {
                 let _entered = span.enter();
-                let error = environment::run_teardown(
+                // The repository's lease is released first, so the operator's
+                // own teardown script runs against a tree whose containers and
+                // session database are already gone.
+                let mut failures = registry.release_lease(&worker_id, &worker_cwd);
+                if let Err(error) = environment::run_teardown(
                     &worker_spec,
                     &worker_id.0,
                     &worker_cwd,
                     &worker_ports,
-                )
-                .err()
-                .map(|error| error.to_string());
+                ) {
+                    failures.push(error.to_string());
+                }
+                // Every failure is reported, not just the first: a compose stack
+                // left running matters even when the database also failed to
+                // drop, and the operator has to clean up both.
+                let error = (!failures.is_empty()).then(|| failures.join("; "));
                 registry.finish_teardown(&worker_id, generation, final_phase, restart, error);
             });
         if let Err(error) = result {
@@ -1662,6 +1805,34 @@ impl SessionRegistry {
                 Some(format!("could not start teardown worker: {error}")),
             );
         }
+    }
+
+    /// Record a teardown that failed while unwinding a launch.
+    ///
+    /// These run after setup already did something — created a database,
+    /// started containers, wrote files — so a failure here means leaked
+    /// resources. It was previously discarded with `let _`, which made a leak
+    /// indistinguishable from a clean unwind; the launch error itself is still
+    /// what the caller returns, because that is the reason the session is gone.
+    fn report_failed_teardown(&self, id: &SessionId, result: Result<(), EnvironmentError>) {
+        let Err(error) = result else { return };
+        tracing::warn!(
+            session = %id,
+            "environment teardown failed while unwinding a launch; resources may be leaked: {error}"
+        );
+        self.emit(RegistryEvent::Log {
+            entry: LogEntry {
+                at: SystemTime::now(),
+                level: "WARN".to_owned(),
+                target: "terminalai::environment".to_owned(),
+                message: "environment teardown failed while unwinding a launch; resources may be leaked"
+                    .to_owned(),
+                fields: BTreeMap::from([
+                    ("session".to_owned(), id.0.clone()),
+                    ("error".to_owned(), error.to_string()),
+                ]),
+            },
+        });
     }
 
     fn finish_teardown(
@@ -2129,6 +2300,60 @@ fn decode_last_line_candidate(candidate_reversed: &mut Vec<u8>) -> Option<String
     let line = (!text.trim().is_empty()).then(|| text.into_owned());
     candidate_reversed.clear();
     line
+}
+
+/// Run one leased provisioning or teardown command.
+///
+/// `PGDATABASE`-style connection details are passed through the environment
+/// rather than the argument vector so a connection string carrying a password
+/// never appears in a process listing.
+fn run_lease_command(
+    program: &str,
+    cwd: &std::path::Path,
+    args: &[String],
+    connection: Option<&str>,
+    phase: &'static str,
+) -> Result<(), RegistryError> {
+    use std::process::{Command, Stdio};
+    let mut command = Command::new(program);
+    command
+        .args(args)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(connection) = connection {
+        command.env("PGURI", connection);
+        // psql reads the connection from the first non-option argument or from
+        // libpq's own variables; PGURI is not one of them, so pass it properly.
+        command.env("PGCONNECT_TIMEOUT", "10");
+        command.arg(connection);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = command
+        .output()
+        .map_err(|error| EnvironmentError::HookSpawn {
+            phase,
+            cause: format!("could not run {program}: {error}"),
+        })?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let detail = String::from_utf8_lossy(&output.stderr);
+    let detail = detail.trim();
+    Err(RegistryError::Environment(EnvironmentError::HookSpawn {
+        phase,
+        cause: if detail.is_empty() {
+            format!("{program} exited with {}", output.status)
+        } else {
+            format!("{program}: {detail}")
+        },
+    }))
 }
 
 #[cfg(test)]

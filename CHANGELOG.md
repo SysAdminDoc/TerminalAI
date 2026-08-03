@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Environment teardown failures during a failed launch were discarded with `let _`, so a leaked
+  database or a compose stack left running was indistinguishable from a clean unwind. They are now
+  logged with the session and the cause. Teardown also reports *every* failure rather than the
+  first, since a container left running matters even when the database also failed to drop.
 - A session that opened a synchronized update (DEC 2026) and then stopped writing — killed
   mid-frame, or with its write truncated — froze that session's terminal grid permanently. `vte`
   buffers everything between `ESC[?2026h` and `ESC[?2026l`, and arms a 150ms deadline when the
@@ -16,6 +20,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Repositories can declare a per-session environment lease in `.terminalai/environment.toml`, so it
+  is versioned with the code it describes. Beyond the deterministic port block that already existed,
+  a lease covers the three things parallel sessions actually collide on: untracked config copied in
+  by glob, a docker compose project prefix so two sessions build two stacks, and a Postgres database
+  cloned per session with `CREATE DATABASE … TEMPLATE …`. Leases are released when the session tears
+  down, and the raw setup/teardown script escape hatch is unchanged. Depth over generality is
+  deliberate — a generic hook API is what every other tool already tells the operator to write.
+  A lease that cannot be read, escapes the repository, or names a database that is not a plain
+  identifier refuses the launch rather than being ignored, because a session that quietly falls back
+  to the shared database is the exact collision the lease exists to prevent.
 - A session's work can now be landed from the review surface, through a gate that refuses rather
   than half-applies. Landings are serialised daemon-wide, so a request that waited in the queue is
   checked against a fresh read of the target rather than against what the review showed. A landing
