@@ -72,6 +72,7 @@ const state = {
   diagnosticsMode: false,
   logsMode: false,
   logs: [],
+  screenReaderMode: false,
   appVersion: null,
   storeQuarantine: null,
   storeQuarantineDismissed: false,
@@ -338,6 +339,17 @@ function setLogsMode(active) {
   state.logsMode = active;
   if (active) state.diagnosticsMode = false;
   syncDiagnosticsVisibility();
+}
+
+function setScreenReaderMode(active) {
+  state.screenReaderMode = Boolean(active);
+  if (state.terminal) state.terminal.options.screenReaderMode = state.screenReaderMode;
+  const toggle = $("screen-reader-toggle");
+  toggle.setAttribute("aria-pressed", String(state.screenReaderMode));
+  toggle.classList.toggle("row-action-active", state.screenReaderMode);
+  toggle.title = state.screenReaderMode
+    ? "Disable screen reader mode"
+    : "Enable screen reader mode (disables right-click copy and paste)";
 }
 
 function appendLogs(entries) {
@@ -1359,6 +1371,7 @@ function setupTerminal() {
     fontSize: 13,
     lineHeight: 1.25,
     scrollback: 2000,
+    screenReaderMode: false,
     theme: {
       background: "#11111b",
       foreground: "#cdd6f4",
@@ -1447,6 +1460,8 @@ function bindEvents() {
   });
   $("diagnostics-toggle").addEventListener("click", () => setDiagnosticsMode(!state.diagnosticsMode));
   $("logs-toggle").addEventListener("click", () => setLogsMode(!state.logsMode));
+  $("screen-reader-toggle").addEventListener("click", () => setScreenReaderMode(!state.screenReaderMode));
+  setScreenReaderMode(state.screenReaderMode);
   $("diagnostics-host").addEventListener("click", (event) => {
     if (!event.target.closest("button[data-diagnostics-action=preflight]")) return;
     setPreflightMode(true);

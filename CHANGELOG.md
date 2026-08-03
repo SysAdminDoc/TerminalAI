@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- The contrast audit now keeps small text on WCAG-AA tokens in both dark and OS light palettes,
+  uses `surface0` for selected rows, and treats overlay/surface tokens as decoration only. The
+  focused terminal has an opt-in xterm screen-reader toggle with its right-click behavior called
+  out in the control label.
+- Forced-colors mode maps fleet status, controls and the xterm surface to system colors while
+  keeping `forced-color-adjust: none` limited to xterm. Reduced-motion mode also stops the fleet
+  spinner and status glow effects.
 - Added structured daemon and desktop-shell logging under `%LOCALAPPDATA%\TerminalAI\logs\`
   with fourteen daily files, a bounded in-app log panel, per-session tracing fields, and panic
   records that drain through the process-held worker guard.

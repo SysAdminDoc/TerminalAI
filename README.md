@@ -96,7 +96,9 @@ focused terminal's log panel keeps the latest 256 records in memory.
 
 Fleet rows expose every status with a distinct glyph and visible text label, remain keyboard
 navigable, announce live status changes to screen readers, and use high-contrast tokens in both
-the dark and OS light palettes. Reduced-motion and forced-colors preferences are respected.
+the dark and OS light palettes. Reduced-motion and forced-colors preferences are respected. The
+focused terminal toolbar includes an explicit opt-in screen-reader mode; xterm's mode changes its
+right-click copy/paste behavior, so it is never enabled implicitly.
 
 The top-bar **Check updates** action reads the latest GitHub release metadata only. It reports a
 new version when one exists but never downloads, launches, or installs an update automatically.

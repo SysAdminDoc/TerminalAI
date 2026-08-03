@@ -97,13 +97,6 @@ From `RESEARCH.md`. IDs R-01…R-63; the next researcher continues from R-64.
 
 ### P2
 
-- [ ] R-62 · P2 — Finish the contrast and forced-colors work R-27 did not cover
-  Why: R-27 was closed after the keyboard and labelling changes landed, but the measured contrast failures and high-contrast support were never addressed, so the acceptance criterion "contrast meets WCAG AA" is still unmet.
-  Evidence: measured 2026-08-02 on Catppuccin Mocha — `overlay1` on `base` = 4.44 (fails AA by 0.06); `overlay0` (#6c7086) on `base` ≈3.8 and is still used for 9–10px text in `.row-folder`, `.eyebrow`, `.terminal-statusbar`, `.terminal-path`, `.empty-state p`, `.diagnostics-heading p` (`web/src/styles.css:39,57,61,63,71`); `--surface2` is used as text in `.terminal-grid` and `.terminal-placeholder small` (≈2.8:1); accents on `surface1` = 3.94–4.49, so selected rows must use `surface0`. No `@media (forced-colors: active)` or `prefers-reduced-motion` block exists anywhere in the stylesheet; `-ms-high-contrast` is dead as of Edge 138 and WebView2 is Chromium, so colour-only status vanishes in High Contrast.
-  Touches: `web/src/styles.css`, `web/src/main.js`
-  Acceptance: no text renders below 4.5:1; `overlay0`/`overlay1` are decorative only; selected rows use `surface0`; a `forced-colors` block maps to system keywords with `forced-color-adjust: none` limited to the xterm surface; `prefers-reduced-motion` disables the pulse and glow animations; xterm `screenReaderMode` is an opt-in setting (it breaks right-click copy/paste, xterm.js#1931).
-  Complexity: M
-
 - [ ] R-29 · P2 — Versioned session store with a migration path
   Why: session state will outlive its schema, and a daemon that survives GUI upgrades will meet older files.
   Evidence: Zellij versions its session-info directory by release; RESEARCH.md "Architecture".
