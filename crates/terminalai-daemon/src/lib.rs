@@ -48,7 +48,7 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -58,6 +58,7 @@ use interprocess::local_socket::{
 };
 use serde::{Deserialize, Serialize};
 use terminalai_core::agent::{self, Agent, Origin};
+use terminalai_core::land::LandQueue;
 use terminalai_core::launch::LaunchSpec;
 use terminalai_core::pty::PtySize;
 use terminalai_core::{
@@ -191,6 +192,12 @@ pub enum Request {
     MarkReviewed {
         id: SessionId,
     },
+    /// Land a session's uncommitted work into a target repository, or refuse.
+    /// Serialised daemon-side so two landings cannot interleave their
+    /// precondition checks — the failure a hand-built merge queue works around.
+    Land {
+        request: Box<terminalai_core::land::LandRequest>,
+    },
     Status {
         id: SessionId,
     },
@@ -273,6 +280,9 @@ pub enum Response {
         admission: AdmissionSnapshot,
         #[serde(default)]
         store_quarantine: Option<String>,
+    },
+    Land {
+        outcome: terminalai_core::land::LandOutcome,
     },
     ReviewSnapshot {
         entries: Vec<ReviewItem>,
@@ -883,6 +893,9 @@ fn dispatch_with_endpoint(
         Request::ExternalSessions => Response::ExternalSessions {
             sessions: external_sessions(),
         },
+        Request::Land { request } => Response::Land {
+            outcome: land_queue().land(&request),
+        },
         Request::MarkReviewed { id } => match registry.mark_reviewed(&id) {
             Ok(()) => Response::Ok,
             Err(error) => Response::Error {
@@ -1371,6 +1384,15 @@ fn current_user_pipe_sddl() -> Result<String, IpcError> {
         CloseHandle(token);
     }
     result
+}
+
+/// The process-wide landing queue.
+///
+/// Deliberately a singleton: a per-connection queue would let two clients land
+/// at once, which is exactly the interleaving the gate exists to prevent.
+fn land_queue() -> &'static LandQueue {
+    static QUEUE: OnceLock<LandQueue> = OnceLock::new();
+    QUEUE.get_or_init(LandQueue::new)
 }
 
 #[cfg(test)]

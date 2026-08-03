@@ -218,3 +218,17 @@ rate-limit-reset-unknown = { $count ->
 }
 rate-limit-row = { $scope } quota
 rate-limit-in-minutes = reopens in { $minutes } min
+
+review-land = Land
+review-landing = Landing…
+review-land-hint = Apply this session's changes into its repository, or refuse and say why
+review-landed = Landed { $files } file(s); review and commit when ready
+review-land-refused = Landing refused — { $reason }
+land-target-moved = the repository moved since this review (expected { $expected }, found { $found }); refresh and re-read the diff
+land-target-dirty = the repository has uncommitted changes: { $paths }
+land-conflict-markers = conflict markers are present in: { $paths }
+land-patch-stale = the changes no longer apply cleanly: { $detail }
+land-verify-failed = the verify command { $command } failed and the change was rolled back: { $output }
+land-verify-not-reversed = the verify command { $command } failed AND the rollback failed ({ $error }); the repository needs manual repair
+land-nothing = the session has no uncommitted changes
+land-unavailable = the repository could not be read: { $detail }

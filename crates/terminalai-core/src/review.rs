@@ -48,6 +48,11 @@ pub struct ReviewItem {
     /// against this value, so any change to the tree retires the mark.
     #[serde(default)]
     pub state_digest: String,
+    /// The commit this review was read against. The land gate refuses when the
+    /// repository has moved past it, so without this the moved-target check
+    /// would have nothing to compare and could never fire.
+    #[serde(default)]
+    pub target_head: Option<String>,
     pub diff: String,
     pub diff_truncated: bool,
     #[serde(default)]
@@ -117,12 +122,14 @@ pub fn collect_review(session: &Session) -> ReviewItem {
         conflict_markers: 0,
         reviewed: false,
         state_digest: String::new(),
+        target_head: None,
         diff: String::new(),
         diff_truncated: false,
         timed_out: false,
         error: None,
     };
 
+    item.target_head = head_commit(&session.cwd);
     let result = collect_git_review(&session.cwd, REVIEW_REPOSITORY_TIMEOUT);
     match result {
         Ok(data) => {
@@ -297,6 +304,19 @@ fn git(cwd: &Path, args: &[&str], deadline: Instant) -> Result<GitOutcome, Revie
 /// detached HEAD, an unborn branch, or a Git that does not answer inside
 /// [`BRANCH_TIMEOUT`]. The fleet row renders an em dash in those cases, which is
 /// the truth; inventing "main" would not be.
+/// The commit `cwd` is currently on, or `None` when it cannot be read.
+///
+/// Shares the branch lookup's tight budget: this runs once per reviewed session
+/// and a slow repository must not stall the whole review collection.
+pub fn head_commit(cwd: &Path) -> Option<String> {
+    let deadline = Instant::now() + BRANCH_TIMEOUT;
+    let GitOutcome::Completed(output) = git(cwd, &["rev-parse", "HEAD"], deadline).ok()? else {
+        return None;
+    };
+    let head = String::from_utf8_lossy(&output.stdout.bytes).trim().to_owned();
+    (!head.is_empty()).then_some(head)
+}
+
 pub fn current_branch(cwd: &Path) -> Option<String> {
     let deadline = Instant::now() + BRANCH_TIMEOUT;
     let GitOutcome::Completed(output) =

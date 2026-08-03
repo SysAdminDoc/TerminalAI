@@ -38,6 +38,8 @@ USAGE:
   terminalai-probe send    <session-id> <text> --json
   terminalai-probe status  <session-id> --json
   terminalai-probe shutdown
+  terminalai-probe land    --source <dir> --target <dir> [--expect-head <sha>]
+                           [--verify <program> [--verify-arg <arg>]...] [--verify-timeout <s>]
   terminalai-probe hook    <claude|codex>    (read one hook JSON object from stdin)
   terminalai-probe hooks   <status|preview|install|remove> <claude|codex> [options]
   terminalai-probe cpu-idle [--sessions <n>] [--seconds <s>] [--poll]
@@ -79,6 +81,7 @@ fn main() {
         Some("exec") => cmd_exec(&args[1..]),
         Some("cpu-idle") => cmd_cpu_idle(&args[1..]),
         Some("hygiene") => cmd_hygiene(&args[1..]),
+        Some("land") => cmd_land(&args[1..]),
         Some("hook") => cmd_hook(&args[1..]),
         Some("hooks") => cmd_hooks(&args[1..]),
         Some("--help") | Some("-h") | None => {
@@ -183,6 +186,90 @@ fn cmd_status(args: &[String]) -> i32 {
     match control_call(Request::Status { id }) {
         Ok(response) => print_control_response(response, machine),
         Err(error) => print_control_error(error, machine),
+    }
+}
+
+/// Exercise the land gate through the daemon.
+///
+/// The gate's own tests call the module directly; this drives the same request
+/// over the control pipe, so the daemon wiring is covered by something other
+/// than inspection.
+fn cmd_land(args: &[String]) -> i32 {
+    let mut source: Option<PathBuf> = None;
+    let mut target: Option<PathBuf> = None;
+    let mut expect_head: Option<String> = None;
+    let mut verify: Vec<String> = Vec::new();
+    let mut verify_timeout: Option<u64> = None;
+    let mut index = 0;
+    while index < args.len() {
+        let take = |index: &mut usize, flag: &str| -> Option<String> {
+            *index += 1;
+            args.get(*index).cloned().or_else(|| {
+                eprintln!("{flag} needs a value");
+                None
+            })
+        };
+        match args[index].as_str() {
+            "--source" => match take(&mut index, "--source") {
+                Some(value) => source = Some(PathBuf::from(value)),
+                None => return 2,
+            },
+            "--target" => match take(&mut index, "--target") {
+                Some(value) => target = Some(PathBuf::from(value)),
+                None => return 2,
+            },
+            "--expect-head" => match take(&mut index, "--expect-head") {
+                Some(value) => expect_head = Some(value),
+                None => return 2,
+            },
+            "--verify" => match take(&mut index, "--verify") {
+                Some(value) => verify.push(value),
+                None => return 2,
+            },
+            "--verify-arg" => match take(&mut index, "--verify-arg") {
+                Some(value) => verify.push(value),
+                None => return 2,
+            },
+            "--verify-timeout" => match take(&mut index, "--verify-timeout") {
+                Some(value) => match value.parse() {
+                    Ok(seconds) => verify_timeout = Some(seconds),
+                    Err(_) => {
+                        eprintln!("--verify-timeout needs whole seconds");
+                        return 2;
+                    }
+                },
+                None => return 2,
+            },
+            "--json" => {}
+            other => {
+                eprintln!("unknown land option: {other}");
+                return 2;
+            }
+        }
+        index += 1;
+    }
+    let (Some(source), Some(target)) = (source, target) else {
+        return control_usage("land needs --source and --target");
+    };
+    let request = terminalai_core::land::LandRequest {
+        source,
+        target,
+        expected_target_head: expect_head,
+        verify,
+        verify_timeout_secs: verify_timeout,
+    };
+    match control_call(Request::Land {
+        request: Box::new(request),
+    }) {
+        Ok(Response::Land { outcome }) => {
+            let refused = matches!(outcome, terminalai_core::land::LandOutcome::Refused(_));
+            print_json(outcome);
+            // A refusal is a normal, expected answer, but it is not a success:
+            // a script that lands in a loop must be able to tell them apart.
+            i32::from(refused)
+        }
+        Ok(response) => print_control_response(response, true),
+        Err(error) => print_control_error(error, true),
     }
 }
 

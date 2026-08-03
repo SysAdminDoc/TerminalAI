@@ -16,6 +16,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- A session's work can now be landed from the review surface, through a gate that refuses rather
+  than half-applies. Landings are serialised daemon-wide, so a request that waited in the queue is
+  checked against a fresh read of the target rather than against what the review showed. A landing
+  is refused whole — naming the one specific condition — when the target moved since review, the
+  target tree is dirty, conflict markers are present, the patch no longer applies, or a configured
+  verify command fails; a failed verify reverses the patch it just applied, and the one case where
+  that reversal itself fails is reported as a mixed state needing manual repair rather than folded
+  into a generic error. Nothing is merged, staged, committed, or auto-resolved on the operator's
+  behalf, and the landed change is left uncommitted because committing is their decision.
+  `terminalai-probe land` drives the same path from the command line.
+- `ReviewItem` now carries `target_head`, the commit a review was read against. The moved-target
+  refusal compares against it; without it that check would have had nothing to compare.
 - Rate limiting is now a first-class row state. A session a provider is refusing renders as
   `Rate limited` with which quota tripped and when it reopens, sorts with the attention states
   rather than with the busy ones, and releases its admission slot so a queued session can take it.

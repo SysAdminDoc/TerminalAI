@@ -526,8 +526,16 @@ function renderReviewEntry(entry) {
     : entry.error
       ? ""
       : '<button type="button" class="button button-secondary review-mark" data-review-action="mark-reviewed" data-review-id="' + escapeHtml(entry.session_id) + '">' + escapeHtml(t("review-mark-reviewed")) + '</button>';
+  // Landing is offered only when this collection is trustworthy. A timed-out or
+  // errored review describes a tree nobody read, and conflicts are refused by
+  // the gate anyway — offering the button there would teach the operator that
+  // the button sometimes does nothing.
+  const canLand = !entry.error && !entry.timed_out && !conflicts.length && files > 0;
+  const landMarkup = canLand
+    ? '<button type="button" class="button button-secondary review-land" data-review-action="land" data-review-id="' + escapeHtml(entry.session_id) + '" data-review-cwd="' + escapeHtml(entry.cwd) + '" title="' + escapeHtml(t("review-land-hint")) + '">' + escapeHtml(t("review-land")) + "</button>"
+    : "";
   return '<article class="review-entry' + (entry.reviewed ? " review-entry-reviewed" : "") + (entry.timed_out ? " review-entry-timeout" : "") + '" role="listitem">' +
-    '<div class="review-entry-heading"><div><h3>' + escapeHtml(entry.name) + '</h3><div class="review-repo"><span>' + escapeHtml(folderLabel(entry.cwd)) + '</span><span>' + escapeHtml(agent) + '</span><code>' + escapeHtml(entry.session_id) + '</code></div></div><div class="review-entry-action">' + actionMarkup + "</div></div>" +
+    '<div class="review-entry-heading"><div><h3>' + escapeHtml(entry.name) + '</h3><div class="review-repo"><span>' + escapeHtml(folderLabel(entry.cwd)) + '</span><span>' + escapeHtml(agent) + '</span><code>' + escapeHtml(entry.session_id) + '</code></div></div><div class="review-entry-action">' + landMarkup + actionMarkup + "</div></div>" +
     '<div class="review-metrics"><span>' + escapeHtml(countMessage("count-file", files)) + '</span><span class="review-additions">+' + additions + '</span><span class="review-deletions">−' + deletions + '</span><span>' + escapeHtml(t("review-cost", { cost: reviewCost })) + '</span><span class="review-state">' + escapeHtml(status) + "</span></div>" +
     conflictMarkup + errorMarkup + diffMarkup + "</article>";
 }
@@ -1049,6 +1057,77 @@ function setReviewMode(active) {
   syncReviewVisibility();
   if (active) void loadReview();
   else renderRows();
+}
+
+/// Land a reviewed session's work, or report exactly why it was refused.
+///
+/// The target is the operator's own repository root, which is the session's cwd
+/// here — a session started in a worktree lands back into that worktree. The
+/// daemon re-reads every precondition at land time, so nothing checked here is
+/// trusted; the button is only ever a request.
+async function landSession(id, cwd, button) {
+  const entry = state.reviews.find((review) => review.session_id === id);
+  if (!entry) return;
+  if (button) {
+    button.disabled = true;
+    button.textContent = t("review-landing");
+  }
+  try {
+    const outcome = await invoke("land_session", {
+      request: {
+        source: cwd,
+        target: cwd,
+        // Pinned to what this review described, so a target that moved while
+        // the operator was reading is refused rather than silently landed on.
+        expected_target_head: entry.target_head ?? null,
+        verify: [],
+      },
+    });
+    if (outcome.outcome === "landed") {
+      showToast(t("review-landed", { files: outcome.files_changed }), "success");
+      await loadReview();
+      return;
+    }
+    // A refusal names one specific condition. Surfaced whole: a truncated
+    // reason is the difference between fixing it and guessing.
+    showToast(t("review-land-refused", { reason: refusalText(outcome) }));
+  } catch (error) {
+    showToast(String(error));
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = t("review-land");
+    }
+  }
+}
+
+/// Turn a structured refusal into one line the operator can act on.
+function refusalText(outcome) {
+  switch (outcome.reason) {
+    case "target-moved":
+      return t("land-target-moved", { expected: outcome.expected, found: outcome.found });
+    case "target-dirty":
+      return t("land-target-dirty", { paths: (outcome.paths ?? []).join(", ") });
+    case "conflict-markers":
+      return t("land-conflict-markers", { paths: (outcome.paths ?? []).join(", ") });
+    case "patch-did-not-apply":
+      return t("land-patch-stale", { detail: outcome.detail });
+    case "verify-failed":
+      return t("land-verify-failed", { command: outcome.command, output: outcome.output });
+    case "verify-failed-and-not-reversed":
+      return t("land-verify-not-reversed", {
+        command: outcome.command,
+        error: outcome.reversal_error,
+      });
+    case "nothing-to-land":
+      return t("land-nothing");
+    case "unavailable":
+      return t("land-unavailable", { detail: outcome.detail });
+    default:
+      // A refusal reason this build does not know about must still be shown —
+      // swallowing it would render as "nothing happened".
+      return String(outcome.reason ?? outcome);
+  }
 }
 
 async function markReviewed(id, button) {
@@ -1607,6 +1686,9 @@ function bindEvents() {
     if (!button) return;
     if (button.dataset.reviewAction === "mark-reviewed") {
       void markReviewed(button.dataset.reviewId, button);
+    }
+    if (button.dataset.reviewAction === "land") {
+      void landSession(button.dataset.reviewId, button.dataset.reviewCwd, button);
     }
   });
   $("diagnostics-toggle").addEventListener("click", () => setDiagnosticsMode(!state.diagnosticsMode));

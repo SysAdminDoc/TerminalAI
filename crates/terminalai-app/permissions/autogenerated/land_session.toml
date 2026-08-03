@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-land-session"
+description = "Enables the land_session command without any pre-configured scope."
+commands.allow = ["land_session"]
+
+[[permission]]
+identifier = "deny-land-session"
+description = "Denies the land_session command without any pre-configured scope."
+commands.deny = ["land_session"]

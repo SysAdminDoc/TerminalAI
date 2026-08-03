@@ -21,6 +21,7 @@ pub mod grid;
 pub mod hook_config;
 pub mod hooks;
 pub mod i18n;
+pub mod land;
 pub mod launch;
 pub mod notification;
 pub(crate) mod process_tree;

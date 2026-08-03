@@ -142,6 +142,29 @@ fn mark_reviewed(id: SessionId, state: State<'_, AppState>) -> Result<(), String
     require_ok(daemon_response(&client, Request::MarkReviewed { id })?)
 }
 
+/// Land a session's uncommitted work into a target repository, or report the
+/// specific reason it was refused.
+///
+/// The daemon serialises these, so this command blocks while another landing is
+/// in flight — that wait is the feature, not an oversight.
+#[tauri::command]
+fn land_session(
+    request: terminalai_core::land::LandRequest,
+    state: State<'_, AppState>,
+) -> Result<terminalai_core::land::LandOutcome, String> {
+    let client = daemon_client(&state)?;
+    match daemon_response(
+        &client,
+        Request::Land {
+            request: Box::new(request),
+        },
+    )? {
+        Response::Land { outcome } => Ok(outcome),
+        Response::Error { message } => Err(message),
+        other => Err(format!("unexpected land response: {other:?}")),
+    }
+}
+
 #[tauri::command]
 fn preview_launch(
     spec: LaunchSpec,
@@ -1199,6 +1222,7 @@ fn run_app() -> Result<(), String> {
             review_snapshot,
             external_sessions,
             mark_reviewed,
+            land_session,
             preview_launch,
             resolve_agent,
             agent_capabilities,
