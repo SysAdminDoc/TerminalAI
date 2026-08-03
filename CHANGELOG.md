@@ -24,6 +24,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   `--terminalai-managed` Claude JSON and Codex TOML entries; Claude handlers are asynchronous,
   Codex preserves unrelated `notify` commands, and the installed app hook path fails open when the
   daemon is unavailable.
+- The fleet list now exposes distinct glyphs and visible labels for every status, keyboard row
+  activation, screen-reader announcements, light/dark contrast tokens, forced-colors support and
+  reduced-motion behavior.
 - `terminalai-core::grid::TerminalGrid` now parses each session's ANSI output into a bounded Rust
   grid with cursor motion, scrolling, alternate-screen restore and split UTF-8 coverage. Only the
   focused session (and future pinned panes) receives live output events; background sessions keep

@@ -65,6 +65,10 @@ Each session retains the latest 64 status transitions with their timestamp and s
 terminal panel's diagnostics view explains why the focused row is in its current state. Daemon or
 desktop-shell panics append structured JSON records to %LOCALAPPDATA%\TerminalAI\crash.log.
 
+Fleet rows expose every status with a distinct glyph and visible text label, remain keyboard
+navigable, announce live status changes to screen readers, and use high-contrast tokens in both
+the dark and OS light palettes. Reduced-motion and forced-colors preferences are respected.
+
 Attention notifications are deduplicated per session and status, grouped by repository, retracted
 when the agent proceeds, and quiet during startup or the first seconds of a tool call.
 

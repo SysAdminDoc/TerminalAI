@@ -19,7 +19,7 @@ const STATUS_ORDER = {
 };
 
 const STATUS_META = {
-  "needs-approval": { glyph: "!", label: "Needs approval", short: "approval", tone: "peach" },
+  "needs-approval": { glyph: "⚠", label: "Needs approval", short: "approval", tone: "peach" },
   "awaiting-input": { glyph: "?", label: "Awaiting input", short: "input", tone: "yellow" },
   "needs-you": { glyph: "!", label: "Needs you", short: "you", tone: "peach" },
   working: { glyph: "◒", label: "Working", short: "working", tone: "yellow" },
@@ -27,7 +27,7 @@ const STATUS_META = {
   idle: { glyph: "·", label: "Idle", short: "idle", tone: "surface2" },
   starting: { glyph: "…", label: "Starting", short: "starting", tone: "sapphire" },
   queued: { glyph: "⏳", label: "Queued", short: "queued", tone: "overlay0" },
-  unknown: { glyph: "?", label: "State unknown", short: "unknown", tone: "overlay0" },
+  unknown: { glyph: "∅", label: "State unknown", short: "unknown", tone: "overlay0" },
   exited: { glyph: "×", label: "Exited", short: "exited", tone: "overlay0" },
 };
 const STATUS_KEYS = Object.keys(STATUS_META);
@@ -164,10 +164,10 @@ function renderDiagnostics() {
     ? history.map((entry) => {
       const entryMeta = STATUS_META[entry.to] ?? STATUS_META.exited;
       const from = entry.from ? (STATUS_META[entry.from]?.label ?? entry.from) : "Session created";
-      return '<li class="diagnostic-event"><span class="diagnostic-event-glyph tone-' + entryMeta.tone + '">' + entryMeta.glyph + '</span><div class="diagnostic-event-body"><div><b>' + escapeHtml(entryMeta.label) + '</b><span>from ' + escapeHtml(from) + '</span></div><small>' + escapeHtml(diagnosticSource(entry.source)) + ' · ' + escapeHtml(diagnosticTime(entry.at)) + '</small>' + (entry.detail ? '<p>' + escapeHtml(entry.detail) + '</p>' : '') + '</div></li>';
+      return '<li class="diagnostic-event"><span class="diagnostic-event-glyph tone-' + entryMeta.tone + '" aria-hidden="true">' + entryMeta.glyph + '</span><div class="diagnostic-event-body"><div><b>' + escapeHtml(entryMeta.label) + '</b><span>from ' + escapeHtml(from) + '</span></div><small>' + escapeHtml(diagnosticSource(entry.source)) + ' · ' + escapeHtml(diagnosticTime(entry.at)) + '</small>' + (entry.detail ? '<p>' + escapeHtml(entry.detail) + '</p>' : '') + '</div></li>';
     }).join("")
     : '<li class="diagnostics-empty">No transition history was persisted for this session.</li>';
-  host.innerHTML = '<div class="diagnostics-heading"><div><span class="eyebrow">WHY THIS STATE</span><h2>' + escapeHtml(session.name) + '</h2><p>' + escapeHtml(session.cwd) + '</p></div><span class="status-glyph tone-' + meta.tone + '" title="' + escapeHtml(meta.label) + '">' + meta.glyph + '</span></div>' +
+  host.innerHTML = '<div class="diagnostics-heading"><div><span class="eyebrow">WHY THIS STATE</span><h2>' + escapeHtml(session.name) + '</h2><p>' + escapeHtml(session.cwd) + '</p></div><span class="status-glyph tone-' + meta.tone + '" title="' + escapeHtml(meta.label) + '" aria-hidden="true">' + meta.glyph + '</span></div>' +
     '<div class="diagnostics-current"><span>Current status</span><b>' + escapeHtml(meta.label) + '</b><span>for ' + escapeHtml(dwell(session.status_since)) + ' · source ' + escapeHtml(source) + '</span></div>' +
     '<ol class="diagnostics-timeline">' + timeline + '</ol>';
 }
@@ -310,6 +310,11 @@ function renderRows() {
     row.querySelector(".row-folder")?.append(portBadge);
     row.setAttribute("aria-label", row.getAttribute("aria-label") + ", ports " + ports(rowSession?.ports));
     row.addEventListener("click", () => focusSession(row.dataset.id));
+    row.addEventListener("keydown", (event) => {
+      if (event.target !== row || !["Enter", " "].includes(event.key)) return;
+      event.preventDefault();
+      void focusSession(row.dataset.id);
+    });
     for (const button of row.querySelectorAll("button[data-action]")) {
       button.addEventListener("click", (event) => {
         event.stopPropagation();
@@ -333,6 +338,13 @@ function isAttention(session) {
   return ["needs-approval", "awaiting-input", "needs-you"].includes(session.status);
 }
 
+function announceStatusChange(session, previousStatus) {
+  if (!previousStatus || previousStatus === session.status) return;
+  const previous = STATUS_META[previousStatus]?.label ?? previousStatus;
+  const current = STATUS_META[session.status]?.label ?? session.status;
+  $("fleet-announcer").textContent = `${session.name} status changed from ${previous} to ${current}.`;
+}
+
 function renderRow(session) {
   const meta = STATUS_META[session.status] ?? STATUS_META.exited;
   const active = session.id === state.focused ? " row-focused" : "";
@@ -347,21 +359,21 @@ function renderRow(session) {
   const lastLine = session.last_line || "No output yet";
   const pinLabel = session.pinned ? "Unpin" : "Pin";
   const revive = session.status === "exited" && session.resume_id
-    ? `<button type="button" data-action="revive" class="row-action" title="Revive with native resume">↻</button>`
+    ? `<button type="button" data-action="revive" class="row-action" title="Revive with native resume" aria-label="Revive ${escapeHtml(session.name)} with native resume">↻</button>`
     : "";
   const archive = session.status === "exited"
-    ? `<button type="button" data-action="archive" class="row-action" title="Archive stopped session">▣</button>`
+    ? `<button type="button" data-action="archive" class="row-action" title="Archive stopped session" aria-label="Archive ${escapeHtml(session.name)}">▣</button>`
     : "";
   const stop = session.status === "exited"
     ? ""
-    : `<button type="button" data-action="kill" class="row-action row-action-danger" title="${session.status === "queued" ? "Cancel queued session" : "Stop session"}">×</button>`;
-  const reply = isAttention(session) ? `<div class="row-reply"><input data-reply type="text" maxlength="500" placeholder="Reply without opening terminal" aria-label="Reply to ${escapeHtml(session.name)}" /><button type="button" data-action="reply" class="row-reply-send" title="Send reply">↵</button></div>` : "";
+    : `<button type="button" data-action="kill" class="row-action row-action-danger" title="${session.status === "queued" ? "Cancel queued session" : "Stop session"}" aria-label="${session.status === "queued" ? "Cancel queued session" : `Stop ${escapeHtml(session.name)}`}">×</button>`;
+  const reply = isAttention(session) ? `<div class="row-reply"><input data-reply type="text" maxlength="500" placeholder="Reply without opening terminal" aria-label="Reply to ${escapeHtml(session.name)}" /><button type="button" data-action="reply" class="row-reply-send" title="Send reply" aria-label="Send reply to ${escapeHtml(session.name)}">↵</button></div>` : "";
   const wideMeta = state.wideMode ? `<div class="row-wide-meta"><span><small>MODEL</small><b>${escapeHtml(model)}</b></span><span><small>EFFORT</small><b>${escapeHtml(effort)}</b></span><span><small>COST</small><b>${escapeHtml(cost(session.cost_usd))}</b></span></div>` : "";
-  return `<article class="fleet-row${active}${unread}" data-id="${escapeHtml(session.id)}" role="listitem" tabindex="0" aria-label="${escapeHtml(`${session.name}, ${meta.label}, ${repo}, ${branch}, progress ${progress}, ${restartCount} restarts`)}">
-    <div class="row-identity"><span class="status-glyph tone-${meta.tone}" title="${meta.label}" aria-label="${meta.label}">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name">${escapeHtml(session.name)}${session.unread ? '<span class="unread-dot" title="Unread attention"></span>' : ""}</div><div class="row-folder"><span class="row-repo" title="Repository">${escapeHtml(repo)}</span><span class="row-branch" title="Branch">${escapeHtml(branch)}</span><span class="row-status-label">${meta.label}</span></div></div></div>
-    <div class="row-metrics"><span class="agent-badge agent-${session.agent}" title="${session.agent === "codex" ? "Codex" : "Claude Code"}">${agentLabel}</span><span class="row-progress" title="Tool progress"><small>PROG</small><b>${escapeHtml(progress)}</b></span><span class="row-restarts" title="Restart count">↻ ${restartCount}</span></div>
+  return `<article class="fleet-row${active}${unread}" data-id="${escapeHtml(session.id)}" role="listitem" tabindex="0" aria-keyshortcuts="Enter Space" aria-label="${escapeHtml(`${session.name}, ${meta.label}, ${repo}, ${branch}, progress ${progress}, ${restartCount} restarts`)}">
+    <div class="row-identity"><span class="status-glyph tone-${meta.tone}" title="${meta.label}" aria-hidden="true">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name">${escapeHtml(session.name)}${session.unread ? '<span class="unread-dot" title="Unread attention"></span>' : ""}</div><div class="row-folder"><span class="row-repo" title="Repository">${escapeHtml(repo)}</span><span class="row-branch" title="Branch">${escapeHtml(branch)}</span><span class="row-status-label">${escapeHtml(meta.label)}</span></div></div></div>
+    <div class="row-metrics"><span class="agent-badge agent-${session.agent}" title="${session.agent === "codex" ? "Codex" : "Claude Code"}" aria-label="${session.agent === "codex" ? "Codex" : "Claude Code"}">${agentLabel}</span><span class="row-progress" title="Tool progress"><small>PROG</small><b>${escapeHtml(progress)}</b></span><span class="row-restarts" title="Restart count">↻ ${restartCount}</span></div>
     <div class="row-dwell"><span>${dwell(session.status_since)}</span><small class="row-last-line" title="${escapeHtml(lastLine)}">${escapeHtml(lastLine)}</small></div>
-    <div class="row-actions"><button type="button" data-action="pin" class="row-action ${session.pinned ? "row-action-active" : ""}" title="${pinLabel}">${session.pinned ? "◆" : "◇"}</button><button type="button" data-action="focus" class="row-action" title="Focus terminal">↗</button>${revive}${archive}${stop}</div>
+    <div class="row-actions"><button type="button" data-action="pin" class="row-action ${session.pinned ? "row-action-active" : ""}" title="${pinLabel}" aria-label="${pinLabel} ${escapeHtml(session.name)}">${session.pinned ? "◆" : "◇"}</button><button type="button" data-action="focus" class="row-action" title="Focus terminal" aria-label="Focus ${escapeHtml(session.name)} terminal">↗</button>${revive}${archive}${stop}</div>
     ${wideMeta}
     ${reply}
   </article>`;
@@ -369,8 +381,10 @@ function renderRow(session) {
 
 function updateSession(session) {
   const index = state.sessions.findIndex((item) => item.id === session.id);
+  const previous = index === -1 ? null : state.sessions[index];
   if (index === -1) state.sessions.push(session);
   else state.sessions[index] = session;
+  if (previous) announceStatusChange(session, previous.status);
   renderRows();
   updateTerminalHeader();
 }

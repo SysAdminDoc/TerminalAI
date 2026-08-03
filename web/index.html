@@ -38,7 +38,8 @@
           </div>
           <div id="fleet-state-strip" class="fleet-state-strip" role="list" aria-label="Fleet state counts"></div>
           <div class="column-labels" aria-hidden="true"><span>STATUS / REPO · BRANCH</span><span>AGENT · PROGRESS</span><span>DWELL / LAST LINE</span><span></span></div>
-          <div id="fleet-list" class="fleet-list" role="list" aria-label="Tracked sessions"></div>
+          <div id="fleet-list" class="fleet-list" role="list" aria-label="Tracked sessions" aria-describedby="fleet-summary"></div>
+          <div id="fleet-announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
           <div id="empty-state" class="empty-state">
             <div class="empty-orbit" aria-hidden="true"><span></span><span></span><span></span></div>
             <h2>No sessions yet</h2>
