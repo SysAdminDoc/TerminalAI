@@ -189,13 +189,6 @@ researcher continues from R-88.
   Acceptance: the NSIS and MSI bundles contain `terminalai-daemon.exe` (and `terminalai-probe.exe` if it is a supported entry point); a release-gate step installs into a scratch prefix, launches the installed binary, asserts the fleet window appears and the daemon starts, then uninstalls; the check fails loudly if any declared sidecar is missing from the bundle.
   Complexity: S
 
-- [ ] R-67 · P0 — Verify the agent binary instead of asserting it
-  Why: the guard meant to stop a launcher configuration starting the wrong CLI compares two values that are equal by construction, so it can never fire on the configured-path route — and a check that always passes reads exactly like one that ran.
-  Evidence: `crates/terminalai-core/src/agent.rs:84-97` — `resolve()` returns any configured path where `is_file()` holds, stamping the *requested* `agent` onto it with `Origin::Configured` and never inspecting the file. `crates/terminalai-core/src/registry.rs:363-368` then rejects only when `spec.agent != binary.agent`. The CHANGELOG claims "strict agent/binary matching before a process is spawned".
-  Touches: `crates/terminalai-core/src/agent.rs`, `registry.rs`, `crates/terminalai-core/tests/`
-  Acceptance: a configured path is accepted only after positive identification — file stem matches the agent's expected executable name, and a cached `--version` probe matches that agent's expected banner; mismatches return a typed error naming both sides; a test points the Claude configured path at `codex.exe` and at an unrelated executable and asserts both are refused.
-  Complexity: S
-
 ### P1
 
 - [ ] R-68 · P1 — Give the daemon unwinding, or stop it panicking

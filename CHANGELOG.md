@@ -140,6 +140,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   laid out below it.
 - Closing the launcher, or pressing Enter in any launcher field, no longer spawns an agent —
   every dialog control is an explicit button and the form refuses submission outright.
+- An operator-configured agent path is now positively identified before it is spawned: its file
+  stem must match the agent and a cached, deadline-bounded `--version` probe must name it.
+  Previously the downstream agent/binary guard compared two values that were equal by
+  construction, so it could never fire on the configured-path route.
 
 ## [0.1.0] — 2026-08-02
 
