@@ -52,6 +52,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Session persistence now wakes a worker with a lightweight signal; it builds the registry snapshot
   after the debounce and stores replay tails as per-session binary sidecars instead of cloning and
   JSON-encoding a full ring for every output event.
+- Persistence now writes after a quiet period or a one-second maximum interval, even under
+  continuous output, and always snapshots the latest registry state.
 - R-16 adds lifecycle-aware attention notifications with stable dedup keys, repository grouping,
   automatic retraction on progress, and startup/long-tool grace suppression. The shell consumes
   raised notifications as deduplicated, click-to-focus in-app alerts.

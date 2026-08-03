@@ -51,9 +51,9 @@ Working today (`terminalai-probe`, headless):
   daemon shutdown runs active teardown hooks once
 - Native Claude and Codex version checks run through the same sanitized environment allowlist as
   live sessions, including opt-in proxy variables without inheriting parent secrets
-- 112 default tests over the flag mapping, real-pty boundary, supervision state machine, registry,
+- 113 default tests over the flag mapping, real-pty boundary, supervision state machine, registry,
   diagnostics, review aggregation, daemon protocol, presets, launch golden fixtures, atomic file
-  recovery, corrupt-store quarantine, deterministic fleet ordering, prompt safety and fleet-row model; 114
+  recovery, corrupt-store quarantine, deterministic fleet ordering, prompt safety and fleet-row model; 115
   with the opt-in app-server
   transport enabled
 
@@ -70,6 +70,9 @@ the daemon moves it to a timestamped `sessions.corrupt-...json` quarantine and s
 fleet; the window shows the quarantine path in a dismissible banner. Reconnecting the window reattaches to live rows and
 replays bounded scrollback; rows recovered after a daemon restart remain stopped until the operator
 chooses native resume or archive.
+
+Session metadata persists after a 200 ms quiet period and at least once per second during sustained
+output, so a busy fleet cannot indefinitely delay its newest durable state.
 
 Each session retains the latest 64 status transitions with their timestamp and source, and the
 terminal panel's diagnostics view explains why the focused row is in its current state. Daemon or

@@ -3,11 +3,12 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use terminalai_core::{SessionRegistry, SessionStoreSnapshot};
 
 const STORE_DEBOUNCE: Duration = Duration::from_millis(200);
+const STORE_MAX_INTERVAL: Duration = Duration::from_secs(1);
 
 pub(crate) struct LoadResult {
     pub(crate) snapshot: SessionStoreSnapshot,
@@ -157,10 +158,27 @@ fn file_safe_utc_timestamp(now: SystemTime) -> String {
 
 fn run_writer(path: &Path, registry: SessionRegistry, receiver: mpsc::Receiver<()>) {
     while receiver.recv().is_ok() {
-        while receiver.recv_timeout(STORE_DEBOUNCE).is_ok() {}
+        let max_deadline = Instant::now() + STORE_MAX_INTERVAL;
+        let mut quiet_deadline = Instant::now() + STORE_DEBOUNCE;
+        let disconnected = loop {
+            let now = Instant::now();
+            let until_max = max_deadline.saturating_duration_since(now);
+            let until_quiet = quiet_deadline.saturating_duration_since(now);
+            if until_max.is_zero() {
+                break false;
+            }
+            match receiver.recv_timeout(until_max.min(until_quiet)) {
+                Ok(()) => quiet_deadline = Instant::now() + STORE_DEBOUNCE,
+                Err(mpsc::RecvTimeoutError::Timeout) => break false,
+                Err(mpsc::RecvTimeoutError::Disconnected) => break true,
+            }
+        };
         let snapshot = registry.store_snapshot();
         if let Err(error) = snapshot.write(path) {
             eprintln!("terminalai-daemon: could not persist session store: {error}");
+        }
+        if disconnected {
+            return;
         }
     }
 }
@@ -272,6 +290,49 @@ mod tests {
         assert!(!fs::read_to_string(&path)
             .expect("read metadata")
             .contains("scrollback"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn sustained_updates_force_a_current_snapshot_and_keep_the_final_state() {
+        let dir = test_dir();
+        let path = dir.join("sessions.json");
+        let cwd = std::env::current_dir().expect("cwd");
+        let spec = LaunchSpec {
+            agent: Agent::Claude,
+            cwd: cwd.clone(),
+            ..LaunchSpec::default()
+        };
+        let id = SessionId::new(1);
+        let registry = SessionRegistry::from_store(SessionStoreSnapshot {
+            schema_version: terminalai_core::store::SESSION_STORE_SCHEMA_VERSION,
+            sessions: vec![StoredSession {
+                session: Session::new(id.clone(), &spec),
+                spec: spec.clone(),
+                command: ResolvedCommand {
+                    program: "claude.exe".into(),
+                    args: Vec::new(),
+                    cwd,
+                },
+                scrollback: Vec::new(),
+            }],
+            archives: Vec::new(),
+        });
+        let writer = StoreWriter::spawn(path.clone(), registry.clone());
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(2) {
+            writer.update();
+            thread::sleep(Duration::from_millis(25));
+        }
+        registry.mark_reviewed(&id).expect("mark final state");
+        writer.update();
+        thread::sleep(STORE_MAX_INTERVAL + STORE_DEBOUNCE + Duration::from_millis(100));
+        drop(writer);
+
+        let written = SessionStoreSnapshot::read(&path)
+            .expect("read sustained snapshot")
+            .expect("snapshot exists");
+        assert!(written.sessions[0].session.reviewed);
         let _ = fs::remove_dir_all(dir);
     }
 }
