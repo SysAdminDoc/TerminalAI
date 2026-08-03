@@ -99,14 +99,6 @@ From `RESEARCH.md`. IDs R-01…R-63; the next researcher continues from R-64.
 
 ### P3
 
-- [ ] R-32 · P3 — Internationalization scaffolding
-  Why: retrofitting string extraction after the UI exists is far more expensive than starting with it, even though the initial audience is English-only.
-  Evidence: no competitor in the survey ships localization; wmux is actively translating post-hoc.
-  Touches: GUI string layer, daemon message types
-  Acceptance: strings live in a single Fluent catalog loaded by Rust and formatted in JS — one catalog for both sides, avoiding the guaranteed drift of a JS-only solution; the daemon emits `reason` enums with arguments rather than English prose (which also feeds diagnostics); `Intl.RelativeTimeFormat`/`PluralRules` handle dwell times and counts; the 28px row survives ~2× string growth by keeping status as glyph-plus-number with the word in the tooltip.
-  Complexity: M
-  — *2026-08-02 research: German/Finnish average +20–35% and up to 2× on short strings ("Queued" → "In der Warteschlange" is 3.2×), so fixed-px columns must become `ch`/`minmax()` first. Do this after R-52/R-53, which change the row markup anyway.*
-
 ## Research-Driven Additions — external survey, 2026-08-02
 
 From the same-day external research pass in `RESEARCH.md` (competitors, community signal, agent-platform APIs,

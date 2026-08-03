@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { reconcileKeyedRows } from "./fleetRows.js";
+import { countMessage, localizeDom, relativeDwell, t } from "./i18n.js";
 import "./styles.css";
 
 const WDIO_BUILD = import.meta.env.VITE_TERMINALAI_WDIO === "1";
@@ -26,31 +27,40 @@ const STATUS_ORDER = {
 };
 
 const STATUS_META = {
-  "needs-approval": { glyph: "⚠", label: "Needs approval", short: "approval", tone: "peach" },
-  "awaiting-input": { glyph: "?", label: "Awaiting input", short: "input", tone: "yellow" },
-  "needs-you": { glyph: "!", label: "Needs you", short: "you", tone: "peach" },
-  working: { glyph: "◒", label: "Working", short: "working", tone: "yellow" },
-  thinking: { glyph: "✦", label: "Thinking", short: "thinking", tone: "mauve" },
-  idle: { glyph: "·", label: "Idle", short: "idle", tone: "surface2" },
-  starting: { glyph: "…", label: "Starting", short: "starting", tone: "sapphire" },
-  queued: { glyph: "⏳", label: "Queued", short: "queued", tone: "overlay0" },
-  unknown: { glyph: "∅", label: "State unknown", short: "unknown", tone: "overlay0" },
-  exited: { glyph: "×", label: "Exited", short: "exited", tone: "overlay0" },
+  "needs-approval": { glyph: "⚠", label: "status-needs-approval", short: "status-needs-approval", tone: "peach" },
+  "awaiting-input": { glyph: "?", label: "status-awaiting-input", short: "status-awaiting-input", tone: "yellow" },
+  "needs-you": { glyph: "!", label: "status-needs-you", short: "status-needs-you", tone: "peach" },
+  working: { glyph: "◒", label: "status-working", short: "status-working", tone: "yellow" },
+  thinking: { glyph: "✦", label: "status-thinking", short: "status-thinking", tone: "mauve" },
+  idle: { glyph: "·", label: "status-idle", short: "status-idle", tone: "surface2" },
+  starting: { glyph: "…", label: "status-starting", short: "status-starting", tone: "sapphire" },
+  queued: { glyph: "⏳", label: "status-queued", short: "status-queued", tone: "overlay0" },
+  unknown: { glyph: "∅", label: "status-unknown", short: "status-unknown", tone: "overlay0" },
+  exited: { glyph: "×", label: "status-exited", short: "status-exited", tone: "overlay0" },
 };
 const STATUS_KEYS = Object.keys(STATUS_META);
 const PREFLIGHT_META = {
-  ok: { glyph: "✓", label: "Ready", tone: "green" },
-  warn: { glyph: "!", label: "Needs attention", tone: "peach" },
-  error: { glyph: "×", label: "Unavailable", tone: "red" },
-  unsupported: { glyph: "—", label: "Not applicable", tone: "overlay0" },
+  ok: { glyph: "✓", label: "preflight-ready", tone: "green" },
+  warn: { glyph: "!", label: "preflight-needs-attention", tone: "peach" },
+  error: { glyph: "×", label: "preflight-unavailable", tone: "red" },
+  unsupported: { glyph: "—", label: "preflight-not-applicable", tone: "overlay0" },
 };
 const RELEASES_ENDPOINT = "https://api.github.com/repos/SysAdminDoc/TerminalAI/releases/latest";
 const FALLBACK_APP_VERSION = "0.1.0";
 
 function lifecycleLabel(session) {
-  if (session?.phase === "preparing") return "Preparing environment";
-  if (session?.phase === "tearing-down") return "Tearing down environment";
-  return STATUS_META[session?.status]?.label ?? session?.status ?? "Unknown";
+  if (session?.phase === "preparing") return t("status-preparing");
+  if (session?.phase === "tearing-down") return t("status-tearing-down");
+  return statusLabel(session?.status);
+}
+
+function statusLabel(status) {
+  const meta = STATUS_META[status];
+  return meta ? t(meta.label) : status ?? t("status-unknown");
+}
+
+function metaLabel(meta) {
+  return t(meta.label);
 }
 
 const MODEL_SUGGESTIONS = {
@@ -144,7 +154,7 @@ function renderStoreQuarantine() {
   const visible = Boolean(path) && !state.storeQuarantineDismissed;
   banner.classList.toggle("view-hidden", !visible);
   $("store-quarantine-message").textContent = path
-    ? `The unreadable session store was moved to ${path}. New sessions start empty.`
+    ? t("store-quarantined-detail", { path })
     : "";
 }
 
@@ -155,8 +165,8 @@ function showAttentionToast(notification) {
   const toast = document.createElement("button");
   toast.type = "button";
   toast.className = "toast toast-attention toast-visible";
-  toast.textContent = `${session?.name ?? notification.session_id} · ${meta.label} · ${folderLabel(notification.group_key)}`;
-  toast.title = "Focus session";
+  toast.textContent = `${session?.name ?? notification.session_id} · ${metaLabel(meta)} · ${folderLabel(notification.group_key)}`;
+  toast.title = t("action-focus-terminal");
   toast.addEventListener("click", () => void focusSession(notification.session_id));
   $("toast-region").append(toast);
   state.attentionToasts.set(notification.dedup_key, { toast, sessionId: notification.session_id });
@@ -179,12 +189,7 @@ function systemTimeMs(value) {
 }
 
 function dwell(value) {
-  const seconds = Math.max(0, Math.floor((Date.now() - systemTimeMs(value)) / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m`;
+  return relativeDwell(value);
 }
 
 function toolProgress(value) {
@@ -257,7 +262,10 @@ async function checkForUpdates() {
 }
 
 function diagnosticSource(value) {
-  return String(value ?? "unknown")
+  const key = String(value ?? "unknown");
+  const localized = t(`source-${key}`);
+  if (localized !== `source-${key}`) return localized;
+  return key
     .split("-")
     .map((part) => part ? part[0].toUpperCase() + part.slice(1) : part)
     .join(" ");
@@ -272,24 +280,34 @@ function renderDiagnostics() {
   const host = $("diagnostics-host");
   const session = state.sessions.find((item) => item.id === state.focused);
   if (!session) {
-    host.innerHTML = '<div class="diagnostics-empty">Focus a session to inspect its status evidence.</div>';
+    host.innerHTML = `<div class="diagnostics-empty">${escapeHtml(t("empty-focus-diagnostics"))}</div>`;
     return;
   }
   const history = Array.isArray(session.status_history) ? [...session.status_history].reverse() : [];
   const latest = history[0];
   const meta = STATUS_META[session.status] ?? STATUS_META.exited;
   const label = lifecycleLabel(session);
-  const source = latest?.source ? diagnosticSource(latest.source) : "Unavailable";
+  const source = latest?.source ? diagnosticSource(latest.source) : t("diagnostics-unavailable");
   const timeline = history.length
     ? history.map((entry) => {
       const entryMeta = STATUS_META[entry.to] ?? STATUS_META.exited;
-      const from = entry.from ? (STATUS_META[entry.from]?.label ?? entry.from) : "Session created";
-      return '<li class="diagnostic-event"><span class="diagnostic-event-glyph tone-' + entryMeta.tone + '" aria-hidden="true">' + entryMeta.glyph + '</span><div class="diagnostic-event-body"><div><b>' + escapeHtml(entryMeta.label) + '</b><span>from ' + escapeHtml(from) + '</span></div><small>' + escapeHtml(diagnosticSource(entry.source)) + ' · ' + escapeHtml(diagnosticTime(entry.at)) + '</small>' + (entry.detail ? '<p>' + escapeHtml(entry.detail) + '</p>' : '') + '</div></li>';
+      const from = entry.from ? statusLabel(entry.from) : t("session-created");
+      const reason = formatReason(entry.reason, entry.detail);
+      return '<li class="diagnostic-event"><span class="diagnostic-event-glyph tone-' + entryMeta.tone + '" aria-hidden="true">' + entryMeta.glyph + '</span><div class="diagnostic-event-body"><div><b>' + escapeHtml(metaLabel(entryMeta)) + '</b><span>' + escapeHtml(t("diagnostics-from", { status: from })) + '</span></div><small>' + escapeHtml(diagnosticSource(entry.source)) + ' · ' + escapeHtml(diagnosticTime(entry.at)) + '</small>' + (reason ? '<p>' + escapeHtml(reason) + '</p>' : '') + '</div></li>';
     }).join("")
-    : '<li class="diagnostics-empty">No transition history was persisted for this session.</li>';
-  host.innerHTML = '<div class="diagnostics-heading"><div><span class="eyebrow">WHY THIS STATE</span><h2>' + escapeHtml(session.name) + '</h2><p>' + escapeHtml(session.cwd) + '</p></div><div class="diagnostics-heading-actions"><button type="button" class="button button-quiet" data-diagnostics-action="preflight">Preflight checks</button><span class="status-glyph tone-' + meta.tone + '" title="' + escapeHtml(label) + '" aria-hidden="true">' + meta.glyph + '</span></div></div>' +
-    '<div class="diagnostics-current"><span>Current status</span><b>' + escapeHtml(label) + '</b><span>for ' + escapeHtml(dwell(session.status_since)) + ' · source ' + escapeHtml(source) + '</span></div>' +
+    : `<li class="diagnostics-empty">${escapeHtml(t("empty-no-transition-history"))}</li>`;
+  host.innerHTML = '<div class="diagnostics-heading"><div><span class="eyebrow">' + escapeHtml(t("diagnostics-why-this-state")) + '</span><h2>' + escapeHtml(session.name) + '</h2><p>' + escapeHtml(session.cwd) + '</p></div><div class="diagnostics-heading-actions"><button type="button" class="button button-quiet" data-diagnostics-action="preflight">' + escapeHtml(t("button-preflight")) + '</button><span class="status-glyph tone-' + meta.tone + '" title="' + escapeHtml(label) + '" aria-hidden="true">' + meta.glyph + '</span></div></div>' +
+    '<div class="diagnostics-current"><span>' + escapeHtml(t("diagnostics-current-status")) + '</span><b>' + escapeHtml(label) + '</b><span>' + escapeHtml(t("diagnostics-for", { dwell: dwell(session.status_since) })) + ' · ' + escapeHtml(t("diagnostics-source", { source })) + '</span></div>' +
     '<ol class="diagnostics-timeline">' + timeline + '</ol>';
+}
+
+function formatReason(reason, legacyDetail = null) {
+  if (!reason?.kind) return legacyDetail || t("reason-unknown");
+  const args = reason.args ?? {};
+  const status = args.status ? statusLabel(args.status) : t("status-unknown");
+  const messageArgs = { ...args, status, code: args.code ?? "unknown" };
+  const id = `reason-${reason.kind}`;
+  return t(id, messageArgs) === id ? (legacyDetail || t("reason-unknown")) : t(id, messageArgs);
 }
 
 function logTime(value) {
@@ -300,7 +318,7 @@ function logTime(value) {
 function renderLogs() {
   const host = $("logs-host");
   if (!state.logs.length) {
-    host.innerHTML = '<div class="logs-empty">No daemon records have arrived yet.</div>';
+    host.innerHTML = `<div class="logs-empty">${escapeHtml(t("empty-no-daemon-records"))}</div>`;
     return;
   }
   const rows = [...state.logs].reverse().map((entry) => {
@@ -310,7 +328,7 @@ function renderLogs() {
       .join("");
     return `<li class="log-event"><div class="log-event-heading"><b>${escapeHtml(entry.level ?? "INFO")}</b><span>${escapeHtml(entry.target ?? "terminalai")}</span><time>${escapeHtml(logTime(entry.at))}</time></div><p>${escapeHtml(entry.message ?? "")}</p>${fields ? `<div class="log-event-fields">${fields}</div>` : ""}</li>`;
   }).join("");
-  host.innerHTML = '<div class="logs-heading"><div><span class="eyebrow">CONTROL-PLANE LOG</span><h2>Daemon records</h2><p>Latest 256 records · daily files are retained under LocalAppData</p></div><span class="status-glyph tone-sapphire" aria-hidden="true">≋</span></div><ol class="logs-list">' + rows + '</ol>';
+  host.innerHTML = '<div class="logs-heading"><div><span class="eyebrow">' + escapeHtml(t("logs-control-plane")) + '</span><h2>' + escapeHtml(t("logs-daemon-records")) + '</h2><p>' + escapeHtml(t("logs-latest-retained")) + '</p></div><span class="status-glyph tone-sapphire" aria-hidden="true">≋</span></div><ol class="logs-list">' + rows + '</ol>';
 }
 
 function syncDiagnosticsVisibility() {
@@ -348,8 +366,8 @@ function setScreenReaderMode(active) {
   toggle.setAttribute("aria-pressed", String(state.screenReaderMode));
   toggle.classList.toggle("row-action-active", state.screenReaderMode);
   toggle.title = state.screenReaderMode
-    ? "Disable screen reader mode"
-    : "Enable screen reader mode (disables right-click copy and paste)";
+    ? t("screen-reader-disable")
+    : t("screen-reader-enable");
 }
 
 function appendLogs(entries) {
@@ -393,17 +411,17 @@ function renderPreflight() {
   const checks = Array.isArray(report?.checks) ? report.checks : [];
   const attention = checks.filter((check) => !["ok", "unsupported"].includes(check.state)).length;
   $("preflight-summary").textContent = state.preflightLoading
-    ? "Checking local dependencies…"
+    ? t("preflight-checking")
     : state.preflightReason
       ? state.preflightReason
       : attention
-        ? `${attention} check${attention === 1 ? "" : "s"} need attention before the fleet can be trusted.`
-        : "All detected control-plane dependencies are ready.";
+        ? countMessage("count-check", attention)
+        : t("preflight-all-ready");
   $("preflight-list").innerHTML = checks.map((check) => {
     const meta = PREFLIGHT_META[check.state] ?? PREFLIGHT_META.error;
     const detail = check.detail ? `<small>${escapeHtml(check.detail)}</small>` : "";
-    const fixLabel = check.can_fix ? "Fix" : "Fix unavailable";
-    return `<article class="preflight-row" role="listitem"><span class="status-glyph tone-${escapeHtml(meta.tone)}" title="${escapeHtml(meta.label)}" aria-hidden="true">${escapeHtml(meta.glyph)}</span><div class="preflight-copy"><div><b>${escapeHtml(check.label)}</b><span>${escapeHtml(meta.label)}</span></div><strong>${escapeHtml(check.detected)}</strong>${detail}</div><div class="preflight-actions"><button type="button" class="button button-secondary" data-preflight-action="fix" data-preflight-id="${escapeHtml(check.id)}"${check.can_fix ? "" : " disabled"} aria-label="${escapeHtml(fixLabel)} ${escapeHtml(check.label)}">${escapeHtml(fixLabel)}</button><button type="button" class="button button-quiet" data-preflight-action="recheck" data-preflight-id="${escapeHtml(check.id)}" aria-label="Recheck ${escapeHtml(check.label)}">Recheck</button></div></article>`;
+    const fixLabel = check.can_fix ? t("button-fix") : t("button-fix-unavailable");
+    return `<article class="preflight-row" role="listitem"><span class="status-glyph tone-${escapeHtml(meta.tone)}" title="${escapeHtml(metaLabel(meta))}" aria-hidden="true">${escapeHtml(meta.glyph)}</span><div class="preflight-copy"><div><b>${escapeHtml(check.label)}</b><span>${escapeHtml(metaLabel(meta))}</span></div><strong>${escapeHtml(check.detected)}</strong>${detail}</div><div class="preflight-actions"><button type="button" class="button button-secondary" data-preflight-action="fix" data-preflight-id="${escapeHtml(check.id)}"${check.can_fix ? "" : " disabled"} aria-label="${escapeHtml(fixLabel)} ${escapeHtml(check.label)}">${escapeHtml(fixLabel)}</button><button type="button" class="button button-quiet" data-preflight-action="recheck" data-preflight-id="${escapeHtml(check.id)}" aria-label="${escapeHtml(t("button-recheck"))} ${escapeHtml(check.label)}">${escapeHtml(t("button-recheck"))}</button></div></article>`;
   }).join("");
 }
 
@@ -463,7 +481,7 @@ function syncReviewVisibility() {
   $("review-view").classList.toggle("view-hidden", !state.reviewMode || state.preflightMode);
   $("review-toggle").setAttribute("aria-pressed", String(hidden));
   $("review-toggle").classList.toggle("wide-toggle-active", state.reviewMode && !state.preflightMode);
-  $("review-toggle").textContent = state.reviewMode && !state.preflightMode ? "Fleet" : "Review";
+  $("review-toggle").textContent = state.reviewMode && !state.preflightMode ? t("button-fleet") : t("button-review");
 }
 
 function renderReview() {
@@ -471,7 +489,7 @@ function renderReview() {
   const pending = entries.filter((entry) => !entry.reviewed).length;
   const conflicts = entries.filter((entry) => (entry.conflicts?.length ?? 0) > 0 || reviewNumber(entry.conflict_markers) > 0).length;
   const timedOut = entries.filter((entry) => entry.timed_out === true).length;
-  $("review-summary").textContent = entries.length + " session" + (entries.length === 1 ? "" : "s") + " · " + pending + " pending · " + conflicts + " with conflicts" + (timedOut ? " · " + timedOut + " timed out" : "");
+  $("review-summary").textContent = `${countMessage("count-session", entries.length)} · ${countMessage("count-pending", pending)} · ${countMessage("count-conflict", conflicts)}${timedOut ? ` · ${countMessage("count-timed-out", timedOut)}` : ""}`;
   $("review-empty").classList.toggle("view-hidden", entries.length > 0);
   $("review-list").innerHTML = entries.map(renderReviewEntry).join("");
 }
@@ -484,25 +502,25 @@ function renderReviewEntry(entry) {
   const files = reviewNumber(entry.files_changed);
   const reviewCost = reviewNumber(entry.review_cost);
   const agent = entry.agent === "codex" ? "Codex" : "Claude Code";
-  const status = entry.timed_out ? "Timed out" : (entry.reviewed ? "Reviewed" : "Pending");
+  const status = entry.timed_out ? t("review-status-timed-out") : (entry.reviewed ? t("review-status-reviewed") : t("review-status-pending"));
   const conflictDetails = conflicts.length
     ? "<ul>" + conflicts.map((path) => "<li><code>" + escapeHtml(path) + "</code></li>").join("") + "</ul>"
     : "";
   const conflictMarkup = conflicts.length || markers
-    ? '<div class="review-conflict" role="alert"><strong>Conflict markers surfaced</strong><span>' + conflicts.length + " conflicted file" + (conflicts.length === 1 ? "" : "s") + (markers ? " · " + markers + " marker lines" : "") + "</span>" + conflictDetails + "</div>"
+    ? '<div class="review-conflict" role="alert"><strong>' + escapeHtml(t("review-conflict-markers")) + '</strong><span>' + escapeHtml(countMessage("review-conflicted-file", conflicts.length)) + (markers ? " · " + escapeHtml(t("review-marker-lines", { count: markers })) : "") + "</span>" + conflictDetails + "</div>"
     : "";
   const errorMarkup = entry.error ? '<div class="review-error" role="alert">' + escapeHtml(entry.error) + "</div>" : "";
   const diffMarkup = entry.diff
-    ? '<details class="review-diff" ' + (conflicts.length || markers ? "open" : "") + "><summary>Show diff" + (entry.diff_truncated ? " · truncated" : "") + "</summary><pre>" + escapeHtml(entry.diff) + "</pre></details>"
-    : '<div class="review-no-diff">No textual diff was returned.</div>';
+    ? '<details class="review-diff" ' + (conflicts.length || markers ? "open" : "") + "><summary>" + escapeHtml(t("review-show-diff")) + (entry.diff_truncated ? " · " + escapeHtml(t("review-truncated")) : "") + "</summary><pre>" + escapeHtml(entry.diff) + "</pre></details>"
+    : '<div class="review-no-diff">' + escapeHtml(t("review-no-diff")) + "</div>";
   const actionMarkup = entry.reviewed
-    ? '<span class="reviewed-label">✓ Reviewed</span>'
+    ? '<span class="reviewed-label">✓ ' + escapeHtml(t("review-reviewed")) + '</span>'
     : entry.error
       ? ""
-      : '<button type="button" class="button button-secondary review-mark" data-review-action="mark-reviewed" data-review-id="' + escapeHtml(entry.session_id) + '">Mark reviewed</button>';
+      : '<button type="button" class="button button-secondary review-mark" data-review-action="mark-reviewed" data-review-id="' + escapeHtml(entry.session_id) + '">' + escapeHtml(t("review-mark-reviewed")) + '</button>';
   return '<article class="review-entry' + (entry.reviewed ? " review-entry-reviewed" : "") + (entry.timed_out ? " review-entry-timeout" : "") + '" role="listitem">' +
     '<div class="review-entry-heading"><div><h3>' + escapeHtml(entry.name) + '</h3><div class="review-repo"><span>' + escapeHtml(folderLabel(entry.cwd)) + '</span><span>' + escapeHtml(agent) + '</span><code>' + escapeHtml(entry.session_id) + '</code></div></div><div class="review-entry-action">' + actionMarkup + "</div></div>" +
-    '<div class="review-metrics"><span><b>' + files + "</b> file" + (files === 1 ? "" : "s") + '</span><span class="review-additions">+' + additions + '</span><span class="review-deletions">−' + deletions + '</span><span>cost ' + reviewCost + '</span><span class="review-state">' + status + "</span></div>" +
+    '<div class="review-metrics"><span>' + escapeHtml(countMessage("count-file", files)) + '</span><span class="review-additions">+' + additions + '</span><span class="review-deletions">−' + deletions + '</span><span>' + escapeHtml(t("review-cost", { cost: reviewCost })) + '</span><span class="review-state">' + escapeHtml(status) + "</span></div>" +
     conflictMarkup + errorMarkup + diffMarkup + "</article>";
 }
 
@@ -542,21 +560,21 @@ function renderSummary() {
   // checked. Say which one produced this number.
   const pricingVersion = state.admission.pricing_version || "no price table";
   const spendTitle = reporting.length
-    ? `Prices as of ${pricingVersion}; ${reporting.length} of ${state.sessions.length} sessions reporting`
-    : `No session has reported a cost yet. Prices as of ${pricingVersion}`;
+    ? t("pricing-reporting", { pricing: pricingVersion, reporting: reporting.length, sessions: state.sessions.length })
+    : t("pricing-none", { pricing: pricingVersion });
   const maxLive = state.admission.max_live_sessions ?? 3;
-  $("fleet-summary").innerHTML = `<span class="summary-item"><b>${live}/${maxLive}</b> live</span><span class="summary-separator">/</span><span class="summary-item"><b>${queued}</b> queued</span><span class="summary-separator">/</span><span class="summary-item summary-attention"><b>${needsYou}</b> needs you</span><span class="summary-separator">/</span><span class="summary-item"><b>${working}</b> active</span><span class="summary-separator">/</span><span class="summary-item" title="${escapeHtml(spendTitle)}"><b>${spendLabel}</b> spent</span>`;
+  $("fleet-summary").innerHTML = `<span class="summary-item"><b>${live}/${maxLive}</b> ${escapeHtml(t("fleet-live"))}</span><span class="summary-separator">/</span><span class="summary-item">${escapeHtml(countMessage("count-queued", queued))}</span><span class="summary-separator">/</span><span class="summary-item summary-attention">${escapeHtml(countMessage("count-needs-you", needsYou))}</span><span class="summary-separator">/</span><span class="summary-item">${escapeHtml(countMessage("count-active", working))}</span><span class="summary-separator">/</span><span class="summary-item" title="${escapeHtml(spendTitle)}"><b>${spendLabel}</b> ${escapeHtml(t("fleet-spent"))}</span>`;
   const droppedEvents = Number(state.admission.dropped_events) || 0;
   $("fleet-count").textContent = droppedEvents
-    ? `${state.sessions.length} tracked · ${droppedEvents} event drops`
-    : `${state.sessions.length} tracked`;
+    ? `${countMessage("count-session", state.sessions.length)} · ${t("event-drops", { count: droppedEvents })}`
+    : t("tracked-sessions", { count: state.sessions.length });
   const counts = Object.fromEntries(STATUS_KEYS.map((status) => [status, 0]));
   for (const session of state.sessions) {
     if (session.status in counts) counts[session.status] += 1;
   }
   $("fleet-state-strip").innerHTML = STATUS_KEYS.map((status) => {
     const meta = STATUS_META[status];
-    return `<span class="state-chip tone-${escapeHtml(meta.tone)}" role="listitem" title="${escapeHtml(meta.label)}: ${escapeHtml(counts[status])}" aria-label="${escapeHtml(meta.label)}: ${escapeHtml(counts[status])}"><span class="state-chip-glyph" aria-hidden="true">${meta.glyph}</span><b>${counts[status]}</b><span>${escapeHtml(meta.short)}</span></span>`;
+    return `<span class="state-chip tone-${escapeHtml(meta.tone)}" role="listitem" title="${escapeHtml(metaLabel(meta))}: ${escapeHtml(counts[status])}" aria-label="${escapeHtml(metaLabel(meta))}: ${escapeHtml(counts[status])}"><span class="state-chip-glyph" aria-hidden="true">${meta.glyph}</span><b>${counts[status]}</b><span>${escapeHtml(t(meta.short))}</span></span>`;
   }).join("");
 }
 
@@ -746,9 +764,9 @@ function updateFleetRow(row, session, position = 1, setSize = 1, rovingId = stat
   const branch = session.branch || "—";
   const progress = toolProgress(session.tool_progress);
   const restartCount = Number.isInteger(Number(session.restarts)) ? Number(session.restarts) : 0;
-  const lastLine = session.last_line || "No output yet";
-  const pinLabel = session.pinned ? "Unpin" : "Pin";
-  const sessionLabel = `${session.name}, ${label}, ${repo}, ${branch}, progress ${progress}, ${restartCount} restarts, ports ${ports(session.ports)}`;
+  const lastLine = session.last_line || t("empty-no-output");
+  const pinLabel = session.pinned ? t("action-unpin") : t("action-pin");
+  const sessionLabel = `${session.name}, ${label}, ${repo}, ${branch}, ${t("action-tool-progress")} ${progress}, ${restartCount} ${t("action-restart-count")}, ${t("action-allocated-ports")} ${ports(session.ports)}`;
 
   row.className = `fleet-row${active ? " row-focused" : ""}${unread ? " row-unread" : ""}`;
   row.dataset.id = session.id;
@@ -768,7 +786,7 @@ function updateFleetRow(row, session, position = 1, setSize = 1, rovingId = stat
   if (unread && !unreadDot) {
     const dot = document.createElement("span");
     dot.className = "unread-dot";
-    dot.title = "Unread attention";
+    dot.title = t("action-unread-attention");
     row.querySelector(".row-name").append(dot);
   } else if (!unread && unreadDot) {
     unreadDot.remove();
@@ -777,7 +795,7 @@ function updateFleetRow(row, session, position = 1, setSize = 1, rovingId = stat
   row.querySelector(".row-branch").textContent = branch;
   row.querySelector(".row-status-label").textContent = label;
   const portBadge = row.querySelector(".row-ports");
-  portBadge.textContent = "ports " + ports(session.ports);
+  portBadge.textContent = `${t("action-allocated-ports")} ${ports(session.ports)}`;
 
   const agentBadge = row.querySelector(".agent-badge");
   agentBadge.className = `agent-badge agent-${session.agent}`;
@@ -797,17 +815,17 @@ function updateFleetRow(row, session, position = 1, setSize = 1, rovingId = stat
   pin.setAttribute("aria-label", `${pinLabel} ${session.name}`);
   pin.textContent = session.pinned ? "◆" : "◇";
   const focus = row.querySelector('[data-action="focus"]');
-  focus.setAttribute("aria-label", `Focus ${session.name} terminal`);
+  focus.setAttribute("aria-label", t("action-focus-session", { name: session.name }));
   const revive = row.querySelector('[data-action="revive"]');
   revive.hidden = !(session.status === "exited" && session.resume_id);
-  revive.title = `Revive ${session.name} with native resume`;
-  revive.setAttribute("aria-label", `Revive ${session.name} with native resume`);
+  revive.title = t("action-revive", { name: session.name });
+  revive.setAttribute("aria-label", t("action-revive", { name: session.name }));
   const archive = row.querySelector('[data-action="archive"]');
   archive.hidden = session.status !== "exited";
-  archive.setAttribute("aria-label", `Archive ${session.name}`);
+  archive.setAttribute("aria-label", t("action-archive", { name: session.name }));
   const stop = row.querySelector('[data-action="kill"]');
   stop.hidden = session.status === "exited";
-  const stopLabel = session.status === "queued" ? "Cancel queued session" : `Stop ${session.name}`;
+  const stopLabel = session.status === "queued" ? t("action-cancel-queued") : t("action-stop", { name: session.name });
   stop.title = stopLabel;
   stop.setAttribute("aria-label", stopLabel);
 
@@ -820,8 +838,8 @@ function updateFleetRow(row, session, position = 1, setSize = 1, rovingId = stat
   const reply = row.querySelector(".row-reply");
   const replyInput = row.querySelector("input[data-reply]");
   reply.hidden = !isAttention(session) && !replyInput.value;
-  replyInput.setAttribute("aria-label", `Reply to ${session.name}`);
-  row.querySelector(".row-reply-send").setAttribute("aria-label", `Send reply to ${session.name}`);
+  replyInput.setAttribute("aria-label", t("action-reply", { name: session.name }));
+  row.querySelector(".row-reply-send").setAttribute("aria-label", t("action-send-reply", { name: session.name }));
 }
 
 function isAttention(session) {
@@ -845,8 +863,8 @@ function flushAnnouncements() {
   const entries = Array.from(state.announcementQueue.values());
   state.announcementQueue.clear();
   const message = entries.length === 1
-    ? `${entries[0].name} needs you: ${entries[0].label}.`
-    : `${entries.length} sessions need you: ${entries.map((entry) => entry.name).join(", ")}.`;
+    ? t("announcement-one", { name: entries[0].name, status: entries[0].label })
+    : t("announcement-many", { count: entries.length, names: entries.map((entry) => entry.name).join(", ") });
   const announcer = $("fleet-announcer");
   announcer.textContent = "";
   setTimeout(() => {
@@ -866,22 +884,23 @@ function renderRow(session) {
   const branch = session.branch || "—";
   const progress = toolProgress(session.tool_progress);
   const restartCount = Number.isInteger(Number(session.restarts)) ? Number(session.restarts) : 0;
-  const lastLine = session.last_line || "No output yet";
-  const pinLabel = session.pinned ? "Unpin" : "Pin";
+  const lastLine = session.last_line || t("empty-no-output");
+  const pinLabel = session.pinned ? t("action-unpin") : t("action-pin");
   const reviveHidden = session.status === "exited" && session.resume_id ? "" : " hidden";
   const archiveHidden = session.status === "exited" ? "" : " hidden";
   const stopHidden = session.status === "exited" ? " hidden" : "";
-  const stopLabel = session.status === "queued" ? "Cancel queued session" : `Stop ${session.name}`;
+  const stopLabel = session.status === "queued" ? t("action-cancel-queued") : t("action-stop", { name: session.name });
   const replyHidden = isAttention(session) ? "" : " hidden";
   const wideHidden = state.wideMode ? "" : " hidden";
   const portsLabel = ports(session.ports);
-  return `<article class="fleet-row${escapeHtml(active)}${escapeHtml(unread)}" data-id="${escapeHtml(session.id)}" role="option" tabindex="-1" aria-posinset="1" aria-setsize="1" aria-selected="false" aria-keyshortcuts="Enter Space ArrowUp ArrowDown Home End" aria-label="${escapeHtml(`${session.name}, ${label}, ${repo}, ${branch}, progress ${progress}, ${restartCount} restarts, ports ${portsLabel}`)}">
-    <div class="row-identity"><span class="status-glyph tone-${escapeHtml(meta.tone)}" title="${escapeHtml(label)}" aria-hidden="true">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name"><span class="row-name-text">${escapeHtml(session.name)}</span>${session.unread ? '<span class="unread-dot" title="Unread attention"></span>' : ""}</div><div class="row-folder"><span class="row-repo" title="Repository">${escapeHtml(repo)}</span><span class="row-branch" title="Branch">${escapeHtml(branch)}</span><span class="row-status-label">${escapeHtml(label)}</span><span class="row-ports" title="Allocated ports">ports ${escapeHtml(portsLabel)}</span></div></div></div>
-    <div class="row-metrics"><span class="agent-badge agent-${escapeHtml(session.agent)}" title="${session.agent === "codex" ? "Codex" : "Claude Code"}" aria-label="${session.agent === "codex" ? "Codex" : "Claude Code"}">${agentLabel}</span><span class="row-progress" title="Tool progress"><small>PROG</small><b>${escapeHtml(progress)}</b></span><span class="row-restarts" title="Restart count">↻ ${restartCount}</span></div>
+  const accessibleLabel = `${session.name}, ${label}, ${repo}, ${branch}, ${t("action-tool-progress")} ${progress}, ${restartCount} ${t("action-restart-count")}, ${t("action-allocated-ports")} ${portsLabel}`;
+  return `<article class="fleet-row${escapeHtml(active)}${escapeHtml(unread)}" data-id="${escapeHtml(session.id)}" role="option" tabindex="-1" aria-posinset="1" aria-setsize="1" aria-selected="false" aria-keyshortcuts="Enter Space ArrowUp ArrowDown Home End" aria-label="${escapeHtml(accessibleLabel)}">
+    <div class="row-identity"><span class="status-glyph tone-${escapeHtml(meta.tone)}" title="${escapeHtml(label)}" aria-hidden="true">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name"><span class="row-name-text">${escapeHtml(session.name)}</span>${session.unread ? `<span class="unread-dot" title="${escapeHtml(t("action-unread-attention"))}"></span>` : ""}</div><div class="row-folder"><span class="row-repo" title="${escapeHtml(t("action-repository"))}">${escapeHtml(repo)}</span><span class="row-branch" title="${escapeHtml(t("action-branch"))}">${escapeHtml(branch)}</span><span class="row-status-label">${escapeHtml(label)}</span><span class="row-ports" title="${escapeHtml(t("action-allocated-ports"))}">${escapeHtml(t("action-allocated-ports"))} ${escapeHtml(portsLabel)}</span></div></div></div>
+    <div class="row-metrics"><span class="agent-badge agent-${escapeHtml(session.agent)}" title="${session.agent === "codex" ? "Codex" : "Claude Code"}" aria-label="${session.agent === "codex" ? "Codex" : "Claude Code"}">${agentLabel}</span><span class="row-progress" title="${escapeHtml(t("action-tool-progress"))}"><small>PROG</small><b>${escapeHtml(progress)}</b></span><span class="row-restarts" title="${escapeHtml(t("action-restart-count"))}">↻ ${restartCount}</span></div>
     <div class="row-dwell"><span>${dwell(session.status_since)}</span><small class="row-last-line" title="${escapeHtml(lastLine)}">${escapeHtml(lastLine)}</small></div>
-    <div class="row-actions"><button type="button" data-action="pin" class="row-action ${session.pinned ? "row-action-active" : ""}" title="${escapeHtml(pinLabel)}" aria-label="${escapeHtml(pinLabel)} ${escapeHtml(session.name)}">${session.pinned ? "◆" : "◇"}</button><button type="button" data-action="focus" class="row-action" title="Focus terminal" aria-label="Focus ${escapeHtml(session.name)} terminal">↗</button><button type="button" data-action="revive" class="row-action" title="Revive ${escapeHtml(session.name)} with native resume" aria-label="Revive ${escapeHtml(session.name)} with native resume"${reviveHidden}>↻</button><button type="button" data-action="archive" class="row-action" title="Archive stopped session" aria-label="Archive ${escapeHtml(session.name)}"${archiveHidden}>▣</button><button type="button" data-action="kill" class="row-action row-action-danger" title="${escapeHtml(stopLabel)}" aria-label="${escapeHtml(stopLabel)}"${stopHidden}>×</button></div>
+    <div class="row-actions"><button type="button" data-action="pin" class="row-action ${session.pinned ? "row-action-active" : ""}" title="${escapeHtml(pinLabel)}" aria-label="${escapeHtml(pinLabel)} ${escapeHtml(session.name)}">${session.pinned ? "◆" : "◇"}</button><button type="button" data-action="focus" class="row-action" title="${escapeHtml(t("action-focus-terminal"))}" aria-label="${escapeHtml(t("action-focus-session", { name: session.name }))}">↗</button><button type="button" data-action="revive" class="row-action" title="${escapeHtml(t("action-revive", { name: session.name }))}" aria-label="${escapeHtml(t("action-revive", { name: session.name }))}"${reviveHidden}>↻</button><button type="button" data-action="archive" class="row-action" title="${escapeHtml(t("action-archive-stopped"))}" aria-label="${escapeHtml(t("action-archive", { name: session.name }))}"${archiveHidden}>▣</button><button type="button" data-action="kill" class="row-action row-action-danger" title="${escapeHtml(stopLabel)}" aria-label="${escapeHtml(stopLabel)}"${stopHidden}>×</button></div>
     <div class="row-wide-meta"${wideHidden}><span><small>MODEL</small><b data-row-model>${escapeHtml(model)}</b></span><span><small>EFFORT</small><b data-row-effort>${escapeHtml(effort)}</b></span><span><small>COST</small><b data-row-cost>${escapeHtml(cost(session.cost_usd))}</b></span></div>
-    <div class="row-reply"${replyHidden}><input data-reply type="text" maxlength="500" placeholder="Reply without opening terminal" aria-label="Reply to ${escapeHtml(session.name)}" /><button type="button" data-action="reply" class="row-reply-send" title="Send reply" aria-label="Send reply to ${escapeHtml(session.name)}">↵</button></div>
+    <div class="row-reply"${replyHidden}><input data-reply type="text" maxlength="500" placeholder="${escapeHtml(t("action-reply", { name: session.name }))}" aria-label="${escapeHtml(t("action-reply", { name: session.name }))}" /><button type="button" data-action="reply" class="row-reply-send" title="${escapeHtml(t("button-send-reply"))}" aria-label="${escapeHtml(t("action-send-reply", { name: session.name }))}">↵</button></div>
   </article>`;
 }
 
@@ -921,9 +940,9 @@ function updateTerminalHeader() {
   renderTerminalPlaceholder();
   const session = state.sessions.find((item) => item.id === state.focused);
   if (!session) {
-    $("terminal-name").textContent = "No focused session";
+    $("terminal-name").textContent = t("empty-no-focused-session");
     $("terminal-path").textContent = "";
-    $("terminal-status").textContent = "Waiting for a session";
+    $("terminal-status").textContent = t("empty-waiting-for-session");
     $("terminal-pulse").className = "terminal-pulse";
     if (state.diagnosticsMode) renderDiagnostics();
     return;
@@ -937,16 +956,16 @@ function updateTerminalHeader() {
   if (state.diagnosticsMode) renderDiagnostics();
 }
 
-function resetTerminal(status = "Waiting for a session") {
+function resetTerminal(status = t("empty-waiting-for-session")) {
   if (state.terminal) state.terminal.reset();
   $("terminal-status").textContent = status;
   updateTerminalHeader();
 }
 
 const EXTERNAL_STATE_LABEL = {
-  live: { label: "Running", tone: "sapphire" },
-  ended: { label: "Ended", tone: "overlay0" },
-  unknown: { label: "Unknown", tone: "overlay0" },
+  live: { label: "external-running", tone: "sapphire" },
+  ended: { label: "external-ended", tone: "overlay0" },
+  unknown: { label: "external-unknown", tone: "overlay0" },
 };
 
 // Rows for sessions this supervisor did not start. Deliberately actionless: we
@@ -965,8 +984,8 @@ function renderExternal() {
   }
   const unknown = rows.filter((session) => session.state === "unknown").length;
   $("external-summary").textContent = unknown
-    ? `${rows.length} not supervised · ${unknown} unknown`
-    : `${rows.length} not supervised`;
+    ? `${countMessage("count-external", rows.length)} · ${countMessage("count-unknown-external", unknown)}`
+    : countMessage("count-external", rows.length);
 
   $("external-list").innerHTML = rows
     .map((session) => {
@@ -976,10 +995,11 @@ function renderExternal() {
       const alsoHere = supervised.has(String(session.cwd ?? "").toLowerCase())
         ? '<span class="external-overlap" title="TerminalAI also supervises a session in this folder">same folder</span>'
         : "";
-      return `<article class="external-row" role="listitem" aria-label="${escapeHtml(`${label}, ${meta.label}, not supervised by TerminalAI`)}">
+      const externalAriaLabel = `${label}, ${metaLabel(meta)}, ${countMessage("count-external", 1)}`;
+      return `<article class="external-row" role="listitem" aria-label="${escapeHtml(externalAriaLabel)}">
         <span class="status-glyph tone-${escapeHtml(meta.tone)}" aria-hidden="true">◦</span>
         <div class="external-identity"><div class="external-name">${escapeHtml(label)}</div><div class="external-meta"><span title="${escapeHtml(String(session.cwd ?? ""))}">${escapeHtml(folderLabel(session.cwd))}</span><span>${escapeHtml(where)}</span>${session.version ? `<span>v${escapeHtml(session.version)}</span>` : ""}</div></div>
-        <span class="external-state">${escapeHtml(meta.label)}</span>
+        <span class="external-state">${escapeHtml(metaLabel(meta))}</span>
         <span class="external-pid" title="Process id">${escapeHtml(String(session.pid))}</span>
         ${alsoHere}
       </article>`;
@@ -1544,6 +1564,7 @@ function bindEvents() {
 }
 
 async function start() {
+  localizeDom();
   setupTerminal();
   bindEvents();
   syncAgentFields();

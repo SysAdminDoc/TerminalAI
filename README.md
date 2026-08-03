@@ -298,6 +298,12 @@ contract. `LocalPtyDomain` is the default ConPTY implementation; a remote transp
 the same output, input, resize and lifecycle seam without exposing a local process handle to the
 registry.
 
+The web renderer and daemon share the Fluent catalog at `web/src/i18n/terminalai.ftl`. Rust
+validates and formats it through `terminalai_core::Catalog`; the renderer applies the same
+message IDs and uses the browser's `Intl` plural and relative-time formatters for counts and
+dwell labels. Status diagnostics cross the daemon boundary as reason kinds plus arguments, so
+translated prose never becomes a wire-format dependency.
+
 ## Licence
 
 MIT — see [LICENSE](LICENSE).

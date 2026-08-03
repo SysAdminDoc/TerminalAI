@@ -35,6 +35,8 @@ libc = "0.2"
 tracing = "0.1"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
+fluent-bundle = "0.16"
+unic-langid = "0.9"
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Security",

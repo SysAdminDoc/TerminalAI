@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Added one shared Fluent catalog at `web/src/i18n/terminalai.ftl`, loaded and validated by the
+  Rust daemon and formatted by the web renderer. Status diagnostics now carry structured reason
+  kinds with arguments, while localized counts and dwell labels use `Intl.PluralRules` and
+  `Intl.RelativeTimeFormat` without expanding the compact fleet row.
 - `SessionRegistry` now supervises sessions through an object-safe `AgentDomain`/`AgentSession`
   contract. `LocalPtyDomain` keeps the existing ConPTY behavior as the default while a future
   remote relay can supply input, output, resize and lifecycle operations without local handles.

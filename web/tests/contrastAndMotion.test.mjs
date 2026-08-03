@@ -5,6 +5,7 @@ import test from "node:test";
 const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+const catalog = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 
 test("small UI text does not use decorative contrast tokens", () => {
   assert.doesNotMatch(css, /(?:^|[;{]\s*)color:\s*var\(--(?:overlay0|overlay1|surface1|surface2)\)/m);
@@ -31,7 +32,7 @@ test("reduced motion disables the remaining spinner and glow effects", () => {
 test("screen reader mode is explicit and opt-in", () => {
   assert.match(html, /id="screen-reader-toggle"[^>]*aria-pressed="false"/);
   assert.match(html, /id="screen-reader-toggle"[^>]*aria-label="Toggle screen reader mode"/);
-  assert.match(html, /Enable screen reader mode \(disables right-click copy and paste\)/);
+  assert.match(catalog, /screen-reader-enable = Enable screen reader mode \(disables right-click copy and paste\)/);
   assert.match(main, /screenReaderMode: false,/);
   assert.match(main, /state\.terminal\.options\.screenReaderMode = state\.screenReaderMode/);
   assert.match(main, /screen-reader-toggle.*setScreenReaderMode\(!state\.screenReaderMode\)/);

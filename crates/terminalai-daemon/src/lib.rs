@@ -374,6 +374,11 @@ impl DaemonServer {
         store_quarantine: Option<String>,
         log_hub: Option<LogHub>,
     ) -> Result<Self, IpcError> {
+        // Parse the shared catalog during daemon startup so a malformed
+        // resource cannot leave the Rust and web message layers silently out
+        // of sync. The web renderer formats the same source for the operator.
+        let _localization = terminalai_core::default_catalog()
+            .map_err(|error| IpcError::Configuration(error.to_string()))?;
         let name = socket_name(name)?;
         let mut options = ListenerOptions::new().name(name);
         #[cfg(windows)]

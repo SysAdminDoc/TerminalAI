@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use crate::agent::Agent;
-use crate::diagnostics::{StatusDiagnostic, StatusSource, MAX_STATUS_HISTORY};
+use crate::diagnostics::{StatusDiagnostic, StatusReason, StatusSource, MAX_STATUS_HISTORY};
 use crate::launch::{Effort, LaunchSpec};
 
 /// Maximum number of automatic restart attempts for one session. A session
@@ -301,6 +301,7 @@ impl Session {
             from,
             to,
             source,
+            reason: StatusReason::for_transition(from, to, source, self.last_exit_code),
             detail: None,
         });
         let overflow = self.status_history.len().saturating_sub(MAX_STATUS_HISTORY);
@@ -504,6 +505,7 @@ fn trim_for_row(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostics::StatusReasonKind;
     use crate::launch::spec_for;
     use std::path::Path;
 
@@ -610,6 +612,11 @@ mod tests {
         assert_eq!(transition.from, Some(SessionStatus::Starting));
         assert_eq!(transition.to, SessionStatus::NeedsYou);
         assert_eq!(transition.source, StatusSource::Hook);
+        assert_eq!(transition.reason.kind, StatusReasonKind::AgentHook);
+        assert_eq!(transition.reason.args["status"], "needs-you");
+        let wire = serde_json::to_value(transition).expect("status transition serializes");
+        assert_eq!(wire["reason"]["kind"], "agent-hook");
+        assert_eq!(wire["reason"]["args"]["status"], "needs-you");
         assert!(transition.at >= before);
     }
 
