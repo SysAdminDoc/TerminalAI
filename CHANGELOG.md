@@ -42,6 +42,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Fleet rows now reconcile by session id, mutating existing row content while preserving focused
   reply inputs and their caret across live updates and filtered views; frontend coverage runs with
   `npm --prefix web test`.
+- PTY output and replay now stay as raw bytes from the registry through the daemon and Tauri
+  `Raw` channel, with 12 ms batching so split UTF-8 sequences reach xterm intact.
 - R-16 adds lifecycle-aware attention notifications with stable dedup keys, repository grouping,
   automatic retraction on progress, and startup/long-tool grace suppression. The shell consumes
   raised notifications as deduplicated, click-to-focus in-app alerts.

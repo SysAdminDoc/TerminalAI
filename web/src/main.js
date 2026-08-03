@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
@@ -54,6 +54,7 @@ const state = {
   storeQuarantine: null,
   storeQuarantineDismissed: false,
   terminal: null,
+  outputChannel: null,
   fitAddon: null,
   previewTimer: null,
   attentionToasts: new Map(),
@@ -61,6 +62,17 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
+
+function terminalBytes(payload) {
+  if (payload instanceof ArrayBuffer) return new Uint8Array(payload);
+  if (ArrayBuffer.isView(payload)) return new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength);
+  if (Array.isArray(payload)) return Uint8Array.from(payload);
+  return new TextEncoder().encode(String(payload ?? ""));
+}
+
+function writeTerminalBytes(payload, id = state.focused) {
+  if (id === state.focused && state.terminal) state.terminal.write(terminalBytes(payload));
+}
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -622,8 +634,10 @@ async function loadSnapshot() {
     renderRows();
     updateTerminalHeader();
     if (state.focused) {
-      const replay = await reattachForFocus(state.focused);
-      await hydrateTerminal(state.focused, replay);
+      state.terminal?.reset();
+      await attachSessionOutput(state.focused);
+      updateTerminalHeader();
+      renderRows();
     }
   } catch (error) {
     showToast(`Could not read daemon snapshot: ${error}`);
@@ -631,35 +645,41 @@ async function loadSnapshot() {
 }
 
 async function focusSession(id) {
+  const previousFocused = state.focused;
+  state.focused = id;
+  state.terminal?.reset();
+  renderRows();
+  updateTerminalHeader();
   try {
-    const replay = await reattachForFocus(id);
-    state.focused = id;
+    await attachSessionOutput(id);
+    updateTerminalHeader();
     renderRows();
-    await hydrateTerminal(id, replay);
   } catch (error) {
+    state.focused = previousFocused;
+    renderRows();
+    updateTerminalHeader();
     showToast(`Could not focus session: ${error}`);
   }
 }
 
-async function reattachForFocus(id) {
-  const session = state.sessions.find((item) => item.id === id);
-  if (session && session.status !== "exited") return invoke("reattach_session", { id });
-  await invoke("focus_session", { id });
-  return null;
+function createOutputChannel(id) {
+  const channel = new Channel();
+  channel.onmessage = (data) => writeTerminalBytes(data, id);
+  return channel;
 }
 
-async function hydrateTerminal(id, replayData = null) {
-  if (!state.terminal) return;
-  state.terminal.reset();
-  try {
-    const data = replayData ?? (await invoke("scrollback", { id }));
-    if (data) state.terminal.write(data);
-    await invoke("mark_read", { id });
-  } catch (error) {
-    showToast(`Could not attach terminal: ${error}`);
+async function attachSessionOutput(id) {
+  const channel = createOutputChannel(id);
+  state.outputChannel = channel;
+  const session = state.sessions.find((item) => item.id === id);
+  if (session && session.status !== "exited") {
+    await invoke("attach_session_output", { id, channel });
+  } else {
+    await invoke("focus_session", { id });
+    await invoke("subscribe_output", { id, channel });
+    await invoke("stream_scrollback", { id, channel });
   }
-  updateTerminalHeader();
-  renderRows();
+  await invoke("mark_read", { id });
 }
 
 async function rowAction(action, id, row = null) {
@@ -916,7 +936,7 @@ async function handleDaemonEvent(event) {
       if (event.event?.kind === "retracted") retractAttentionToast(event.event.dedup_key);
       break;
     case "output":
-      if (event.id === state.focused && state.terminal) state.terminal.write(event.data);
+      writeTerminalBytes(event.data, event.id);
       break;
     default:
       break;

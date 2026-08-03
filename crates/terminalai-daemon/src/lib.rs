@@ -184,10 +184,10 @@ pub enum Response {
         queued: bool,
     },
     Scrollback {
-        data: String,
+        data: Vec<u8>,
     },
     Reattached {
-        data: String,
+        data: Vec<u8>,
     },
     Revived {
         id: SessionId,
@@ -634,17 +634,13 @@ fn dispatch_with_quarantine(
             },
         },
         Request::Scrollback { id } => match registry.scrollback(&id) {
-            Ok(data) => Response::Scrollback {
-                data: String::from_utf8_lossy(&data).into_owned(),
-            },
+            Ok(data) => Response::Scrollback { data },
             Err(error) => Response::Error {
                 message: error.to_string(),
             },
         },
         Request::Reattach { id } => match registry.reattach(&id) {
-            Ok(data) => Response::Reattached {
-                data: String::from_utf8_lossy(&data).into_owned(),
-            },
+            Ok(data) => Response::Reattached { data },
             Err(error) => Response::Error {
                 message: error.to_string(),
             },

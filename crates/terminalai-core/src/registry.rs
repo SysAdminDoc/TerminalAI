@@ -107,7 +107,7 @@ pub enum RegistryEvent {
     SessionUpdated { session: Session },
     Notification { event: NotificationEvent },
     AgentEvent { event: AgentEvent },
-    Output { id: SessionId, data: String },
+    Output { id: SessionId, data: Vec<u8> },
     SessionRemoved { id: SessionId },
 }
 
@@ -1201,7 +1201,7 @@ fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u
             inner,
             RegistryEvent::Output {
                 id: id.clone(),
-                data: String::from_utf8_lossy(bytes).into_owned(),
+                data: bytes.to_vec(),
             },
         );
     }
@@ -1518,10 +1518,17 @@ mod tests {
         assert_eq!(registry.grid_snapshot(&id).expect("grid").lines[1], "world");
         registry.focus(Some(id.clone())).expect("focus");
         let _ = events.try_iter().count();
-        handle_output(&registry.inner, &id, 1, b"\r\nfocused");
-        assert!(events
+        handle_output(&registry.inner, &id, 1, &[0xf0, 0x9f]);
+        handle_output(&registry.inner, &id, 1, &[0x98, 0x80]);
+        let output = events
             .try_iter()
-            .any(|event| matches!(event, RegistryEvent::Output { .. })));
+            .filter_map(|event| match event {
+                RegistryEvent::Output { data, .. } => Some(data),
+                _ => None,
+            })
+            .flatten()
+            .collect::<Vec<_>>();
+        assert_eq!(output, "😀".as_bytes());
     }
 
     #[test]

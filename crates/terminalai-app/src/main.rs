@@ -1,22 +1,29 @@
 mod preset;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::mpsc::RecvTimeoutError;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use std::{io, io::Read};
 
 use preset::{Preset, PresetStore};
 use serde::Serialize;
+use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{Emitter, Manager, State};
 use terminalai_core::agent::Agent;
 use terminalai_core::launch::LaunchSpec;
-use terminalai_core::{parse_hook, AdmissionSnapshot, ReviewItem, Session, SessionId};
+use terminalai_core::{
+    parse_hook, AdmissionSnapshot, RegistryEvent, ReviewItem, Session, SessionId,
+};
 use terminalai_daemon::{DaemonClient, Request, Response, PROTOCOL_VERSION};
 
 struct AppState {
     client: DaemonClient,
     presets: PresetStore,
+    output_channels: Arc<Mutex<HashMap<SessionId, Channel<InvokeResponseBody>>>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -195,19 +202,56 @@ fn toggle_pin(id: SessionId, state: State<'_, AppState>) -> Result<bool, String>
     }
 }
 
+fn register_output_channel(
+    id: SessionId,
+    channel: Channel<InvokeResponseBody>,
+    channels: &Arc<Mutex<HashMap<SessionId, Channel<InvokeResponseBody>>>>,
+) -> Result<(), String> {
+    let mut channels = channels
+        .lock()
+        .map_err(|_| "output channel registry is poisoned".to_string())?;
+    channels.retain(|session_id, _| session_id == &id);
+    channels.insert(id, channel);
+    Ok(())
+}
+
+fn send_raw(channel: &Channel<InvokeResponseBody>, data: Vec<u8>) -> Result<(), String> {
+    channel
+        .send(InvokeResponseBody::Raw(data))
+        .map_err(|error| format!("send terminal bytes: {error}"))
+}
+
 #[tauri::command]
-fn scrollback(id: SessionId, state: State<'_, AppState>) -> Result<String, String> {
+fn subscribe_output(
+    id: SessionId,
+    channel: Channel<InvokeResponseBody>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    register_output_channel(id, channel, &state.output_channels)
+}
+
+#[tauri::command]
+fn stream_scrollback(
+    id: SessionId,
+    channel: Channel<InvokeResponseBody>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     match daemon_response(&state.client, Request::Scrollback { id })? {
-        Response::Scrollback { data } => Ok(data),
+        Response::Scrollback { data } => send_raw(&channel, data),
         Response::Error { message } => Err(message),
         other => Err(format!("unexpected scrollback response: {other:?}")),
     }
 }
 
 #[tauri::command]
-fn reattach_session(id: SessionId, state: State<'_, AppState>) -> Result<String, String> {
+fn attach_session_output(
+    id: SessionId,
+    channel: Channel<InvokeResponseBody>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    register_output_channel(id.clone(), channel.clone(), &state.output_channels)?;
     match daemon_response(&state.client, Request::Reattach { id })? {
-        Response::Reattached { data } => Ok(data),
+        Response::Reattached { data } => send_raw(&channel, data),
         Response::Error { message } => Err(message),
         other => Err(format!("unexpected reattach response: {other:?}")),
     }
@@ -308,18 +352,69 @@ fn connect_or_start_daemon() -> Result<DaemonClient, String> {
     ))
 }
 
-fn bridge_daemon_events(app: &tauri::AppHandle, client: &DaemonClient) {
+const OUTPUT_BATCH_INTERVAL: Duration = Duration::from_millis(12);
+
+fn bridge_daemon_events(
+    app: &tauri::AppHandle,
+    client: &DaemonClient,
+    output_channels: Arc<Mutex<HashMap<SessionId, Channel<InvokeResponseBody>>>>,
+) {
     let receiver = client.events();
     let app = app.clone();
     let _ = thread::Builder::new()
         .name("terminalai-ui-events".into())
-        .spawn(move || loop {
-            let event = receiver.lock().ok().and_then(|events| events.recv().ok());
-            let Some(event) = event else { break };
-            if app.emit("terminalai:event", event).is_err() {
-                break;
+        .spawn(move || {
+            let mut pending = HashMap::<SessionId, Vec<u8>>::new();
+            let mut next_flush = Instant::now() + OUTPUT_BATCH_INTERVAL;
+            loop {
+                let timeout = next_flush.saturating_duration_since(Instant::now());
+                let received = receiver
+                    .lock()
+                    .ok()
+                    .map(|events| events.recv_timeout(timeout));
+                match received {
+                    Some(Ok(RegistryEvent::Output { id, data })) => {
+                        pending.entry(id).or_default().extend(data);
+                    }
+                    Some(Ok(event)) => {
+                        flush_output_batches(&mut pending, &output_channels);
+                        next_flush = Instant::now() + OUTPUT_BATCH_INTERVAL;
+                        if app.emit("terminalai:event", event).is_err() {
+                            break;
+                        }
+                    }
+                    Some(Err(RecvTimeoutError::Timeout)) => {
+                        flush_output_batches(&mut pending, &output_channels);
+                        next_flush = Instant::now() + OUTPUT_BATCH_INTERVAL;
+                    }
+                    Some(Err(RecvTimeoutError::Disconnected)) | None => {
+                        flush_output_batches(&mut pending, &output_channels);
+                        break;
+                    }
+                }
             }
         });
+}
+
+fn flush_output_batches(
+    pending: &mut HashMap<SessionId, Vec<u8>>,
+    output_channels: &Arc<Mutex<HashMap<SessionId, Channel<InvokeResponseBody>>>>,
+) {
+    let batches = std::mem::take(pending);
+    for (id, data) in batches {
+        let channel = output_channels
+            .lock()
+            .ok()
+            .and_then(|channels| channels.get(&id).cloned());
+        let Some(channel) = channel else {
+            continue;
+        };
+        if channel.send(InvokeResponseBody::Raw(data)).is_err() {
+            if let Ok(mut channels) = output_channels.lock() {
+                channels.remove(&id);
+            }
+        }
+    }
 }
 
 fn run_app() -> Result<(), String> {
@@ -338,8 +433,9 @@ fn run_app() -> Result<(), String> {
             focus_session,
             mark_read,
             toggle_pin,
-            scrollback,
-            reattach_session,
+            subscribe_output,
+            stream_scrollback,
+            attach_session_output,
             revive_session,
             archive_session,
             list_presets,
@@ -360,8 +456,13 @@ fn run_app() -> Result<(), String> {
             let presets = PresetStore::load_default().map_err(|error| {
                 Box::new(std::io::Error::other(error)) as Box<dyn std::error::Error>
             })?;
-            bridge_daemon_events(app.handle(), &client);
-            app.manage(AppState { client, presets });
+            let output_channels = Arc::new(Mutex::new(HashMap::new()));
+            bridge_daemon_events(app.handle(), &client, output_channels.clone());
+            app.manage(AppState {
+                client,
+                presets,
+                output_channels,
+            });
             Ok(())
         })
         .run(tauri::generate_context!())
