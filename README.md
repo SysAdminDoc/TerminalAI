@@ -1,6 +1,6 @@
 # TerminalAI
 
-[![version](https://img.shields.io/badge/version-0.1.0-blue.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.2.0-blue.svg)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#requirements)
 [![rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
@@ -45,7 +45,7 @@ when waiting on the handle.
 
 ## Status
 
-**v0.1.0 — core and desktop shell built.**
+**v0.2.0 — core and desktop shell built, installed, and verified end to end.**
 
 Working today (`terminalai-probe`, headless):
 
@@ -60,13 +60,18 @@ Working today (`terminalai-probe`, headless):
   daemon shutdown runs active teardown hooks once
 - Native Claude and Codex version checks run through the same sanitized environment allowlist as
   live sessions, including opt-in proxy variables without inheriting parent secrets
-- 133 default tests over the flag mapping, real-pty boundary, supervision state machine, registry,
-  diagnostics, review aggregation, daemon protocol, presets, launch golden fixtures, atomic file
-  recovery, corrupt-store quarantine, deterministic fleet ordering, prompt safety and fleet-row model; 135
-  with the opt-in app-server
-  transport enabled
+- Ships an installer that actually starts: the NSIS and MSI bundles carry the daemon and probe as
+  sidecars, and `scripts/verify-installer.ps1` installs into a scratch prefix, launches the
+  installed binary on an isolated display, asserts the window and the daemon pipe, then uninstalls
+- 164 default Rust tests over agent identification, the flag mapping, real-pty boundary and
+  blocking exit wait, supervision state machine, registry, diagnostics, review aggregation and
+  reviewed-mark expiry, cost model and vendored price table, external-session discovery, daemon
+  protocol and frame bounds, presets, launch golden fixtures, atomic file recovery, corrupt-store
+  quarantine, deterministic fleet ordering, prompt safety and fleet-row model; 166 with the opt-in
+  app-server transport enabled, plus 28 frontend tests (`npm --prefix web test`)
 
-Not built yet: transcript file tailing and transcript-derived status/cost accounting. The experimental
+Not built yet: transcript file tailing, so no session reports a cost yet — the model and the price
+table that will compute it are in place and tested. The experimental
 Codex app-server adapter is available only when the daemon is built with the explicit
 `codex-app-server` feature; the default daemon continues to use hooks and the PTY path. The named-pipe
 daemon keeps live sessions independent of the window; see

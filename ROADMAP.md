@@ -218,13 +218,6 @@ researcher continues from R-88.
   Acceptance: `which` 8.x adopted, with agent resolution covered by tests against an injected filesystem including a missing-`PATHEXT` case; `toml_edit` unified on one version across the lockfile; release binary size recorded before and after. Note that `toml_edit` 0.25 requires Rust 1.85 — land R-69 first.
   Complexity: S
 
-- [ ] R-86 · P2 — Cut the release the changelog already describes
-  Why: a release worth of shipped work sits under "Unreleased" while every version string still reads 0.1.0, and three documents describe a product that no longer matches the code — the repository's own versioning and doc-sync rules are unmet.
-  Evidence: `CHANGELOG.md` "Unreleased" lists the registry, Tauri shell, daemon, hook ingress, grids, restore ladder, notifications, admission control, app-server transport, probe control client, review surface and diagnostics, all against `[0.1.0] - 2026-08-02`. `Cargo.toml`, `crates/terminalai-app/tauri.conf.json` and `web/package.json` all read 0.1.0. `CLAUDE.md:30` says "25 tests" against a real 99; `README.md:53` says the Tauri shell is not built.
-  Touches: `CHANGELOG.md`, `Cargo.toml`, `crates/terminalai-app/tauri.conf.json`, `web/package.json`, `README.md`, `CLAUDE.md`
-  Acceptance: a version is cut with all strings matching and the changelog section dated; `CLAUDE.md` and `README.md` state the true test count, build status and verified CLI versions; the release gate runs the existing notes verification before publishing. Do this after R-64, so the released artifact is one that actually starts.
-  Complexity: S
-
 ### P3
 
 - [ ] R-87 · P3 — Expose the fleet as a read-mostly MCP server
