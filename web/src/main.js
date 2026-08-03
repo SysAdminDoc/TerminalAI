@@ -31,6 +31,8 @@ const STATUS_META = {
   exited: { glyph: "×", label: "Exited", short: "exited", tone: "overlay0" },
 };
 const STATUS_KEYS = Object.keys(STATUS_META);
+const RELEASES_ENDPOINT = "https://api.github.com/repos/SysAdminDoc/TerminalAI/releases/latest";
+const FALLBACK_APP_VERSION = "0.1.0";
 
 const MODEL_SUGGESTIONS = {
   claude: ["opus", "sonnet", "haiku"],
@@ -47,6 +49,7 @@ const state = {
   reviewMode: false,
   reviews: [],
   diagnosticsMode: false,
+  appVersion: null,
   terminal: null,
   fitAddon: null,
   previewTimer: null,
@@ -135,6 +138,55 @@ function cost(value) {
 function reviewNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
+}
+
+function versionTuple(value) {
+  const match = String(value ?? "").replace(/^v/i, "").match(/^(\d+)\.(\d+)\.(\d+)/);
+  return match ? match.slice(1).map(Number) : null;
+}
+
+function isNewerVersion(candidate, current) {
+  const next = versionTuple(candidate);
+  const installed = versionTuple(current);
+  if (!next || !installed) return false;
+  for (let index = 0; index < next.length; index += 1) {
+    if (next[index] !== installed[index]) return next[index] > installed[index];
+  }
+  return false;
+}
+
+async function checkForUpdates() {
+  const button = $("update-check-button");
+  if (button.disabled) return;
+  button.disabled = true;
+  button.querySelector("span").textContent = "Checking…";
+  try {
+    const current = state.appVersion ?? await invoke("app_version").catch(() => FALLBACK_APP_VERSION);
+    state.appVersion = current;
+    const response = await fetch(RELEASES_ENDPOINT, {
+      headers: {
+        Accept: "application/vnd.github+json",
+      },
+    });
+    if (response.status === 404) {
+      showToast(`TerminalAI v${current} is the newest published build; no update was installed.`, "success");
+      return;
+    }
+    if (!response.ok) throw new Error(`GitHub returned HTTP ${response.status}`);
+    const release = await response.json();
+    const latest = String(release.tag_name ?? "").replace(/^v/i, "");
+    if (!versionTuple(latest)) throw new Error("the latest release had no semantic version");
+    if (isNewerVersion(latest, current)) {
+      showToast(`TerminalAI v${latest} is available (installed v${current}). Download it from GitHub; nothing was installed automatically.`, "success");
+    } else {
+      showToast(`TerminalAI v${current} is up to date; no update was installed.`, "success");
+    }
+  } catch (error) {
+    showToast(`Update check failed: ${error}`);
+  } finally {
+    button.disabled = false;
+    button.querySelector("span").textContent = "Check updates";
+  }
 }
 
 function diagnosticSource(value) {
@@ -780,6 +832,7 @@ function bindEvents() {
     }
   });
   $("diagnostics-toggle").addEventListener("click", () => setDiagnosticsMode(!state.diagnosticsMode));
+  $("update-check-button").addEventListener("click", () => void checkForUpdates());
   $("filter-input").addEventListener("input", renderRows);
   $("wide-toggle").addEventListener("click", () => {
     state.wideMode = !state.wideMode;

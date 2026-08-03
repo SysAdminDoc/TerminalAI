@@ -58,6 +58,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   and Codex CLI launch-argument golden fixtures.
 - R-26 adds bounded per-session status evidence, a focused "why this state" diagnostics view, and
   structured JSONL crash records for daemon or app panics.
+- R-28 adds unsigned NSIS/MSI packaging with Evergreen WebView2 bootstrapper mode and a read-only
+  GitHub release check in the shell; update checks never download or install an artifact.
 - Claude/Codex hook payloads now share one parser, including session/thread id aliases and
   permission/idle notification normalization for approval and awaiting-input states.
 - The fleet now has a needs-input filter and per-row reply controls that send bracketed paste
@@ -79,8 +81,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - `terminalai-daemon` now owns the registry behind a versioned local-socket protocol with an
   explicit event subscription, peer-PID handshake, owner/SYSTEM Windows DACL and no client
   impersonation path.
-- Resume variants now use an explicit JSON `id` field, and the unsigned NSIS release lane builds
-  the Vite frontend and app bundle from the workspace root.
+- Resume variants now use an explicit JSON `id` field, and the unsigned NSIS/MSI release lane
+  builds the Vite frontend and app bundle from the workspace root.
 
 ## [0.1.0] — 2026-08-02
 

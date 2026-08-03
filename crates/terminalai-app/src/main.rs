@@ -37,6 +37,11 @@ struct LaunchReceipt {
     queued: bool,
 }
 
+#[tauri::command]
+fn app_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
 fn daemon_response(client: &DaemonClient, request: Request) -> Result<Response, String> {
     client.call(request).map_err(|error| error.to_string())
 }
@@ -317,6 +322,7 @@ fn bridge_daemon_events(app: &tauri::AppHandle, client: &DaemonClient) {
 fn run_app() -> Result<(), String> {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            app_version,
             fleet_snapshot,
             review_snapshot,
             mark_reviewed,

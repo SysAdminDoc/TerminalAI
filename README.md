@@ -69,6 +69,9 @@ Fleet rows expose every status with a distinct glyph and visible text label, rem
 navigable, announce live status changes to screen readers, and use high-contrast tokens in both
 the dark and OS light palettes. Reduced-motion and forced-colors preferences are respected.
 
+The top-bar **Check updates** action reads the latest GitHub release metadata only. It reports a
+new version when one exists but never downloads, launches, or installs an update automatically.
+
 Attention notifications are deduplicated per session and status, grouped by repository, retracted
 when the agent proceeds, and quiet during startup or the first seconds of a tool call.
 
@@ -105,12 +108,15 @@ cargo build --release
 cargo test
 cargo test --workspace --all-features  # includes the experimental app-server adapter
 
-# Build the unsigned Windows NSIS installer (from the repository root).
-cargo tauri build --ci --no-sign --bundles nsis -- --manifest-path Cargo.toml
+# Build unsigned Windows NSIS and MSI installers (from the repository root).
+cargo tauri build --ci --no-sign --bundles nsis,msi -- --manifest-path Cargo.toml
 ```
 
 The Tauri build runs the Vite frontend build automatically. The installer is written to
-`target/release/bundle/nsis/` and is intentionally unsigned.
+`target/release/bundle/nsis/` and `target/release/bundle/msi/`; both artifacts are intentionally
+unsigned. Windows SmartScreen may warn on first launch: choose **More info**, then **Run anyway**
+only if the installer came from your verified build or release source. The WebView2 dependency uses
+the Evergreen `downloadBootstrapper` mode instead of bundling a fixed runtime.
 
 The Codex app-server stdio transport is deliberately opt-in:
 
