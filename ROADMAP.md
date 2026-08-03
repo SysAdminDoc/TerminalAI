@@ -5,9 +5,6 @@ Single task tracker for this repo. Newest phase at the top; completed items are 
 ## v0.4.0 — many sessions, one operator
 
 - [ ] Broadcast a prompt to a selected set of sessions
-- [ ] Cost and token rollup across the fleet
-      — *2026-08-02 research: dedupe on `requestId` before summing (R-10), and pair display with enforcement (R-17).
-      No OSS competitor instruments cost at all — this is the least contested feature in the survey.*
 
 ## v0.5.0 — beyond the terminal
 

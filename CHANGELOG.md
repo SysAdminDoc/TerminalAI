@@ -7,6 +7,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Cost and token rollup across the fleet. The header's spend figure is now a control that opens a
+  breakdown by agent, by project folder, and by session, each with its own token totals — cost and
+  tokens answer different questions, and a run heavy in cache reads costs about what one heavy in
+  output does while behaving nothing alike. `Session.tokens` carries the transcript's totals
+  alongside the price they produced. Every grouping states its own coverage: a session whose
+  transcript has not been read is counted apart and shown as an em dash, never folded in as zero,
+  because zero is the claim that a session ran and spent nothing — and treating "unknown" as zero
+  makes the total quietly too low exactly when someone is checking whether it is too high. A cost
+  under a cent reads `<$0.01` rather than rounding to `$0.00`, which would be indistinguishable
+  from a session that has not started spending.
+
 - A private Git worktree per session, requested from the launcher and cleaned up with the row.
   Two agents on one repository was the fleet's most obvious use and its worst failure: one
   session's uncommitted edit became another's unexplained diff. Each isolated session gets its own

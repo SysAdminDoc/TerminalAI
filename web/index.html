@@ -79,6 +79,12 @@
       </main>
     </div>
 
+    <dialog id="rollup-dialog" class="launcher-dialog rollup-dialog" aria-label="Fleet cost and token rollup" data-i18n-aria-label="label-rollup">
+      <div class="dialog-head"><h2 data-i18n="rollup-title">Fleet spend</h2><span id="rollup-coverage" class="rollup-coverage"></span></div>
+      <div id="rollup-body" class="rollup-body"></div>
+      <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-rollup-button" data-i18n="button-close">Close</button></div></div>
+    </dialog>
+
     <dialog id="launcher-dialog" class="launcher-dialog">
       <form method="dialog" id="launcher-form" class="launcher-form">
         <div class="dialog-heading"><div><span class="eyebrow">NEW CONTROLLED SESSION</span><h1>Launch an agent</h1></div><button type="button" class="dialog-close" id="close-launcher-button" aria-label="Close launcher">×</button></div>

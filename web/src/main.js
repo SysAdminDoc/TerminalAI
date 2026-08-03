@@ -8,6 +8,7 @@ import "@xterm/xterm/css/xterm.css";
 import { reconcileKeyedRows } from "./fleetRows.js";
 import { countMessage, localizeDom, relativeDwell, t } from "./i18n.js";
 import { rateLimitTitle, rateLimitedLabel } from "./rateLimit.js";
+import { coverage, fleetTotals, folderOf, formatCost, formatTokens, rollupBy, TOKEN_FIELDS } from "./rollup.js";
 import "./styles.css";
 
 const WDIO_BUILD = import.meta.env.VITE_TERMINALAI_WDIO === "1";
@@ -611,7 +612,8 @@ function renderSummary() {
   const limitedSummary = limited.length
     ? `<span class="summary-separator">/</span><span class="summary-item summary-limited" title="${escapeHtml(rateLimitTitle(limited, t))}">${escapeHtml(countMessage("count-rate-limited", limited.length))}</span>`
     : "";
-  $("fleet-summary").innerHTML = `<span class="summary-item"><b>${live}/${maxLive}</b> ${escapeHtml(t("fleet-live"))}</span><span class="summary-separator">/</span><span class="summary-item">${escapeHtml(countMessage("count-queued", queued))}</span><span class="summary-separator">/</span><span class="summary-item summary-attention">${escapeHtml(countMessage("count-needs-you", needsYou))}</span><span class="summary-separator">/</span><span class="summary-item">${escapeHtml(countMessage("count-active", working))}</span>${limitedSummary}<span class="summary-separator">/</span><span class="summary-item" title="${escapeHtml(spendTitle)}"><b>${spendLabel}</b> ${escapeHtml(t("fleet-spent"))}</span>`;
+  $("fleet-summary").innerHTML = `<span class="summary-item"><b>${live}/${maxLive}</b> ${escapeHtml(t("fleet-live"))}</span><span class="summary-separator">/</span><span class="summary-item">${escapeHtml(countMessage("count-queued", queued))}</span><span class="summary-separator">/</span><span class="summary-item summary-attention">${escapeHtml(countMessage("count-needs-you", needsYou))}</span><span class="summary-separator">/</span><span class="summary-item">${escapeHtml(countMessage("count-active", working))}</span>${limitedSummary}<span class="summary-separator">/</span><button type="button" class="summary-item summary-spend" id="fleet-spend" title="${escapeHtml(spendTitle)}" aria-label="${escapeHtml(t("button-open-rollup"))}"><b>${spendLabel}</b> ${escapeHtml(t("fleet-spent"))}</button>`;
+  $("fleet-spend")?.addEventListener("click", () => openRollup());
   const droppedEvents = Number(state.admission.dropped_events) || 0;
   $("fleet-count").textContent = droppedEvents
     ? `${countMessage("count-session", state.sessions.length)} · ${t("event-drops", { count: droppedEvents })}`
@@ -1406,6 +1408,59 @@ async function focusSession(id) {
   }
 }
 
+/**
+ * Break the fleet's spend down by agent, by folder, and by session.
+ *
+ * One aggregate answers "are we spending too much" and nothing else. These
+ * three groupings answer the question that follows it — which is always "on
+ * what" — and every one of them states how many sessions it could not price,
+ * because a total that quietly omits half the fleet is worse than no total.
+ */
+function renderRollup() {
+  const sessions = state.sessions;
+  const totals = fleetTotals(sessions);
+  $("rollup-coverage").textContent = coverage(totals, t);
+
+  const tokenCells = (row) =>
+    TOKEN_FIELDS.map(([field]) => `<td class="rollup-number">${escapeHtml(formatTokens(row[field]))}</td>`).join("");
+  const groupTable = (titleKey, rows, label = (row) => row.key) => `
+    <section class="rollup-section">
+      <h3>${escapeHtml(t(titleKey))}</h3>
+      <table class="rollup-table">
+        <thead><tr><th>${escapeHtml(t(titleKey))}</th><th class="rollup-number">$</th>${TOKEN_FIELDS.map(([, key]) => `<th class="rollup-number">${escapeHtml(t(key))}</th>`).join("")}</tr></thead>
+        <tbody>${rows
+          .map(
+            (row) => `<tr><th scope="row">${escapeHtml(label(row))}${
+              row.unpriced ? `<small class="rollup-unpriced"> +${row.unpriced}</small>` : ""
+            }</th><td class="rollup-number">${escapeHtml(formatCost(row.priced ? row.cost_usd : null))}</td>${tokenCells(row)}</tr>`,
+          )
+          .join("")}</tbody>
+      </table>
+    </section>`;
+
+  // Sessions are their own grouping so a single expensive run is visible rather
+  // than hidden inside its folder's subtotal.
+  const bySession = rollupBy(sessions, (session) => session.id).map((row) => {
+    const session = sessions.find((item) => item.id === row.key);
+    return { ...row, label: session ? `${session.id} · ${session.name}` : row.key };
+  });
+
+  $("rollup-body").innerHTML = [
+    groupTable("rollup-by-agent", rollupBy(sessions, (session) => session.agent)),
+    groupTable("rollup-by-folder", rollupBy(sessions, folderOf)),
+    groupTable("rollup-by-session", bySession, (row) => row.label),
+    `<section class="rollup-section rollup-total"><h3>${escapeHtml(t("rollup-total"))}</h3><p><b>${escapeHtml(
+      formatCost(totals.priced ? totals.cost_usd : null),
+    )}</b> · ${escapeHtml(String(totals.requests))} ${escapeHtml(t("rollup-requests"))}</p></section>`,
+  ].join("");
+}
+
+function openRollup() {
+  renderRollup();
+  const dialog = $("rollup-dialog");
+  if (!dialog.open) dialog.showModal();
+}
+
 function createOutputChannel(id) {
   const generation = state.focusGeneration;
   const channel = new Channel();
@@ -2030,6 +2085,7 @@ function bindEvents() {
   $("launch-preset-button").addEventListener("click", loadSelectedPreset);
   $("cancel-launch-button").addEventListener("click", () => $("launcher-dialog").close());
   $("close-launcher-button").addEventListener("click", () => $("launcher-dialog").close());
+  $("close-rollup-button").addEventListener("click", () => $("rollup-dialog").close());
   // Launching costs tokens and writes to a real repository, so it is reachable only
   // from the launch button. The form never submits: implicit submission on Enter in
   // any field would otherwise spawn an agent the operator never asked for.

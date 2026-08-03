@@ -38,6 +38,28 @@ button { cursor: pointer; }
 .brand-name { font-size: 16px; font-weight: 720; letter-spacing: -.03em; color: var(--text); }.brand-name span { color: var(--mauve); }
 .brand-subtitle, .eyebrow { color: var(--subtext0); font-size: 9px; font-weight: 760; letter-spacing: .14em; text-transform: uppercase; }
 .fleet-summary { display: flex; align-items: center; gap: 10px; color: var(--subtext0); font-size: 12px; flex: 1; }.summary-item b { color: var(--text); font-size: 14px; font-weight: 650; }.summary-attention b { color: var(--peach); }.summary-limited, .summary-limited b { color: var(--red); }.summary-separator { color: var(--subtext0); }
+/* The spend figure is the entry point to the rollup, so it reads as a control
+   rather than as another static count in the row. */
+.summary-spend { appearance: none; background: none; border: 0; padding: 0 2px; margin: 0; font: inherit; color: inherit; cursor: pointer; border-radius: 4px; }
+.summary-spend:hover { color: var(--text); background: var(--surface0); }
+.summary-spend:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.rollup-dialog { max-width: 900px; width: min(900px, 92vw); }
+.rollup-dialog .dialog-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.rollup-dialog h2 { margin: 0; font-size: 16px; }
+.rollup-coverage { color: var(--subtext0); font-size: 12px; }
+.rollup-body { display: grid; gap: 18px; max-height: 60vh; overflow-y: auto; }
+.rollup-section h3 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--subtext0); }
+/* A wide table must scroll inside itself; the dialog body must not scroll
+   sideways. */
+.rollup-table { width: 100%; border-collapse: collapse; font-size: 12px; display: block; overflow-x: auto; }
+.rollup-table th, .rollup-table td { padding: 4px 8px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--surface0); }
+.rollup-table thead th { color: var(--subtext0); font-weight: 600; }
+.rollup-table tbody th { font-weight: 500; color: var(--text); }
+.rollup-number { text-align: right; font-variant-numeric: tabular-nums; }
+/* Sessions a group could not price. Dimmer than the figures, because it
+   qualifies them rather than being one. */
+.rollup-unpriced { color: var(--subtext0); font-weight: 400; }
+.rollup-total p { margin: 0; font-size: 13px; color: var(--subtext0); }
 .top-actions { display: flex; align-items: center; gap: 8px; }
 .button { border: 1px solid transparent; border-radius: 7px; padding: 8px 12px; color: var(--text); font-size: 12px; font-weight: 650; transition: border-color .16s ease, background .16s ease, transform .16s ease; }.button:hover { transform: translateY(-1px); }.button:active { transform: translateY(0); }
 .button-primary { background: linear-gradient(135deg, #cba6f7, #b4befe); color: #1e1e2e; box-shadow: 0 6px 20px rgba(203, 166, 247, .16); }.button-primary:hover { background: linear-gradient(135deg, #d8b9ff, #c3ccff); }

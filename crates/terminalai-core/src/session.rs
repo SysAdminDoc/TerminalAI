@@ -249,6 +249,15 @@ pub struct Session {
     pub status_since: SystemTime,
     /// Accumulated spend, when the agent reports it.
     pub cost_usd: Option<f64>,
+    /// Token totals read from the transcript, alongside the cost they priced.
+    ///
+    /// Carried as well as the dollar figure because they are different
+    /// questions: cost answers "what did this spend", tokens answer "what is
+    /// this session doing" — a run heavy in cache reads and one heavy in output
+    /// cost similar amounts and behave nothing alike. Absent until a transcript
+    /// has actually been read; zero would claim a session did no work.
+    #[serde(default)]
+    pub tokens: Option<crate::transcript::UsageTotals>,
     /// Set while a provider quota is refusing work for this session. Populated
     /// only from an explicit agent report — never from silence, which is
     /// indistinguishable from a long tool call.
@@ -303,6 +312,7 @@ impl Session {
             started_at: now,
             status_since: now,
             cost_usd: None,
+            tokens: None,
             last_message: None,
             rate_limit: None,
             unread: false,

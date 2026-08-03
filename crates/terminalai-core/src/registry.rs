@@ -1887,9 +1887,15 @@ impl SessionRegistry {
                 // Zero requests means nothing was read, which is not the same as
                 // a session that cost nothing — leave the row unpriced so the
                 // header keeps saying the spend is unknown.
-                if update.totals.requests > 0 && entry.session.cost_usd != Some(update.cost_usd) {
-                    entry.session.cost_usd = Some(update.cost_usd);
-                    changed = true;
+                if update.totals.requests > 0 {
+                    if entry.session.cost_usd != Some(update.cost_usd) {
+                        entry.session.cost_usd = Some(update.cost_usd);
+                        changed = true;
+                    }
+                    if entry.session.tokens != Some(update.totals) {
+                        entry.session.tokens = Some(update.totals);
+                        changed = true;
+                    }
                 }
                 if changed {
                     updated.push(entry.session.clone());

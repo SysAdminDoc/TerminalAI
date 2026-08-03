@@ -167,7 +167,7 @@ impl PricingTable {
 /// machine-readable price table, and LiteLLM's is the only maintained one.
 const VENDORED_PRICES: &str = include_str!("../pricing/model-prices.json");
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UsageTotals {
     pub requests: u64,
     pub input_tokens: u64,
