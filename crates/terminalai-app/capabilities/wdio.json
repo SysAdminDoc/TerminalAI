@@ -2,9 +2,37 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "wdio",
   "description": "WebdriverIO-only capability for isolated UI tests",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
-    "wdio:allow-execute"
+    "wdio:allow-execute",
+    "allow-app-version",
+    "allow-fleet-snapshot",
+    "allow-review-snapshot",
+    "allow-external-sessions",
+    "allow-mark-reviewed",
+    "allow-preview-launch",
+    "allow-resolve-agent",
+    "allow-launch-session",
+    "allow-write-session",
+    "allow-resize-session",
+    "allow-kill-session",
+    "allow-focus-session",
+    "allow-mark-read",
+    "allow-toggle-pin",
+    "allow-subscribe-output",
+    "allow-stream-scrollback",
+    "allow-attach-session-output",
+    "allow-revive-session",
+    "allow-archive-session",
+    "allow-list-presets",
+    "allow-save-preset",
+    "allow-delete-preset",
+    "allow-pick-folder",
+    "allow-pick-extra-dirs",
+    "allow-preflight-report",
+    "allow-preflight-fix"
   ]
 }

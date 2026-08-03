@@ -140,6 +140,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   laid out below it.
 - Closing the launcher, or pressing Enter in any launcher field, no longer spawns an agent —
   every dialog control is an explicit button and the form refuses submission outright.
+- The app's own commands are now covered by declared Tauri ACL policy rather than only a runtime
+  patch: `build.rs` declares an `AppManifest` listing all 26 commands, and the capability drops
+  from the nine sets `core:default` expands to down to the four actually used, marked local-only.
+  A build assertion fails, naming the command, if one is added without a matching grant — the ACL
+  is checked at invoke time, so that failure would otherwise reach a user instead of the build.
 - The CSP now names `base-uri`, `form-action`, `frame-ancestors` and `object-src` explicitly.
   None of them inherit from `default-src`, so the previous policy left an injected `<base>` or
   `<form>` unconstrained.

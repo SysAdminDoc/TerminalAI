@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-fleet-snapshot"
+description = "Enables the fleet_snapshot command without any pre-configured scope."
+commands.allow = ["fleet_snapshot"]
+
+[[permission]]
+identifier = "deny-fleet-snapshot"
+description = "Denies the fleet_snapshot command without any pre-configured scope."
+commands.deny = ["fleet_snapshot"]

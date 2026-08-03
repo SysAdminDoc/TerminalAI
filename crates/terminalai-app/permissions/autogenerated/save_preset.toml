@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-preset"
+description = "Enables the save_preset command without any pre-configured scope."
+commands.allow = ["save_preset"]
+
+[[permission]]
+identifier = "deny-save-preset"
+description = "Denies the save_preset command without any pre-configured scope."
+commands.deny = ["save_preset"]

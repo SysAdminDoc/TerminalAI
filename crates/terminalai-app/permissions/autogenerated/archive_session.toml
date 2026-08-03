@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-archive-session"
+description = "Enables the archive_session command without any pre-configured scope."
+commands.allow = ["archive_session"]
+
+[[permission]]
+identifier = "deny-archive-session"
+description = "Denies the archive_session command without any pre-configured scope."
+commands.deny = ["archive_session"]

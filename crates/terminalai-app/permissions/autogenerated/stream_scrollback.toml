@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stream-scrollback"
+description = "Enables the stream_scrollback command without any pre-configured scope."
+commands.allow = ["stream_scrollback"]
+
+[[permission]]
+identifier = "deny-stream-scrollback"
+description = "Denies the stream_scrollback command without any pre-configured scope."
+commands.deny = ["stream_scrollback"]

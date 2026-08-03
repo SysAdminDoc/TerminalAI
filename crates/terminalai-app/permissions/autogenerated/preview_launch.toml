@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preview-launch"
+description = "Enables the preview_launch command without any pre-configured scope."
+commands.allow = ["preview_launch"]
+
+[[permission]]
+identifier = "deny-preview-launch"
+description = "Denies the preview_launch command without any pre-configured scope."
+commands.deny = ["preview_launch"]

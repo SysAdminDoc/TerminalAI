@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-launch-session"
+description = "Enables the launch_session command without any pre-configured scope."
+commands.allow = ["launch_session"]
+
+[[permission]]
+identifier = "deny-launch-session"
+description = "Denies the launch_session command without any pre-configured scope."
+commands.deny = ["launch_session"]

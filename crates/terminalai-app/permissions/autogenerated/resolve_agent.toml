@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resolve-agent"
+description = "Enables the resolve_agent command without any pre-configured scope."
+commands.allow = ["resolve_agent"]
+
+[[permission]]
+identifier = "deny-resolve-agent"
+description = "Denies the resolve_agent command without any pre-configured scope."
+commands.deny = ["resolve_agent"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-revive-session"
+description = "Enables the revive_session command without any pre-configured scope."
+commands.allow = ["revive_session"]
+
+[[permission]]
+identifier = "deny-revive-session"
+description = "Denies the revive_session command without any pre-configured scope."
+commands.deny = ["revive_session"]

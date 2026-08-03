@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-pick-extra-dirs"
+description = "Enables the pick_extra_dirs command without any pre-configured scope."
+commands.allow = ["pick_extra_dirs"]
+
+[[permission]]
+identifier = "deny-pick-extra-dirs"
+description = "Denies the pick_extra_dirs command without any pre-configured scope."
+commands.deny = ["pick_extra_dirs"]

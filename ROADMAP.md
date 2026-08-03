@@ -176,13 +176,6 @@ researcher continues from R-88.
 
 ### P2
 
-- [ ] R-76 · P2 — Bring the app's own commands under the Tauri ACL
-  Why: the app grants nine core permission sets in order to use two API functions, and its commands are covered only by a runtime patch rather than by declared policy — so a future regression, or any remote-origin capability, has nothing to fail closed against.
-  Evidence: `crates/terminalai-app/capabilities/default.json` grants `core:default`, which expands to `core:{path,event,window,webview,app,image,resources,menu,tray}:default`; `web/src/main.js:1-2` imports only `invoke` and `listen`. `crates/terminalai-app/build.rs` is a bare `tauri_build::build()`, and Tauri 2.11.1's advisory fix notes that without an `AppManifest`, custom commands previously bypassed ACL entirely. `tauri-build` 2.6.3 exposes `AppManifest::commands(&[...])`.
-  Touches: `crates/terminalai-app/build.rs`, `crates/terminalai-app/capabilities/default.json`
-  Acceptance: `build.rs` declares an `AppManifest` listing every `#[tauri::command]`, turning them into explicit `allow-*` permissions; the capability drops to the sets actually used, sets `"local": true`, omits `remote`, and adds `"platforms": ["windows"]`; a build assertion or test fails if a new command is added without a corresponding grant.
-  Complexity: S
-
 - [ ] R-77 · P2 — Widen hook coverage and ingest over HTTP
   Why: the supervisor observes a small fraction of the lifecycle both agents emit, and it ingests through `command` hooks, which on Windows cost a process spawn per event — on the platform whose documented weakness is precisely per-spawn console cost.
   Evidence: Claude Code documents 31 hook events across five handler types, including `type: "http"` with `$VAR`-interpolated headers gated by the `allowedHttpHookUrls` and `httpHookAllowedEnvVars` settings; Codex's `HookEventName` enum carries 11 (`preToolUse, permissionRequest, postToolUse, preCompact, postCompact, sessionStart, sessionEnd, userPromptSubmit, subagentStart, subagentStop, stop`) where the published docs list seven. `crates/terminalai-core/src/hook_config.rs` installs a narrower set.
