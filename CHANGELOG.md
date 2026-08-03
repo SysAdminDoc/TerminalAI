@@ -3,6 +3,18 @@
 All notable changes to TerminalAI are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- A session no longer adopts the transcript of another session running in the same folder.
+  Discovery ranked candidates by modification time, so a run that was already in progress — and
+  therefore being appended to right now — always looked newer than the file the new session was
+  waiting for, and its cost, token totals and resume id were reported against the new row.
+  Candidates are now ranked and floored by creation time, the only stamp that says which run a file
+  belongs to, with a 100 ms grace below the floor for the coarse system clock that stamps files.
+  Ties are broken by path so the same directory always yields the same answer.
+
 ## [0.4.0] — 2026-08-03
 
 ### Added

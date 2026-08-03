@@ -412,8 +412,14 @@ fn a_new_session_does_not_adopt_an_earlier_run_s_transcript() {
     let earlier = directory.join("earlier-run.jsonl");
     append(&earlier, &[&claude_record("old", "From an earlier run", 9999, 9999)]);
 
-    // The session starts after that file was written.
-    let started_at = SystemTime::now() + Duration::from_secs(2);
+    // Clear the birth-time grace window, so the earlier file is unambiguously
+    // older than this session rather than within a tick of it.
+    std::thread::sleep(Duration::from_millis(250));
+    let started_at = SystemTime::now();
+
+    // The same floor is used on every poll, exactly as the daemon does it. An
+    // earlier version of this test relaxed the floor on the second poll and so
+    // depended on which of two files the filesystem happened to stamp later.
     let mut tail = TranscriptTail::new(Agent::Claude);
     let update = tail.poll(&home.0, cwd, started_at);
     assert_eq!(tail.path(), None, "no transcript belongs to this session yet");
@@ -424,7 +430,43 @@ fn a_new_session_does_not_adopt_an_earlier_run_s_transcript() {
     // Its own transcript appears, and only then is anything reported.
     let mine = directory.join("mine.jsonl");
     append(&mine, &[&claude_record("new", "Mine", 5, 5)]);
-    let update = tail.poll(&home.0, cwd, SystemTime::UNIX_EPOCH);
+    let update = tail.poll(&home.0, cwd, started_at);
     assert_eq!(update.last_message.as_deref(), Some("Mine"));
     assert_eq!(update.totals.input_tokens, 5);
+}
+
+#[test]
+fn a_concurrently_running_session_in_the_same_folder_is_not_adopted() {
+    // The harder half of the same defect. Two sessions on one repo is a case
+    // this app exists to support, and the older run is *still writing*, so its
+    // modification time is newer than ours on every poll. Ranking on
+    // modification time hands its cost and resume id to the new row forever;
+    // only creation time distinguishes them.
+    let home = scratch("concurrent");
+    let cwd = Path::new(r"C:\repos\shop");
+    let directory = home
+        .0
+        .join(".claude")
+        .join("projects")
+        .join(claude_project_slug(cwd));
+    // Named so it sorts *after* ours: the tie-break on equal stamps must not be
+    // what rescues this test, or it would pass with the defect still present.
+    let theirs = directory.join("zz-already-running.jsonl");
+    append(&theirs, &[&claude_record("t1", "Their first turn", 9999, 9999)]);
+
+    std::thread::sleep(Duration::from_millis(250));
+    let started_at = SystemTime::now();
+    let mine = directory.join("mine.jsonl");
+    append(&mine, &[&claude_record("m1", "My first turn", 5, 5)]);
+
+    // The other session keeps working: its file becomes the most recently
+    // modified thing in the directory, by a margin no clock tick can explain.
+    std::thread::sleep(Duration::from_millis(250));
+    append(&theirs, &[&claude_record("t2", "Their second turn", 9999, 9999)]);
+
+    let mut tail = TranscriptTail::new(Agent::Claude);
+    let update = tail.poll(&home.0, cwd, started_at);
+    assert_eq!(tail.path(), Some(mine.as_path()));
+    assert_eq!(update.last_message.as_deref(), Some("My first turn"));
+    assert_eq!(update.totals.input_tokens, 5, "adopted another run's tokens");
 }

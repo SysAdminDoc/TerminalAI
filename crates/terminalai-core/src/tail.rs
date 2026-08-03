@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use crate::agent::Agent;
 use crate::transcript::{TranscriptAccumulator, UsageTotals};
@@ -247,7 +247,34 @@ pub fn newest_transcript_after(
     }
 }
 
+/// Slack allowed below the birth-time floor.
+///
+/// A file's creation stamp comes from the coarse system clock — ~15.6 ms on
+/// Windows — while `SystemTime::now()` is precise, so a transcript created
+/// immediately *after* the session started can carry a stamp fractionally
+/// before it. With no slack the session would reject its own transcript and
+/// never bind to anything: silent, permanent, and worse than the ambiguity the
+/// floor removes. Two deliberate launches into one folder this close together
+/// is not a case that occurs outside a test.
+const BIRTH_GRACE: Duration = Duration::from_millis(100);
+
+/// When a file came into existence.
+///
+/// Discovery ranks on creation, never on modification. A session starting in a
+/// folder where another session is *already running* sees that run's transcript
+/// being appended right now, so its modification time is newer than the file we
+/// are looking for — ranking on modification hands the older run's cost, token
+/// totals and resume id to the new row. Creation time is the only stamp that
+/// says which run a file belongs to.
+///
+/// `created` is unsupported on some filesystems; modification time is the
+/// fallback, which is the previous behaviour rather than dropping the file.
+fn birth_time(metadata: &std::fs::Metadata) -> Option<SystemTime> {
+    metadata.created().or_else(|_| metadata.modified()).ok()
+}
+
 fn newest_in(directory: &Path, extension: &str, not_before: SystemTime) -> Option<PathBuf> {
+    let floor = not_before.checked_sub(BIRTH_GRACE).unwrap_or(not_before);
     let entries = std::fs::read_dir(directory).ok()?;
     let mut best: Option<(SystemTime, PathBuf)> = None;
     for entry in entries.flatten() {
@@ -255,14 +282,21 @@ fn newest_in(directory: &Path, extension: &str, not_before: SystemTime) -> Optio
         if path.extension().and_then(|e| e.to_str()) != Some(extension) {
             continue;
         }
-        let Ok(modified) = entry.metadata().and_then(|meta| meta.modified()) else {
+        let Some(born) = entry.metadata().ok().as_ref().and_then(birth_time) else {
             continue;
         };
-        if modified < not_before {
+        if born < floor {
             continue;
         }
-        if best.as_ref().is_none_or(|(seen, _)| modified > *seen) {
-            best = Some((modified, path));
+        // Ties are broken by path so the choice is reproducible. Two files born
+        // in the same clock tick are genuinely ambiguous; picking by directory
+        // enumeration order made the same inputs answer differently on
+        // different runs, which is how this rule's own test came to be flaky.
+        let better = best
+            .as_ref()
+            .is_none_or(|(seen, kept)| born > *seen || (born == *seen && path > *kept));
+        if better {
+            best = Some((born, path));
         }
     }
     best.map(|(_, path)| path)
@@ -283,9 +317,12 @@ fn newest_under(
             continue;
         }
         if let Some(candidate) = newest_in(&directory, extension, not_before) {
-            if let Ok(modified) = std::fs::metadata(&candidate).and_then(|meta| meta.modified()) {
-                if best.as_ref().is_none_or(|(seen, _)| modified > *seen) {
-                    best = Some((modified, candidate));
+            if let Some(born) = std::fs::metadata(&candidate).ok().as_ref().and_then(birth_time) {
+                let better = best
+                    .as_ref()
+                    .is_none_or(|(seen, kept)| born > *seen || (born == *seen && candidate > *kept));
+                if better {
+                    best = Some((born, candidate));
                 }
             }
         }
