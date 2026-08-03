@@ -250,6 +250,14 @@ pub enum Request {
     Scrollback {
         id: SessionId,
     },
+    /// The parsed terminal state for a pinned or background session.
+    ///
+    /// Distinct from `Scrollback`, which returns raw bytes for the one focused
+    /// renderer. A pinned pane needs a rendered grid it can show without an
+    /// xterm instance of its own — the whole reason ~29 rows fit on a screen.
+    GridSnapshot {
+        id: SessionId,
+    },
     Reattach {
         id: SessionId,
     },
@@ -320,6 +328,9 @@ pub enum Response {
     },
     Scrollback {
         data: Vec<u8>,
+    },
+    GridSnapshot {
+        grid: terminalai_core::TerminalGridSnapshot,
     },
     Reattached {
         data: Vec<u8>,
@@ -1054,6 +1065,12 @@ fn dispatch_with_endpoint(
         },
         Request::TogglePin { id } => match registry.toggle_pin(&id) {
             Ok(pinned) => Response::PinChanged { pinned },
+            Err(error) => Response::Error {
+                message: error.to_string(),
+            },
+        },
+        Request::GridSnapshot { id } => match registry.grid_snapshot(&id) {
+            Ok(grid) => Response::GridSnapshot { grid },
             Err(error) => Response::Error {
                 message: error.to_string(),
             },

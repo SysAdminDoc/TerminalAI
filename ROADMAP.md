@@ -4,7 +4,6 @@ Single task tracker for this repo. Newest phase at the top; completed items are 
 
 ## v0.3.0 — knowing what the fleet is doing
 
-- [ ] Pin up to three sessions to keep live grids; split view
 - [ ] Windows toast on `NeedsYou`, with click-to-focus
       — *2026-08-02 research: an unpackaged Win32 app cannot raise a toast without a Start Menu shortcut carrying
       `System.AppUserModelID`. Use `tauri-winrt-notification`; click-to-activate additionally needs a COM activator

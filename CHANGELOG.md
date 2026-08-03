@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Split view for pinned sessions. Up to three pinned sessions now render live panes beneath the
+  focused terminal, drawn from the Rust-side grids the daemon already kept for them rather than
+  from more xterm instances — one renderer is what lets the fleet hold ~29 rows, and three more
+  would undo that. Panes are reconciled by session id so one snapshot cannot blank a sibling, a
+  pane with no snapshot yet says so rather than showing an empty box, and unpinning drops the
+  stored grid so repinning cannot show a stale frame. `terminalai-probe pin` and
+  `terminalai-probe grid` drive the same path from the command line.
 - Transcript tailing. Each live session's JSONL is followed incrementally — only the bytes appended
   since the last poll — for the three things the pty cannot carry: the agent's own session id (what
   `--resume` takes), the last thing it actually said, and what the run cost. `Session.cost_usd` and

@@ -27,6 +27,7 @@ const COMMANDS: &[&str] = &[
     "focus_session",
     "mark_read",
     "toggle_pin",
+    "grid_snapshot",
     "subscribe_output",
     "stream_scrollback",
     "attach_session_output",

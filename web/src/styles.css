@@ -169,3 +169,10 @@ button { cursor: pointer; }
   .field input, .field select, .field textarea, .preset-save input, .log-event, .diagnostics-current, .preflight-row, .preview-card, .toast, .review-entry, .review-diff pre { color: var(--text); background: var(--mantle); }
   .row-reply input { background: var(--mantle); }
 }
+.pinned-split { display: grid; gap: 8px; max-height: 38%; padding: 0 20px 12px; overflow: auto; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.pinned-pane { display: flex; min-width: 0; flex-direction: column; border: 1px solid rgba(88, 91, 112, .42); border-radius: 8px; background: rgba(24, 24, 37, .58); }
+.pinned-pane-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 9px; border-bottom: 1px solid rgba(88, 91, 112, .28); }
+.pinned-pane-name { overflow: hidden; color: var(--text); font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.pinned-pane-status { flex: none; font-size: 9px; }
+.pinned-pane-grid { max-height: 190px; margin: 0; padding: 8px 9px; overflow: auto; color: var(--subtext1); font-family: 'Cascadia Code', Consolas, monospace; font-size: 10px; line-height: 1.35; white-space: pre; }
+.pinned-pane-grid-waiting { color: var(--subtext0); font-style: italic; }

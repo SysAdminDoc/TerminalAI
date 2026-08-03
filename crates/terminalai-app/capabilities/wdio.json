@@ -23,6 +23,7 @@
     "allow-focus-session",
     "allow-mark-read",
     "allow-toggle-pin",
+    "allow-grid-snapshot",
     "allow-subscribe-output",
     "allow-stream-scrollback",
     "allow-attach-session-output",

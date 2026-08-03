@@ -232,3 +232,6 @@ land-verify-failed = the verify command { $command } failed and the change was r
 land-verify-not-reversed = the verify command { $command } failed AND the rollback failed ({ $error }); the repository needs manual repair
 land-nothing = the session has no uncommitted changes
 land-unavailable = the repository could not be read: { $detail }
+
+pinned-waiting = Waiting for output…
+label-pinned-split = Pinned session panes

@@ -165,6 +165,24 @@ fn land_session(
     }
 }
 
+/// The parsed terminal state for a pinned pane.
+///
+/// A pinned session keeps a live grid in Rust but no browser renderer — that is
+/// what lets the fleet hold ~29 rows. The split view reads this instead of
+/// instantiating a second xterm.
+#[tauri::command]
+fn grid_snapshot(
+    id: SessionId,
+    state: State<'_, AppState>,
+) -> Result<terminalai_core::TerminalGridSnapshot, String> {
+    let client = daemon_client(&state)?;
+    match daemon_response(&client, Request::GridSnapshot { id })? {
+        Response::GridSnapshot { grid } => Ok(grid),
+        Response::Error { message } => Err(message),
+        other => Err(format!("unexpected grid response: {other:?}")),
+    }
+}
+
 #[tauri::command]
 fn preview_launch(
     spec: LaunchSpec,
@@ -1233,6 +1251,7 @@ fn run_app() -> Result<(), String> {
             focus_session,
             mark_read,
             toggle_pin,
+            grid_snapshot,
             subscribe_output,
             stream_scrollback,
             attach_session_output,

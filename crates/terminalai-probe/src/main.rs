@@ -38,6 +38,8 @@ USAGE:
   terminalai-probe send    <session-id> <text> --json
   terminalai-probe status  <session-id> --json
   terminalai-probe shutdown
+  terminalai-probe pin     <session-id> --json      (toggle a pinned live grid)
+  terminalai-probe grid    <session-id> --json      (parsed grid for a pinned pane)
   terminalai-probe mcp     [--write-token <t> --write-session <id>]...  (MCP server on stdio)
   terminalai-probe land    --source <dir> --target <dir> [--expect-head <sha>]
                            [--verify <program> [--verify-arg <arg>]...] [--verify-timeout <s>]
@@ -84,6 +86,8 @@ fn main() {
         Some("hygiene") => cmd_hygiene(&args[1..]),
         Some("land") => cmd_land(&args[1..]),
         Some("mcp") => cmd_mcp(&args[1..]),
+        Some("pin") => cmd_pin(&args[1..]),
+        Some("grid") => cmd_grid(&args[1..]),
         Some("hook") => cmd_hook(&args[1..]),
         Some("hooks") => cmd_hooks(&args[1..]),
         Some("--help") | Some("-h") | None => {
@@ -444,6 +448,41 @@ impl terminalai_core::mcp::FleetAccess for DaemonFleet {
         // timeline records the resulting Write/Kill separately.
         let outcome = if allowed { "allowed" } else { "refused" };
         eprintln!("mcp mutation {outcome}: tool={tool} session={session} {detail}");
+    }
+}
+
+fn cmd_pin(args: &[String]) -> i32 {
+    let (machine, rest) = without_json(args);
+    let Some(id) = rest.first() else {
+        return control_usage("pin needs a session id");
+    };
+    match control_call(Request::TogglePin {
+        id: SessionId(id.clone()),
+    }) {
+        Ok(response) => print_control_response(response, machine),
+        Err(error) => print_control_error(error, machine),
+    }
+}
+
+/// The parsed grid a pinned pane renders. Exposed so the split view's data path
+/// can be exercised without a GUI.
+fn cmd_grid(args: &[String]) -> i32 {
+    let (machine, rest) = without_json(args);
+    let Some(id) = rest.first() else {
+        return control_usage("grid needs a session id");
+    };
+    match control_call(Request::GridSnapshot {
+        id: SessionId(id.clone()),
+    }) {
+        Ok(Response::GridSnapshot { grid }) if machine => print_json(grid),
+        Ok(Response::GridSnapshot { grid }) => {
+            for line in &grid.lines {
+                println!("{line}");
+            }
+            0
+        }
+        Ok(response) => print_control_response(response, machine),
+        Err(error) => print_control_error(error, machine),
     }
 }
 
