@@ -388,12 +388,19 @@ function renderRows() {
   $("wide-toggle").setAttribute("aria-pressed", String(state.wideMode));
   $("wide-toggle").textContent = state.wideMode ? "Compact" : "Wide";
   $("wide-toggle").classList.toggle("wide-toggle-active", state.wideMode);
+  const rovingId = sessions.find((session) => session.id === state.focused)?.id ?? sessions[0]?.id ?? null;
   reconcileKeyedRows(
     list,
     sessions,
     (session) => session.id,
     createFleetRow,
-    updateFleetRow,
+    (row, session) => updateFleetRow(
+      row,
+      session,
+      sessions.findIndex((item) => item.id === session.id) + 1,
+      sessions.length,
+      rovingId,
+    ),
     (row) => state.sessions.some((session) => session.id === row.dataset.id)
       && (row.contains(document.activeElement) || Boolean(row.querySelector("input[data-reply]")?.value)),
   );
@@ -410,7 +417,13 @@ function createFleetRow(session) {
 function bindFleetRow(row) {
   row.addEventListener("click", () => focusSession(row.dataset.id));
   row.addEventListener("keydown", (event) => {
-    if (event.target !== row || !["Enter", " "].includes(event.key)) return;
+    if (event.target !== row) return;
+    if (["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft", "Home", "End"].includes(event.key)) {
+      event.preventDefault();
+      moveFleetRow(row, ["ArrowDown", "ArrowRight"].includes(event.key) ? 1 : ["ArrowUp", "ArrowLeft"].includes(event.key) ? -1 : event.key === "Home" ? "first" : "last");
+      return;
+    }
+    if (!["Enter", " "].includes(event.key)) return;
     event.preventDefault();
     void focusSession(row.dataset.id);
   });
@@ -429,7 +442,24 @@ function bindFleetRow(row) {
   });
 }
 
-function updateFleetRow(row, session) {
+function moveFleetRow(row, direction) {
+  const rows = Array.from($("fleet-list").querySelectorAll('[role="option"]')).filter((candidate) => !candidate.hidden);
+  const index = rows.indexOf(row);
+  if (index < 0 || rows.length < 2) return;
+  const targetIndex = direction === "first"
+    ? 0
+    : direction === "last"
+      ? rows.length - 1
+      : Math.max(0, Math.min(rows.length - 1, index + direction));
+  const target = rows[targetIndex];
+  if (!target || target === row) return;
+  row.tabIndex = -1;
+  target.tabIndex = 0;
+  target.focus({ preventScroll: false });
+  void focusSession(target.dataset.id);
+}
+
+function updateFleetRow(row, session, position = 1, setSize = 1, rovingId = state.focused) {
   const meta = STATUS_META[session.status] ?? STATUS_META.exited;
   const label = lifecycleLabel(session);
   const active = session.id === state.focused;
@@ -448,6 +478,10 @@ function updateFleetRow(row, session) {
   row.className = `fleet-row${active ? " row-focused" : ""}${unread ? " row-unread" : ""}`;
   row.dataset.id = session.id;
   row.setAttribute("aria-label", sessionLabel);
+  row.setAttribute("aria-posinset", String(position));
+  row.setAttribute("aria-setsize", String(setSize));
+  row.setAttribute("aria-selected", String(active));
+  row.tabIndex = session.id === rovingId ? 0 : -1;
 
   const glyph = row.querySelector(".status-glyph");
   glyph.className = `status-glyph tone-${meta.tone}`;
@@ -547,7 +581,7 @@ function renderRow(session) {
   const replyHidden = isAttention(session) ? "" : " hidden";
   const wideHidden = state.wideMode ? "" : " hidden";
   const portsLabel = ports(session.ports);
-  return `<article class="fleet-row${active}${unread}" data-id="${escapeHtml(session.id)}" role="listitem" tabindex="0" aria-keyshortcuts="Enter Space" aria-label="${escapeHtml(`${session.name}, ${label}, ${repo}, ${branch}, progress ${progress}, ${restartCount} restarts, ports ${portsLabel}`)}">
+  return `<article class="fleet-row${active}${unread}" data-id="${escapeHtml(session.id)}" role="option" tabindex="-1" aria-posinset="1" aria-setsize="1" aria-selected="false" aria-keyshortcuts="Enter Space ArrowUp ArrowDown Home End" aria-label="${escapeHtml(`${session.name}, ${label}, ${repo}, ${branch}, progress ${progress}, ${restartCount} restarts, ports ${portsLabel}`)}">
     <div class="row-identity"><span class="status-glyph tone-${meta.tone}" title="${escapeHtml(label)}" aria-hidden="true">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name"><span class="row-name-text">${escapeHtml(session.name)}</span>${session.unread ? '<span class="unread-dot" title="Unread attention"></span>' : ""}</div><div class="row-folder"><span class="row-repo" title="Repository">${escapeHtml(repo)}</span><span class="row-branch" title="Branch">${escapeHtml(branch)}</span><span class="row-status-label">${escapeHtml(label)}</span><span class="row-ports" title="Allocated ports">ports ${escapeHtml(portsLabel)}</span></div></div></div>
     <div class="row-metrics"><span class="agent-badge agent-${session.agent}" title="${session.agent === "codex" ? "Codex" : "Claude Code"}" aria-label="${session.agent === "codex" ? "Codex" : "Claude Code"}">${agentLabel}</span><span class="row-progress" title="Tool progress"><small>PROG</small><b>${escapeHtml(progress)}</b></span><span class="row-restarts" title="Restart count">↻ ${restartCount}</span></div>
     <div class="row-dwell"><span>${dwell(session.status_since)}</span><small class="row-last-line" title="${escapeHtml(lastLine)}">${escapeHtml(lastLine)}</small></div>

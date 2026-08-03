@@ -30,6 +30,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - The fleet list now exposes distinct glyphs and visible labels for every status, keyboard row
   activation, screen-reader announcements, light/dark contrast tokens, forced-colors support and
   reduced-motion behavior.
+- Fleet navigation now exposes a single-select listbox with roving keyboard focus, option position
+  metadata, explicit selection state and real per-row action buttons.
 - `terminalai-core::grid::TerminalGrid` now parses each session's ANSI output into a bounded Rust
   grid with cursor motion, scrolling, alternate-screen restore and split UTF-8 coverage. Only the
   focused session (and future pinned panes) receives live output events; background sessions keep
