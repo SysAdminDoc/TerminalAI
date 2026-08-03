@@ -7,6 +7,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- A Projects view showing which known projects still have roadmap work: open items, how long ago
+  the roadmap was touched, and the next unchecked item, sorted by most work first. Two states are
+  kept distinct from zero throughout, because both would otherwise sort beside a finished project
+  and drop out of consideration: a project with no `ROADMAP.md` is *unknown*, and a roadmap
+  written as prose rather than checkboxes is *unreadable* — not empty. On the machine this was
+  built against, 184 of 318 repositories fall into that second case, so treating it as zero would
+  have reported 184 projects as finished. Checklist items inside fenced code blocks are skipped,
+  so a roadmap documenting its own format does not count its examples as real work. Staleness
+  comes from the file's modification time rather than a `git log` per project, which would be a
+  process per project for a number that only needs to be approximate. Launching from a row carries
+  that project's folder into the launcher.
+
 - Register a root that holds your repositories — `~/repos` — and every Git repository under it
   becomes a launch target, so starting a session no longer means browsing to a folder you have
   visited a hundred times. The list is re-discovered on every launcher open rather than cached: a

@@ -475,6 +475,15 @@ fn list_projects(
     state.project_roots.projects()
 }
 
+/// Every project with what its roadmap says.
+///
+/// Separate from `list_projects` because it costs a file read per project, and
+/// the launcher's folder dropdown does not need it.
+#[tauri::command]
+fn scan_projects(state: State<'_, AppState>) -> Result<Vec<projects::ScannedProject>, String> {
+    state.project_roots.scanned()
+}
+
 #[tauri::command]
 fn list_project_roots(state: State<'_, AppState>) -> Result<Vec<PathBuf>, String> {
     state.project_roots.list()
@@ -1433,6 +1442,7 @@ fn run_app() -> Result<(), String> {
             delete_preset,
             restore_builtin_presets,
             list_projects,
+            scan_projects,
             list_project_roots,
             add_project_root,
             remove_project_root,

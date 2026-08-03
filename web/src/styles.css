@@ -71,6 +71,10 @@ button { cursor: pointer; }
    would make the fleet look smaller than it is. */
 .broadcast-row.is-ineligible { color: var(--subtext0); }
 .broadcast-why { color: var(--subtext0); font-size: 11px; margin-left: auto; }
+.projects-table tbody th { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+/* The next open item is context, not the answer — it must not push the counts
+   off the row. */
+.projects-next { max-width: 320px; overflow: hidden; text-overflow: ellipsis; color: var(--subtext0); }
 .top-actions { display: flex; align-items: center; gap: 8px; }
 .button { border: 1px solid transparent; border-radius: 7px; padding: 8px 12px; color: var(--text); font-size: 12px; font-weight: 650; transition: border-color .16s ease, background .16s ease, transform .16s ease; }.button:hover { transform: translateY(-1px); }.button:active { transform: translateY(0); }
 .button-primary { background: linear-gradient(135deg, #cba6f7, #b4befe); color: #1e1e2e; box-shadow: 0 6px 20px rgba(203, 166, 247, .16); }.button-primary:hover { background: linear-gradient(135deg, #d8b9ff, #c3ccff); }

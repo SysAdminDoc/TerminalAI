@@ -9,9 +9,6 @@ Single task tracker for this repo. Newest phase at the top; completed items are 
       labels for status/dwell/attention states, tooltips on every control, and a short in-app
       explainer of the row → focused-terminal model. Acceptance: someone unfamiliar with the tool
       can launch a session, read its state, and answer an attention request unaided
-- [ ] Roadmap scanner — for every known project, detect and parse `ROADMAP.md`, surfacing
-      open-item counts and staleness per project so "which projects still have work queued" is a
-      glance, not a hunt
 - [ ] Per-session prompt queue — queue one or more prompts against a session while it is busy;
       when the current run completes, the next queued prompt is sent automatically. Queue is
       visible and reorderable per row, a queued prompt can be edited or withdrawn before it fires,

@@ -10,6 +10,7 @@ import { countMessage, localizeDom, relativeDwell, t } from "./i18n.js";
 import { rateLimitTitle, rateLimitedLabel } from "./rateLimit.js";
 import { coverage, fleetTotals, folderOf, formatCost, formatTokens, rollupBy, TOKEN_FIELDS } from "./rollup.js";
 import { defaultSelection, isEligible, summarize, targets } from "./broadcast.js";
+import { hasOpenWork, openItemsCell, sortProjects, stalenessLabel, summarize as summarizeProjects } from "./projects.js";
 import "./styles.css";
 
 const WDIO_BUILD = import.meta.env.VITE_TERMINALAI_WDIO === "1";
@@ -137,6 +138,7 @@ const state = {
   broadcastSelection: [],
   templates: [],
   projects: [],
+  scannedProjects: [],
   announcementQueue: new Map(),
   announcementTimer: null,
   orderFreeze: null,
@@ -1538,6 +1540,83 @@ async function sendBroadcast() {
   }
 }
 
+/**
+ * Which projects still have roadmap work.
+ *
+ * Every cell distinguishes "unknown" from "none": a project with no roadmap,
+ * and one whose roadmap is prose rather than checkboxes, both have an unknown
+ * amount queued, and rendering either as 0 would sort it beside a finished
+ * project and quietly remove it from consideration.
+ */
+function renderProjects() {
+  const openOnly = $("projects-open-only").checked;
+  const all = state.scannedProjects;
+  const rows = sortProjects(openOnly ? all.filter((item) => hasOpenWork(item.roadmap)) : all);
+  const { withWork, unknown, total } = summarizeProjects(all);
+  $("projects-coverage").textContent = total
+    ? t("projects-summary", { withWork, total, unknown })
+    : t("projects-none-registered");
+
+  if (!rows.length) {
+    $("projects-body").innerHTML = `<p class="rollup-total">${escapeHtml(
+      total ? t("projects-none-matching") : t("projects-none-registered"),
+    )}</p>`;
+    return;
+  }
+  $("projects-body").innerHTML = `
+    <table class="rollup-table projects-table">
+      <thead><tr>
+        <th>${escapeHtml(t("projects-column-project"))}</th>
+        <th class="rollup-number">${escapeHtml(t("projects-column-open"))}</th>
+        <th>${escapeHtml(t("projects-column-touched"))}</th>
+        <th>${escapeHtml(t("projects-column-next"))}</th>
+        <th></th>
+      </tr></thead>
+      <tbody>${rows
+        .map((item) => {
+          const cell = openItemsCell(item.roadmap, t);
+          const touched = stalenessLabel(item.roadmap, t) ?? "—";
+          const next = item.roadmap?.next_item ?? "";
+          // Each cell is built separately so no interpolation has to wrap, and
+          // every value is escaped at the point it lands — including inside an
+          // attribute, which `contentSecurity.test.mjs` checks uniformly.
+          const cells = [
+            `<th scope="row" title="${escapeHtml(item.path)}">${escapeHtml(item.name)}</th>`,
+            `<td class="rollup-number${cell.known ? "" : " rollup-unpriced"}">${escapeHtml(cell.text)}</td>`,
+            `<td>${escapeHtml(touched)}</td>`,
+            `<td class="projects-next">${escapeHtml(next)}</td>`,
+            `<td><button type="button" class="button button-quiet" data-launch-project="${escapeHtml(item.path)}">${escapeHtml(t("projects-launch"))}</button></td>`,
+          ];
+          return `<tr>${cells.join("")}</tr>`;
+        })
+        .join("")}</tbody>
+    </table>`;
+  for (const button of $("projects-body").querySelectorAll("[data-launch-project]")) {
+    button.addEventListener("click", () => {
+      $("projects-dialog").close();
+      openLauncher();
+      $("cwd-input").value = button.dataset.launchProject;
+      schedulePreview();
+      void loadProjectTemplates();
+    });
+  }
+}
+
+async function openProjects() {
+  const dialog = $("projects-dialog");
+  if (!dialog.open) dialog.showModal();
+  // Scanning reads a file per project, so the dialog opens first and fills in
+  // rather than blocking on a few hundred reads before anything appears.
+  $("projects-body").innerHTML = `<p class="rollup-total">${escapeHtml(t("loading"))}</p>`;
+  try {
+    state.scannedProjects = await invoke("scan_projects");
+  } catch (error) {
+    state.scannedProjects = [];
+    showToast(String(error));
+  }
+  renderProjects();
+}
+
 function createOutputChannel(id) {
   const generation = state.focusGeneration;
   const channel = new Channel();
@@ -2322,6 +2401,9 @@ function bindEvents() {
   $("cancel-launch-button").addEventListener("click", () => $("launcher-dialog").close());
   $("close-launcher-button").addEventListener("click", () => $("launcher-dialog").close());
   $("close-rollup-button").addEventListener("click", () => $("rollup-dialog").close());
+  $("projects-toggle").addEventListener("click", () => void openProjects());
+  $("close-projects-button").addEventListener("click", () => $("projects-dialog").close());
+  $("projects-open-only").addEventListener("change", () => renderProjects());
   $("broadcast-toggle").addEventListener("click", () => openBroadcast());
   $("cancel-broadcast-button").addEventListener("click", () => $("broadcast-dialog").close());
   $("send-broadcast-button").addEventListener("click", () => void sendBroadcast());

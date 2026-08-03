@@ -31,6 +31,7 @@ pub mod project;
 pub mod pty;
 pub mod registry;
 pub mod review;
+pub mod roadmap;
 pub mod scrollback;
 pub mod session;
 pub mod tail;

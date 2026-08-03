@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use terminalai_core::atomic_file::write_atomic;
 use terminalai_core::project::{self, Project};
+use terminalai_core::roadmap::{self, RoadmapSummary};
 
 /// Cap on registered roots. Each one is walked on every refresh, so this is
 /// what keeps a refresh bounded regardless of what has been registered.
@@ -109,6 +110,22 @@ impl ProjectRoots {
         Ok(project::discover_all(&roots))
     }
 
+    /// Every project with what its roadmap says.
+    ///
+    /// One file read per project rather than one Git process per project: this
+    /// runs across a few hundred repositories at once, and a `git log` each
+    /// would make the answer cost more than it is worth.
+    pub fn scanned(&self) -> Result<Vec<ScannedProject>, String> {
+        Ok(self
+            .projects()?
+            .into_iter()
+            .map(|project| {
+                let roadmap = roadmap::scan(&project.path);
+                ScannedProject { project, roadmap }
+            })
+            .collect())
+    }
+
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Vec<PathBuf>>, String> {
         self.roots
             .lock()
@@ -129,6 +146,14 @@ impl ProjectRoots {
         write_atomic(&self.path, &json, true)
             .map_err(|error| format!("write project roots: {error}"))
     }
+}
+
+/// A project and what its roadmap says.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScannedProject {
+    #[serde(flatten)]
+    pub project: Project,
+    pub roadmap: RoadmapSummary,
 }
 
 /// True when `parent` contains `child`, or is it.
@@ -278,6 +303,43 @@ mod tests {
         assert!(store.remove(&root).expect("remove"));
         assert!(store.projects().expect("projects").is_empty());
         assert!(!store.remove(&root).expect("remove again"));
+    }
+
+    #[test]
+    fn scanning_reports_what_each_project_still_has_queued() {
+        use terminalai_core::roadmap::RoadmapState;
+        let dir = scratch();
+        let root = dir.0.join("repos");
+        fs::create_dir_all(&root).expect("root");
+        let busy = repo(&root, "busy");
+        fs::write(busy.join("ROADMAP.md"), "- [ ] one
+- [ ] two
+- [x] done
+").expect("write");
+        let quiet = repo(&root, "quiet");
+        fs::write(quiet.join("ROADMAP.md"), "- [x] all done
+").expect("write");
+        repo(&root, "unknown");
+
+        let store = store(&dir.0);
+        store.add(root).expect("add");
+        let scanned = store.scanned().expect("scan");
+        assert_eq!(scanned.len(), 3);
+
+        let by_name = |name: &str| {
+            scanned
+                .iter()
+                .find(|item| item.project.name == name)
+                .unwrap_or_else(|| panic!("{name} missing"))
+                .clone()
+        };
+        assert_eq!(by_name("busy").roadmap.open_items(), Some(2));
+        assert!(by_name("busy").roadmap.has_open_work());
+        assert_eq!(by_name("quiet").roadmap.open_items(), Some(0));
+        assert!(!by_name("quiet").roadmap.has_open_work());
+        // A project with no roadmap is unknown, and must not read as finished.
+        assert_eq!(by_name("unknown").roadmap.state, RoadmapState::Absent);
+        assert_eq!(by_name("unknown").roadmap.open_items(), None);
     }
 
     #[test]
