@@ -208,7 +208,7 @@ impl Session {
             branch: None,
             ports,
             model: spec.model.clone(),
-            effort: spec.effort,
+            effort: spec.effort.clone(),
             status: SessionStatus::Starting,
             phase: SessionPhase::Starting,
             health: SessionHealth::Starting,

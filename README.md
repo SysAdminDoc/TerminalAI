@@ -233,6 +233,9 @@ terminalai-probe preview codex --model gpt-5.1-codex --effort high --sandbox wor
 # Run it for real on a pseudo-console.
 terminalai-probe spawn claude --raw --version
 
+# Print the installed runtime's model/effort catalog and feature names.
+terminalai-probe capabilities codex --json
+
 # Run anything on a pseudo-console — isolates "the pty is broken" from
 # "this agent is behaving oddly under a pty".
 terminalai-probe exec cmd.exe /c "echo hello"
@@ -264,7 +267,7 @@ Verified flags, not guesses.
 | Control | Claude Code | Codex |
 |---|---|---|
 | Model | `--model` | `--model` |
-| Effort | `--effort low\|medium\|high\|xhigh\|max` | `--config model_reasoning_effort="…"` |
+| Effort | `--effort <runtime value>` | `--config model_reasoning_effort="…"` |
 | Project folder | process cwd | `--cd` |
 | Extra writable dirs | `--add-dir` | `--add-dir` |
 | Permission | `--permission-mode default\|plan\|acceptEdits\|bypassPermissions` | Plan: `--config collaboration_mode.mode="Plan"`; otherwise `--ask-for-approval on-request\|untrusted\|never` |
@@ -310,6 +313,13 @@ loopback HTTP endpoint with a daemon-generated bearer token when the daemon is r
 Host value is allowlisted and requests carrying an Origin header are rejected. Codex keeps its
 command-hook path, and Claude falls back to the same command adapter when HTTP configuration is not
 available. Unknown hook event names are retained in the diagnostics stream.
+
+The launcher discovers model and reasoning-effort options from the resolved binaries instead of
+shipping a stale allowlist. Codex is queried through `model/list` and `codex features list`; Claude
+reports its active model and protocol capabilities through `system/init`. Results are cached for the
+resolved executable and its version banner, invalidated when that version changes, and surfaced as
+runtime datalists. A user-entered model or effort that is not advertised remains free text and is
+passed through with a warning.
 
 ## Licence
 

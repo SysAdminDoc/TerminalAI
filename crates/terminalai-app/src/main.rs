@@ -16,8 +16,8 @@ use tauri::{Emitter, Manager, State};
 use terminalai_core::agent::Agent;
 use terminalai_core::launch::LaunchSpec;
 use terminalai_core::{
-    parse_hook, AdmissionSnapshot, HookTransport, LogEntry, RegistryEvent, ReviewItem, Session,
-    SessionId, MAX_LOG_ENTRIES,
+    parse_hook, AdmissionSnapshot, AgentCapabilities, HookTransport, LogEntry, RegistryEvent,
+    ReviewItem, Session, SessionId, MAX_LOG_ENTRIES,
 };
 use terminalai_daemon::{
     DaemonClient, HookEndpoint, IpcError, Request, Response, PROTOCOL_VERSION,
@@ -178,6 +178,26 @@ fn resolve_agent(
     )? {
         Response::Error { message } => Err(message),
         response => Ok(response),
+    }
+}
+
+#[tauri::command]
+fn agent_capabilities(
+    agent: Agent,
+    configured_path: Option<PathBuf>,
+    state: State<'_, AppState>,
+) -> Result<AgentCapabilities, String> {
+    let client = daemon_client(&state)?;
+    match daemon_response(
+        &client,
+        Request::Capabilities {
+            agent,
+            configured_path,
+        },
+    )? {
+        Response::Capabilities { capabilities } => Ok(capabilities),
+        Response::Error { message } => Err(message),
+        other => Err(format!("unexpected capabilities response: {other:?}")),
     }
 }
 
@@ -1002,6 +1022,7 @@ fn run_app() -> Result<(), String> {
             mark_reviewed,
             preview_launch,
             resolve_agent,
+            agent_capabilities,
             launch_session,
             write_session,
             resize_session,

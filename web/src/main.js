@@ -63,11 +63,6 @@ function metaLabel(meta) {
   return t(meta.label);
 }
 
-const MODEL_SUGGESTIONS = {
-  claude: ["opus", "sonnet", "haiku"],
-  codex: ["gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1"],
-};
-
 const state = {
   sessions: [],
   external: [],
@@ -97,6 +92,8 @@ const state = {
   preflightMode: false,
   preflightLoading: false,
   preflightReason: null,
+  capabilities: {},
+  capabilityRequest: 0,
   snapshotLoading: true,
   announcementQueue: new Map(),
   announcementTimer: null,
@@ -1161,7 +1158,7 @@ function defaultSpec() {
     name: null,
     cwd: "",
     model: null,
-    effort: "high",
+    effort: null,
     permission: "ask",
     sandbox: null,
     profile: null,
@@ -1188,7 +1185,7 @@ function readSpec() {
     name: $("name-input").value.trim() || null,
     cwd: $("cwd-input").value.trim(),
     model: $("model-input").value.trim() || null,
-    effort: $("effort-input").value,
+    effort: $("effort-input").value.trim() || null,
     permission: $("permission-input").value,
     sandbox: agent === "codex" ? $("sandbox-input").value : null,
     profile: agent === "codex" ? $("profile-input").value.trim() || null : null,
@@ -1212,7 +1209,7 @@ function writeSpec(spec) {
   $("name-input").value = spec.name ?? "";
   $("cwd-input").value = spec.cwd ?? "";
   $("model-input").value = spec.model ?? "";
-  $("effort-input").value = spec.effort ?? "high";
+  $("effort-input").value = spec.effort ?? "";
   $("permission-input").value = spec.permission ?? "ask";
   $("sandbox-input").value = spec.sandbox ?? "workspace-write";
   $("profile-input").value = spec.profile ?? "";
@@ -1231,12 +1228,62 @@ function writeSpec(spec) {
   schedulePreview();
 }
 
+function capabilityForAgent(agent = $("agent-input").value) {
+  return state.capabilities[agent] ?? null;
+}
+
+function renderCapabilityFields() {
+  const capabilities = capabilityForAgent();
+  const selectedModel = $("model-input").value.trim();
+  const models = Array.isArray(capabilities?.models) ? capabilities.models : [];
+  $("model-suggestions").innerHTML = models
+    .filter((model) => !model.hidden)
+    .map((model) => `<option value="${escapeHtml(model.id)}"></option>`)
+    .join("");
+  const selected = models.find((model) => model.id === selectedModel);
+  const efforts = selected?.supported_efforts?.length
+    ? selected.supported_efforts
+    : (capabilities?.efforts ?? []);
+  $("effort-suggestions").innerHTML = efforts
+    .map((effort) => `<option value="${escapeHtml(effort)}"></option>`)
+    .join("");
+  const warnings = [];
+  if (capabilities?.warning) warnings.push(capabilities.warning);
+  if (selectedModel && models.length && !models.some((model) => model.id === selectedModel)) {
+    warnings.push(`Model ${selectedModel} is not in the detected catalog; it will be passed through.`);
+  }
+  const selectedEffort = $("effort-input").value.trim();
+  if (selectedEffort && efforts.length && !efforts.includes(selectedEffort)) {
+    warnings.push(`Reasoning effort ${selectedEffort} is not advertised for this model; it will be passed through.`);
+  }
+  const note = $("capability-note");
+  note.classList.toggle("field-hidden", warnings.length === 0);
+  note.textContent = warnings.join(" ");
+}
+
+async function loadAgentCapabilities(agent = $("agent-input").value) {
+  const request = ++state.capabilityRequest;
+  renderCapabilityFields();
+  try {
+    const capabilities = await invoke("agent_capabilities", { agent, configuredPath: null });
+    if (request !== state.capabilityRequest) return;
+    state.capabilities[agent] = capabilities;
+  } catch (error) {
+    if (request !== state.capabilityRequest) return;
+    state.capabilities[agent] = {
+      models: [],
+      efforts: [],
+      warning: `Runtime capability probe unavailable: ${String(error)} Custom values remain allowed.`,
+    };
+  }
+  renderCapabilityFields();
+}
+
 function syncAgentFields() {
   const codex = $("agent-input").value === "codex";
   document.querySelectorAll(".codex-only").forEach((element) => element.classList.toggle("field-hidden", !codex));
   document.querySelectorAll(".claude-only").forEach((element) => element.classList.toggle("field-hidden", codex));
-  const suggestions = $("model-suggestions");
-  suggestions.innerHTML = (MODEL_SUGGESTIONS[codex ? "codex" : "claude"] ?? []).map((model) => `<option value="${model}"></option>`).join("");
+  renderCapabilityFields();
   if (!codex && $("permission-input").value === "plan") $("permission-input").value = "ask";
   document.querySelectorAll(".resume-id-field").forEach((element) => element.classList.toggle("field-hidden", $("resume-input").value === "new" || $("resume-input").value === "last"));
 }
@@ -1318,12 +1365,14 @@ function loadSelectedPreset() {
   if (!preset) return;
   writeSpec(preset.spec);
   $("launcher-dialog").showModal();
+  void loadAgentCapabilities($("agent-input").value);
 }
 
 function openLauncher() {
   writeSpec(defaultSpec());
   $("launcher-dialog").showModal();
   $("cwd-input").focus();
+  void loadAgentCapabilities($("agent-input").value);
 }
 
 const DEFAULT_COLS = 120;
@@ -1514,15 +1563,16 @@ function bindEvents() {
   });
   $("agent-input").addEventListener("change", () => {
     syncAgentFields();
+    void loadAgentCapabilities($("agent-input").value);
     schedulePreview();
   });
   ["cwd-input", "model-input", "name-input", "effort-input", "permission-input", "sandbox-input", "profile-input", "resume-input", "resume-id-input", "budget-input", "port-base-input", "port-count-input", "setup-hook-input", "teardown-hook-input", "prompt-input", "search-input"].forEach((id) => {
     $(id).addEventListener("input", () => {
-      if (id === "resume-input") syncAgentFields();
+      if (id === "resume-input" || id === "model-input" || id === "effort-input") syncAgentFields();
       schedulePreview();
     });
     $(id).addEventListener("change", () => {
-      if (id === "resume-input") syncAgentFields();
+      if (id === "resume-input" || id === "model-input" || id === "effort-input") syncAgentFields();
       schedulePreview();
     });
   });

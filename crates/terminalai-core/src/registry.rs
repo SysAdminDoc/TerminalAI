@@ -137,6 +137,7 @@ pub struct AdmissionSnapshot {
 /// update and only the focused pane needs to consume output bytes.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
+#[allow(clippy::large_enum_variant)]
 pub enum RegistryEvent {
     SessionUpdated { session: Session },
     Notification { event: NotificationEvent },

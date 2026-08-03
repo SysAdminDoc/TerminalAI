@@ -50,6 +50,14 @@ test("implicit submission cannot launch a session", () => {
   assert.equal(launchCalls.length, 2, "launchCurrentSpec is declared once and called from one place");
 });
 
+test("launcher catalogs come from runtime capabilities and keep free text", () => {
+  assert.doesNotMatch(main, /MODEL_SUGGESTIONS/);
+  assert.match(main, /invoke\("agent_capabilities"/);
+  assert.match(html, /id="model-input"[^>]+list="model-suggestions"/);
+  assert.match(html, /id="effort-input"[^>]+list="effort-suggestions"/);
+  assert.match(main, /value\.trim\(\) \|\| null/);
+});
+
 test("the focused terminal replaces the placeholder rather than stacking under it", () => {
   const { dom } = launcherForm();
   const host = dom.window.document.getElementById("terminal-host");

@@ -5,6 +5,7 @@
 //! vector a launcher choice produces, and drives a real ConPTY end to end.
 //!
 //!   terminalai-probe resolve
+//!   terminalai-probe capabilities codex --json
 //!   terminalai-probe preview claude --model opus --effort xhigh --cwd .
 //!   terminalai-probe spawn   codex  --raw --version
 //!
@@ -26,6 +27,7 @@ terminalai-probe — machine-facing checks for TerminalAI
 
 USAGE:
   terminalai-probe resolve
+  terminalai-probe capabilities <claude|codex> [--json]
   terminalai-probe preview <claude|codex> [options]
   terminalai-probe spawn   <claude|codex> [options] [--raw <arg>...]
   terminalai-probe list    --json
@@ -41,7 +43,7 @@ USAGE:
 OPTIONS:
   --cwd <dir>          working directory (default: current)
   --model <name>
-  --effort <low|medium|high|xhigh|max>
+  --effort <runtime value>
   --permission <ask|plan|accept-edits|bypass>
   --sandbox <read-only|workspace-write|danger-full-access>   (codex only)
   --name <label>                                             (claude only)
@@ -62,6 +64,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = match args.first().map(String::as_str) {
         Some("resolve") => cmd_resolve(),
+        Some("capabilities") => cmd_capabilities(&args[1..]),
         Some("preview") => cmd_build(&args[1..], false),
         Some("spawn") => cmd_build(&args[1..], true),
         Some("list") => cmd_list(&args[1..]),
@@ -84,6 +87,35 @@ fn main() {
         }
     };
     std::process::exit(code);
+}
+
+fn cmd_capabilities(args: &[String]) -> i32 {
+    let (machine, args) = without_json(args);
+    let Some(agent_arg) = args.first() else {
+        return control_usage("capabilities <claude|codex> [--json]");
+    };
+    if args.len() != 1 {
+        return control_usage("capabilities accepts one agent and optional --json");
+    }
+    let agent = match agent_arg.as_str() {
+        "claude" => Agent::Claude,
+        "codex" => Agent::Codex,
+        other => return control_usage(&format!("unknown agent: {other}")),
+    };
+    match terminalai_core::probe_capabilities(agent, None) {
+        Ok(capabilities) if machine => match serde_json::to_string(&capabilities) {
+            Ok(json) => {
+                println!("{json}");
+                0
+            }
+            Err(error) => print_control_error(error, true),
+        },
+        Ok(capabilities) => {
+            println!("{capabilities:#?}");
+            0
+        }
+        Err(error) => print_control_error(error, machine),
+    }
 }
 
 fn cmd_list(args: &[String]) -> i32 {
@@ -718,13 +750,14 @@ fn parse_launch_spec(
             }
             "--timeout" => return Err("--timeout is only supported by spawn".into()),
             "--effort" => {
-                spec.effort = Some(match take_value(args, &mut index, flag)?.as_str() {
+                let value = take_value(args, &mut index, flag)?;
+                spec.effort = Some(match value.as_str() {
                     "low" => Effort::Low,
                     "medium" => Effort::Medium,
                     "high" => Effort::High,
                     "xhigh" => Effort::XHigh,
                     "max" => Effort::Max,
-                    other => return Err(format!("bad --effort: {other}")),
+                    _ => Effort::Custom(value),
                 });
             }
             "--permission" => {

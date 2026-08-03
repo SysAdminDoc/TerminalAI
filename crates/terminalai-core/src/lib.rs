@@ -12,6 +12,7 @@
 pub mod agent;
 pub mod app_server;
 pub mod atomic_file;
+pub mod capabilities;
 pub mod diagnostics;
 pub mod domain;
 pub mod environment;
@@ -35,6 +36,9 @@ pub use app_server::{
     parse_message as parse_app_server_message, AgentEvent, AppServerApprovalKind, AppServerEvent,
     AppServerMessage, AppServerNotification, AppServerParseError, AppServerRequest,
     AppServerResponse, AppServerThreadStatus, AppServerTokenUsage, RpcId,
+};
+pub use capabilities::{
+    probe as probe_capabilities, AgentCapabilities, CapabilityError, ModelCapability,
 };
 pub use diagnostics::{
     LogEntry, StatusDiagnostic, StatusReason, StatusReasonKind, StatusSource, MAX_LOG_ENTRIES,

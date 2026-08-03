@@ -111,13 +111,6 @@ researcher continues from R-88.
 
 ### P2
 
-- [ ] R-78 · P2 — Feature-detect models and reasoning efforts
-  Why: the launcher's model and effort lists are compile-time constants against products that change monthly, so the GUI will refuse valid combinations and offer dead ones — and it already disagrees with the published documentation in both directions.
-  Evidence: `crates/terminalai-core/src/agent.rs` `suggested_models` and `crates/terminalai-core/src/launch.rs` `supported_efforts` are static. Verified 2026-08-02: `codex debug models` reports `max` as supported only on the gpt-5.6 family (sol, terra, luna) and absent from gpt-5.5/5.4/5.3; the app-server schema types `ReasoningEffort` as a non-empty string with per-model `supportedReasoningEfforts`, while the published config reference omits `max` entirely. Claude exposes `system/init.capabilities[]` for the same purpose, and this machine runs two Claude Code versions simultaneously (2.1.170 on PATH, 2.1.220 in-process), so version comparison is not a usable proxy.
-  Touches: `crates/terminalai-core/src/agent.rs`, `launch.rs`, launcher UI
-  Acceptance: model and effort options are populated from runtime probes (`model/list` with `supportedReasoningEfforts`, `system/init.capabilities[]`, `codex features list`) cached per resolved binary and invalidated on version change; an unknown but user-supplied value is passed through with a warning rather than refused; no capability decision reads a hardcoded list or compares version strings.
-  Complexity: M
-
 - [ ] R-79 · P2 — Make Windows process hygiene the measured differentiator
   Why: this is the one axis no competitor can copy cheaply — they are all Electron, Node or tmux — and both agent CLIs have open defects that worsen with session count, so the claim is worth proving rather than asserting.
   Evidence: anthropics/claude-code#66540 (open) — subprocesses spawn without `windowsHide`/`CREATE_NO_WINDOW`, so N sessions times M MCP servers flash M+1 console windows per tool call, with reported sustained keystroke loss at 12 concurrent sessions; #74107 (open) requests persistent terminal sessions for the same reason; #67220 (open) requests a native Windows toast channel; openai/codex discussion #29949 documents process-enumeration storms on high-spec Windows machines. A ConPTY-hosted child inherits the pseudoconsole rather than allocating a new conhost. Windows also exposes `SetProcessInformation(ProcessPowerThrottling)` (EcoQoS) and `ProcessMemoryPriority`, and Tauri 2.11.5 exposes `set_progress_bar`, `set_overlay_icon` and `set_badge_count`.

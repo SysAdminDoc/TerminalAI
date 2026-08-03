@@ -47,15 +47,6 @@ impl Agent {
         }
     }
 
-    /// Models offered in the launcher dropdown. Free-text entry stays available
-    /// in the GUI, because both CLIs accept aliases we do not enumerate here.
-    pub fn suggested_models(self) -> &'static [&'static str] {
-        match self {
-            Agent::Claude => &["opus", "sonnet", "haiku"],
-            Agent::Codex => &["gpt-5.1-codex", "gpt-5.1-codex-mini", "gpt-5.1"],
-        }
-    }
-
     /// The file stem a native executable for this agent must carry. A configured
     /// path whose stem differs is refused before anything is executed.
     pub fn expected_exe_stem(self) -> &'static str {
@@ -291,7 +282,7 @@ fn cached_version_banner(path: &Path) -> Result<String, String> {
 /// Both real banners are a single short line, so the pipe cannot fill before the
 /// process exits; a candidate that floods stdout instead trips the deadline and
 /// is killed, which is the correct answer for an unidentifiable binary.
-fn version_banner(path: &Path) -> Result<String, String> {
+pub(crate) fn version_banner(path: &Path) -> Result<String, String> {
     let mut command = Command::new(path);
     command
         .arg("--version")

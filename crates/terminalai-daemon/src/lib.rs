@@ -198,6 +198,10 @@ pub enum Request {
         agent: Agent,
         configured_path: Option<PathBuf>,
     },
+    Capabilities {
+        agent: Agent,
+        configured_path: Option<PathBuf>,
+    },
     Preview {
         spec: Box<LaunchSpec>,
         configured_path: Option<PathBuf>,
@@ -284,6 +288,9 @@ pub enum Response {
         agent: Agent,
         path: PathBuf,
         origin: String,
+    },
+    Capabilities {
+        capabilities: terminalai_core::AgentCapabilities,
     },
     Preview {
         command: String,
@@ -908,11 +915,21 @@ fn dispatch_with_endpoint(
                 message: error.to_string(),
             },
         },
+        Request::Capabilities {
+            agent,
+            configured_path,
+        } => match terminalai_core::probe_capabilities(agent, configured_path.as_deref()) {
+            Ok(capabilities) => Response::Capabilities { capabilities },
+            Err(error) => Response::Error {
+                message: error.to_string(),
+            },
+        },
         Request::Preview {
             spec,
             configured_path,
         } => {
             let spec = *spec;
+            warn_capability_overrides(&spec, configured_path.as_deref());
             match agent::resolve(spec.agent, configured_path.as_deref()) {
                 Ok(binary) => match spec.resolve(&binary) {
                     Ok(command) => Response::Preview {
@@ -946,6 +963,7 @@ fn dispatch_with_endpoint(
             configured_path,
         } => {
             let spec = *spec;
+            warn_capability_overrides(&spec, configured_path.as_deref());
             match agent::resolve(spec.agent, configured_path.as_deref()) {
                 Ok(binary) => match registry.launch(spec, binary) {
                     Ok(id) => match registry.is_queued(&id) {
@@ -1062,9 +1080,20 @@ fn request_requires_registry(request: &Request) -> bool {
             | Request::Close
             | Request::Shutdown
             | Request::Resolve { .. }
+            | Request::Capabilities { .. }
             | Request::Preview { .. }
             | Request::HookEndpoint
     )
+}
+
+fn warn_capability_overrides(spec: &LaunchSpec, configured_path: Option<&std::path::Path>) {
+    let Ok(capabilities) = terminalai_core::probe_capabilities(spec.agent, configured_path) else {
+        tracing::debug!(agent = ?spec.agent, "runtime capability probe unavailable; launch remains permissive");
+        return;
+    };
+    for warning in capabilities.warnings_for(spec.model.as_deref(), spec.effort.as_ref()) {
+        tracing::warn!(agent = ?spec.agent, warning = %warning, "launch value is outside detected capabilities");
+    }
 }
 
 fn resolve_registry_error(error: terminalai_core::RegistryError) -> String {

@@ -16,6 +16,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   HTTP endpoint with an exact Host allowlist and Origin rejection; installation falls back to the
   existing fail-open command adapter when HTTP cannot be configured. Unknown event names remain
   visible in diagnostics instead of being discarded.
+- Replaced static launcher model and effort lists with cached runtime capability probes. Codex uses
+  `model/list` plus `codex features list`; Claude reads `system/init`. Per-model effort order is
+  preserved, values are invalidated when the resolved binary version changes, and unknown user
+  values remain launchable with warnings.
 - `SessionRegistry` now supervises sessions through an object-safe `AgentDomain`/`AgentSession`
   contract. `LocalPtyDomain` keeps the existing ConPTY behavior as the default while a future
   remote relay can supply input, output, resize and lifecycle operations without local handles.

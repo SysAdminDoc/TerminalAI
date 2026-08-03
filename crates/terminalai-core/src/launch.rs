@@ -1,36 +1,71 @@
 //! Turning launcher choices into an exact argument vector.
 //!
 //! Every field here maps to a flag verified against Claude Code 2.1.170 and
-//! codex-cli 0.146.0. The two CLIs express the same concepts differently —
+//! codex-cli 0.146.0. Runtime capability probing supplies current model and
+//! effort catalogs; the two CLIs express the same concepts differently —
 //! Claude takes `--effort`, Codex takes a config override; Claude inherits the
 //! working directory, Codex wants `--cd` — so the mapping is explicit per agent
 //! rather than a shared flag table.
 
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
 use crate::agent::{Agent, AgentBinary};
 use crate::environment::{EnvironmentError, EnvironmentSpec};
 
-/// Reasoning effort. Both current CLIs accept all five levels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
+/// Reasoning effort. Known values remain convenient constants, while a runtime
+/// can add a new string before this binary is updated.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effort {
     Low,
     Medium,
     High,
     XHigh,
     Max,
+    Custom(String),
 }
 
 impl Effort {
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(&self) -> &str {
         match self {
             Effort::Low => "low",
             Effort::Medium => "medium",
             Effort::High => "high",
             Effort::XHigh => "xhigh",
             Effort::Max => "max",
+            Effort::Custom(value) => value,
         }
+    }
+
+    pub fn is_custom(&self) -> bool {
+        matches!(self, Self::Custom(_))
+    }
+}
+
+impl Serialize for Effort {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Effort {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            "low" => Self::Low,
+            "medium" => Self::Medium,
+            "high" => Self::High,
+            "xhigh" => Self::XHigh,
+            "max" => Self::Max,
+            _ => Self::Custom(value),
+        })
     }
 }
 
@@ -212,7 +247,7 @@ impl LaunchSpec {
             a.push("--model".into());
             a.push(m.clone());
         }
-        if let Some(e) = self.effort {
+        if let Some(e) = self.effort.as_ref() {
             a.push("--effort".into());
             a.push(e.as_str().into());
         }
@@ -289,7 +324,7 @@ impl LaunchSpec {
             a.push("--model".into());
             a.push(m.clone());
         }
-        if let Some(e) = self.effort {
+        if let Some(e) = self.effort.as_ref() {
             // Not a flag — a config override, parsed as TOML.
             a.push("--config".into());
             a.push(format!("model_reasoning_effort=\"{}\"", e.as_str()));
@@ -341,26 +376,6 @@ impl LaunchSpec {
 fn format_usd(v: f64) -> String {
     let s = format!("{v:.2}");
     s.trim_end_matches('0').trim_end_matches('.').to_string()
-}
-
-/// Effort levels the launcher should offer for an agent.
-pub fn supported_efforts(agent: Agent) -> &'static [Effort] {
-    match agent {
-        Agent::Claude => &[
-            Effort::Low,
-            Effort::Medium,
-            Effort::High,
-            Effort::XHigh,
-            Effort::Max,
-        ],
-        Agent::Codex => &[
-            Effort::Low,
-            Effort::Medium,
-            Effort::High,
-            Effort::XHigh,
-            Effort::Max,
-        ],
-    }
 }
 
 /// Convenience for callers that only have a path.
@@ -442,19 +457,28 @@ mod tests {
     }
 
     #[test]
-    fn codex_supports_max_effort() {
-        assert!(supported_efforts(Agent::Codex).contains(&Effort::Max));
+    fn codex_passes_through_runtime_effort() {
         let s = LaunchSpec {
-            effort: Some(Effort::Max),
+            effort: Some(Effort::Custom("ultra".into())),
             ..spec(Agent::Codex)
         };
         let c = s.resolve(&binary(Agent::Codex)).unwrap();
         assert!(c.args.windows(2).any(|w| {
             w == [
                 "--config".to_string(),
-                "model_reasoning_effort=\"max\"".to_string(),
+                "model_reasoning_effort=\"ultra\"".to_string(),
             ]
         }));
+    }
+
+    #[test]
+    fn custom_effort_serializes_as_a_plain_string() {
+        let value = serde_json::to_value(Effort::Custom("future".into())).unwrap();
+        assert_eq!(value, serde_json::json!("future"));
+        assert_eq!(
+            serde_json::from_value::<Effort>(value).unwrap(),
+            Effort::Custom("future".into())
+        );
     }
 
     #[test]
