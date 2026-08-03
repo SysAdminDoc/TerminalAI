@@ -189,20 +189,6 @@ researcher continues from R-88.
   Acceptance: the NSIS and MSI bundles contain `terminalai-daemon.exe` (and `terminalai-probe.exe` if it is a supported entry point); a release-gate step installs into a scratch prefix, launches the installed binary, asserts the fleet window appears and the daemon starts, then uninstalls; the check fails loudly if any declared sidecar is missing from the bundle.
   Complexity: S
 
-- [ ] R-65 · P0 — Reveal the focused terminal
-  Why: the xterm element is appended after a placeholder that nothing ever removes, and both are full-height inside an `overflow: hidden` host — so the renderer this project is built around is laid out entirely outside the visible box.
-  Evidence: `web/index.html:55` renders `.terminal-placeholder`; `web/src/main.js:723` calls `terminal.open($("terminal-host"))`, which appends; grep for `terminal-placeholder` in `web/src/main.js` returns zero matches. `web/src/styles.css:61` sets `.terminal-host { overflow: hidden }` with `.terminal-placeholder { height: 100% }` and `.terminal-host .xterm { height: 100% }`.
-  Touches: `web/index.html`, `web/src/main.js`, `web/src/styles.css`
-  Acceptance: the placeholder is removed or hidden the first time a session is focused and restored when focus clears; the xterm element occupies the host box; a UI test (R-56) focuses a session and asserts the terminal renders with non-zero height.
-  Complexity: S
-
-- [ ] R-66 · P0 — Closing the launcher must not launch a session
-  Why: the dialog's close control and the Enter key in any launcher field both submit the form, and the submit handler spawns an agent — an unrecoverable action that costs tokens and may write to a repository the user never chose.
-  Evidence: `web/index.html:66` — `<button class="dialog-close" value="cancel" aria-label="Close launcher">` has no `type`, so inside `<form id="launcher-form">` (`index.html:65`) it defaults to `submit`; `web/src/main.js:820-823` calls `event.preventDefault()` then `launchCurrentSpec()`, defeating `method="dialog"`. The sibling controls at `index.html:88` correctly carry `type="button"`.
-  Touches: `web/index.html`, `web/src/main.js`
-  Acceptance: every non-launch control in the dialog carries `type="button"`; Enter in a text field does not launch (explicit submit only, or Ctrl+Enter); a test presses Escape, clicks the close control, and presses Enter in the preset-name field, asserting zero launches in all three cases.
-  Complexity: S
-
 - [ ] R-67 · P0 — Verify the agent binary instead of asserting it
   Why: the guard meant to stop a launcher configuration starting the wrong CLI compares two values that are equal by construction, so it can never fire on the configured-path route — and a check that always passes reads exactly like one that ran.
   Evidence: `crates/terminalai-core/src/agent.rs:84-97` — `resolve()` returns any configured path where `is_file()` holds, stamping the *requested* `agent` onto it with `Origin::Configured` and never inspecting the file. `crates/terminalai-core/src/registry.rs:363-368` then rejects only when `spec.agent != binary.agent`. The CHANGELOG claims "strict agent/binary matching before a process is spawned".

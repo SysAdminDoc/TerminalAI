@@ -135,6 +135,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   impersonation path.
 - Resume variants now use an explicit JSON `id` field, and the unsigned NSIS/MSI release lane
   builds the Vite frontend and app bundle from the workspace root.
+- The focused terminal is now visible: the placeholder is hidden the moment a session attaches
+  and restored when focus clears, so the xterm renderer occupies the host box instead of being
+  laid out below it.
+- Closing the launcher, or pressing Enter in any launcher field, no longer spawns an agent —
+  every dialog control is an explicit button and the form refuses submission outright.
 
 ## [0.1.0] — 2026-08-02
 

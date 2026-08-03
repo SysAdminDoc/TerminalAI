@@ -830,7 +830,16 @@ function removeSession(id) {
   renderRows();
 }
 
+// The xterm element is appended after the placeholder inside an overflow-hidden host,
+// so a placeholder left in flow lays the renderer out entirely below the visible box.
+function renderTerminalPlaceholder() {
+  const attached = Boolean(state.focused);
+  $("terminal-placeholder").classList.toggle("view-hidden", attached);
+  $("terminal-host").classList.toggle("terminal-host-attached", attached);
+}
+
 function updateTerminalHeader() {
+  renderTerminalPlaceholder();
   const session = state.sessions.find((item) => item.id === state.focused);
   if (!session) {
     $("terminal-name").textContent = "No focused session";
@@ -1312,10 +1321,12 @@ function bindEvents() {
   $("save-preset-button").addEventListener("click", saveCurrentPreset);
   $("launch-preset-button").addEventListener("click", loadSelectedPreset);
   $("cancel-launch-button").addEventListener("click", () => $("launcher-dialog").close());
-  $("launcher-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    await launchCurrentSpec();
-  });
+  $("close-launcher-button").addEventListener("click", () => $("launcher-dialog").close());
+  // Launching costs tokens and writes to a real repository, so it is reachable only
+  // from the launch button. The form never submits: implicit submission on Enter in
+  // any field would otherwise spawn an agent the operator never asked for.
+  $("launcher-form").addEventListener("submit", (event) => event.preventDefault());
+  $("launch-button").addEventListener("click", () => void launchCurrentSpec());
   $("terminal-clear").addEventListener("click", () => state.terminal?.clear());
   $("terminal-resize").addEventListener("click", async () => {
     if (!state.focused) return;
