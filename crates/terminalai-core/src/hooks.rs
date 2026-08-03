@@ -28,10 +28,21 @@ pub struct HookEvent {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HookSignal {
     SessionStart,
+    SessionEnd,
+    UserPromptSubmit,
     Stop,
+    StopFailure,
     PreToolUse,
     PostToolUse,
+    PostToolUseFailure,
+    PermissionRequest,
+    PermissionDenied,
+    PreCompact,
+    PostCompact,
+    SubagentStart,
+    SubagentStop,
     Notification { notification: HookNotification },
+    Unknown { event: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -113,9 +124,10 @@ fn parse_tool_progress(raw: &RawHook) -> Option<ToolProgress> {
     (total > 0).then_some(ToolProgress { completed, total })
 }
 
-/// Translate the JSON stdin contract used by Claude/Codex into the daemon's
-/// small, agent-neutral event model. Unknown notification kinds are retained as
-/// `Other` so a new upstream notification never breaks hook delivery.
+/// Translate the JSON hook contract used by Claude/Codex into the daemon's
+/// agent-neutral event model. Unknown event names are retained instead of
+/// rejected so an upstream addition remains visible to the daemon and its
+/// diagnostics stream.
 pub fn parse_hook(agent: Agent, input: &str) -> Result<HookEvent, HookParseError> {
     let raw: RawHook = serde_json::from_str(input)?;
     let progress = parse_tool_progress(&raw);
@@ -124,9 +136,18 @@ pub fn parse_hook(agent: Agent, input: &str) -> Result<HookEvent, HookParseError
     let notification_name = raw.notification_type.or(raw.notification_kind);
     let signal = match normalized.as_str() {
         "sessionstart" | "session_start" => HookSignal::SessionStart,
-        "sessionend" | "session_end" | "stop" => HookSignal::Stop,
+        "sessionend" | "session_end" => HookSignal::SessionEnd,
+        "userpromptsubmit" | "user_prompt_submit" => HookSignal::UserPromptSubmit,
+        "stop" => HookSignal::Stop,
+        "stopfailure" | "stop_failure" => HookSignal::StopFailure,
         "pretooluse" | "pre_tool_use" => HookSignal::PreToolUse,
         "posttooluse" | "post_tool_use" => HookSignal::PostToolUse,
+        "posttoolusefailure" | "post_tool_use_failure" => HookSignal::PostToolUseFailure,
+        "permissiondenied" | "permission_denied" => HookSignal::PermissionDenied,
+        "precompact" | "pre_compact" => HookSignal::PreCompact,
+        "postcompact" | "post_compact" => HookSignal::PostCompact,
+        "subagentstart" | "subagent_start" => HookSignal::SubagentStart,
+        "subagentstop" | "subagent_stop" => HookSignal::SubagentStop,
         "notification" | "permissionrequest" | "permission_request" => HookSignal::Notification {
             notification: parse_notification(notification_name.as_deref()),
         },
@@ -139,7 +160,9 @@ pub fn parse_hook(agent: Agent, input: &str) -> Result<HookEvent, HookParseError
         other if is_idle_notification(other) => HookSignal::Notification {
             notification: HookNotification::IdlePrompt,
         },
-        other => return Err(HookParseError::UnsupportedEvent(other.into())),
+        _ => HookSignal::Unknown {
+            event: event_name.trim().to_owned(),
+        },
     };
     Ok(HookEvent {
         agent,
@@ -285,17 +308,43 @@ mod tests {
             r#"{"session_id":"cc-1","hook_event_name":"SessionStart"}"#,
         ] {
             let event = parse_hook(Agent::Claude, payload).expect("payload");
-            assert_eq!(event.progress, None, "payload wrongly reported a plan: {payload}");
+            assert_eq!(
+                event.progress, None,
+                "payload wrongly reported a plan: {payload}"
+            );
         }
     }
 
     #[test]
-    fn unsupported_lifecycle_event_is_rejected() {
-        let error = parse_hook(
+    fn unknown_lifecycle_event_is_retained() {
+        let event = parse_hook(
             Agent::Codex,
             r#"{"thread_id":"cx-1","event":"BeforeCompaction"}"#,
         )
-        .expect_err("unsupported event");
-        assert!(matches!(error, HookParseError::UnsupportedEvent(_)));
+        .expect("unknown event");
+        assert_eq!(
+            event.signal,
+            HookSignal::Unknown {
+                event: "BeforeCompaction".into()
+            }
+        );
+    }
+
+    #[test]
+    fn lifecycle_events_map_without_dropping_newer_variants() {
+        for (name, expected) in [
+            ("SessionEnd", HookSignal::SessionEnd),
+            ("UserPromptSubmit", HookSignal::UserPromptSubmit),
+            ("PostToolUseFailure", HookSignal::PostToolUseFailure),
+            ("PermissionDenied", HookSignal::PermissionDenied),
+            ("SubagentStart", HookSignal::SubagentStart),
+            ("SubagentStop", HookSignal::SubagentStop),
+            ("PreCompact", HookSignal::PreCompact),
+            ("PostCompact", HookSignal::PostCompact),
+        ] {
+            let input = format!(r#"{{"hook_event_name":"{name}"}}"#);
+            let event = parse_hook(Agent::Claude, &input).expect("lifecycle event");
+            assert_eq!(event.signal, expected, "event {name}");
+        }
     }
 }

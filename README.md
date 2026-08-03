@@ -304,6 +304,13 @@ message IDs and uses the browser's `Intl` plural and relative-time formatters fo
 dwell labels. Status diagnostics cross the daemon boundary as reason kinds plus arguments, so
 translated prose never becomes a wire-format dependency.
 
+Hook installation covers the lifecycle events that change a fleet row, including prompt submission,
+tool failures, permission decisions, subagents, compaction and session end. Claude uses an ephemeral
+loopback HTTP endpoint with a daemon-generated bearer token when the daemon is reachable; the exact
+Host value is allowlisted and requests carrying an Origin header are rejected. Codex keeps its
+command-hook path, and Claude falls back to the same command adapter when HTTP configuration is not
+available. Unknown hook event names are retained in the diagnostics stream.
+
 ## Licence
 
 MIT — see [LICENSE](LICENSE).

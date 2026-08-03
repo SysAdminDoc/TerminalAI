@@ -33,9 +33,11 @@ compile_error!(
      dead code. Remove `panic = \"abort\"` from the active cargo profile."
 );
 
+mod http_hooks;
 mod logging;
 mod persistence;
 
+pub use http_hooks::HookEndpoint;
 pub use logging::{init_logging, log_directory, LogHub, LoggingGuard, MAX_LOG_FILES};
 
 #[cfg(feature = "codex-app-server")]
@@ -200,6 +202,7 @@ pub enum Request {
         spec: Box<LaunchSpec>,
         configured_path: Option<PathBuf>,
     },
+    HookEndpoint,
     Hook {
         event: HookEvent,
     },
@@ -285,6 +288,9 @@ pub enum Response {
     Preview {
         command: String,
     },
+    HookEndpoint {
+        endpoint: HookEndpoint,
+    },
     Hook {
         matched: bool,
     },
@@ -329,6 +335,7 @@ pub struct DaemonServer {
     store_writer: Option<StoreWriter>,
     store_quarantine: Option<String>,
     log_hub: Option<LogHub>,
+    hook_ingress: http_hooks::HookIngress,
     shutdown: Arc<AtomicBool>,
 }
 
@@ -393,14 +400,20 @@ impl DaemonServer {
         // default; the DACL below narrows local access to SYSTEM and the owner.
         options = options.reclaim_name(false).try_overwrite(false);
         let listener = options.create_sync()?;
+        let hook_ingress = http_hooks::HookIngress::bind(registry.clone()).map_err(IpcError::Io)?;
         Ok(Self {
             listener,
             registry,
             store_writer,
             store_quarantine,
             log_hub,
+            hook_ingress,
             shutdown: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    pub fn hook_endpoint(&self) -> HookEndpoint {
+        self.hook_ingress.endpoint()
     }
 
     pub fn with_registry(name: &str, registry: SessionRegistry) -> Result<Self, IpcError> {
@@ -416,6 +429,7 @@ impl DaemonServer {
         self.listener
             .set_nonblocking(ListenerNonblockingMode::Accept)?;
         let shutdown = self.shutdown.clone();
+        let hook_endpoint = self.hook_endpoint();
         loop {
             if shutdown.load(Ordering::Acquire) || console_shutdown_requested() {
                 break;
@@ -439,11 +453,19 @@ impl DaemonServer {
             let store_quarantine = self.store_quarantine.clone();
             let log_hub = self.log_hub.clone();
             let shutdown = shutdown.clone();
+            let hook_endpoint = hook_endpoint.clone();
             thread::Builder::new()
                 .name("terminalai-daemon-client".into())
                 .spawn(move || {
                     if let Err(error) =
-                        handle_connection(connection, registry, store_quarantine, log_hub, shutdown)
+                        handle_connection(
+                            connection,
+                            registry,
+                            store_quarantine,
+                            log_hub,
+                            shutdown,
+                            hook_endpoint,
+                        )
                     {
                         eprintln!("terminalai-daemon client: {error}");
                     }
@@ -474,6 +496,7 @@ impl DaemonServer {
             self.store_quarantine.clone(),
             self.log_hub.clone(),
             self.shutdown.clone(),
+            self.hook_endpoint(),
         )
     }
 }
@@ -558,6 +581,7 @@ fn handle_connection(
     store_quarantine: Option<String>,
     log_hub: Option<LogHub>,
     shutdown: Arc<AtomicBool>,
+    hook_endpoint: HookEndpoint,
 ) -> Result<(), IpcError> {
     let peer_pid = stream.peer_creds()?.pid();
     tracing::debug!(peer_pid = ?peer_pid, "control connection accepted");
@@ -706,8 +730,12 @@ fn handle_connection(
                     send_response(&outgoing_tx, id, Response::Ok)?;
                 }
                 request => {
-                    let response =
-                        dispatch_with_quarantine(request, &registry, store_quarantine.as_deref());
+                    let response = dispatch_with_endpoint(
+                        request,
+                        &registry,
+                        store_quarantine.as_deref(),
+                        Some(&hook_endpoint),
+                    );
                     send_response(&outgoing_tx, id, response)?;
                 }
             }
@@ -803,13 +831,23 @@ fn drain_log_events(
 
 #[cfg(test)]
 fn dispatch(request: Request, registry: &SessionRegistry) -> Response {
-    dispatch_with_quarantine(request, registry, None)
+    dispatch_with_endpoint(request, registry, None, None)
 }
 
+#[cfg(test)]
 fn dispatch_with_quarantine(
     request: Request,
     registry: &SessionRegistry,
     store_quarantine: Option<&str>,
+) -> Response {
+    dispatch_with_endpoint(request, registry, store_quarantine, None)
+}
+
+fn dispatch_with_endpoint(
+    request: Request,
+    registry: &SessionRegistry,
+    store_quarantine: Option<&str>,
+    hook_endpoint: Option<&HookEndpoint>,
 ) -> Response {
     if registry.is_poisoned() && request_requires_registry(&request) {
         return Response::Error {
@@ -889,6 +927,14 @@ fn dispatch_with_quarantine(
                 },
             }
         }
+        Request::HookEndpoint => match hook_endpoint {
+            Some(endpoint) => Response::HookEndpoint {
+                endpoint: endpoint.clone(),
+            },
+            None => Response::Error {
+                message: "HTTP hook endpoint is unavailable".into(),
+            },
+        },
         Request::Hook { event } => Response::Hook {
             matched: registry.apply_hook(event),
         },
@@ -1017,6 +1063,7 @@ fn request_requires_registry(request: &Request) -> bool {
             | Request::Shutdown
             | Request::Resolve { .. }
             | Request::Preview { .. }
+            | Request::HookEndpoint
     )
 }
 
@@ -1145,6 +1192,16 @@ impl DaemonClient {
             Response::Error { message } => Err(IpcError::Remote(message)),
             other => Err(IpcError::InvalidMessage(format!(
                 "unexpected shutdown response: {other:?}"
+            ))),
+        }
+    }
+
+    pub fn hook_endpoint(&self) -> Result<HookEndpoint, IpcError> {
+        match self.call(Request::HookEndpoint)? {
+            Response::HookEndpoint { endpoint } => Ok(endpoint),
+            Response::Error { message } => Err(IpcError::Remote(message)),
+            other => Err(IpcError::InvalidMessage(format!(
+                "unexpected hook endpoint response: {other:?}"
             ))),
         }
     }
@@ -1461,6 +1518,13 @@ mod tests {
         let server = DaemonServer::bind_named(&name).expect("bind test socket");
         let server_thread = thread::spawn(move || server.serve_one());
         let client = DaemonClient::connect_named(&name).expect("connect test socket");
+        let endpoint = client.hook_endpoint().expect("hook endpoint");
+        assert!(endpoint.base_url.starts_with("http://127.0.0.1:"));
+        assert_eq!(
+            endpoint.host,
+            endpoint.base_url.trim_start_matches("http://")
+        );
+        assert_eq!(endpoint.bearer_token.len(), 64);
         assert!(matches!(client.call(Request::Ping), Ok(Response::Pong)));
         assert!(matches!(client.call(Request::Close), Ok(Response::Ok)));
         drop(client);

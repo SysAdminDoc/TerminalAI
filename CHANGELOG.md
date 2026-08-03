@@ -11,6 +11,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   Rust daemon and formatted by the web renderer. Status diagnostics now carry structured reason
   kinds with arguments, while localized counts and dwell labels use `Intl.PluralRules` and
   `Intl.RelativeTimeFormat` without expanding the compact fleet row.
+- Expanded Claude/Codex hook coverage across prompt, tool failure, permission, subagent,
+  compaction and session-end events. Claude uses a daemon-lifetime bearer-authenticated loopback
+  HTTP endpoint with an exact Host allowlist and Origin rejection; installation falls back to the
+  existing fail-open command adapter when HTTP cannot be configured. Unknown event names remain
+  visible in diagnostics instead of being discarded.
 - `SessionRegistry` now supervises sessions through an object-safe `AgentDomain`/`AgentSession`
   contract. `LocalPtyDomain` keeps the existing ConPTY behavior as the default while a future
   remote relay can supply input, output, resize and lifecycle operations without local handles.

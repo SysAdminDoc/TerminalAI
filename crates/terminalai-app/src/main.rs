@@ -16,10 +16,12 @@ use tauri::{Emitter, Manager, State};
 use terminalai_core::agent::Agent;
 use terminalai_core::launch::LaunchSpec;
 use terminalai_core::{
-    parse_hook, AdmissionSnapshot, LogEntry, RegistryEvent, ReviewItem, Session, SessionId,
-    MAX_LOG_ENTRIES,
+    parse_hook, AdmissionSnapshot, HookTransport, LogEntry, RegistryEvent, ReviewItem, Session,
+    SessionId, MAX_LOG_ENTRIES,
 };
-use terminalai_daemon::{DaemonClient, IpcError, Request, Response, PROTOCOL_VERSION};
+use terminalai_daemon::{
+    DaemonClient, HookEndpoint, IpcError, Request, Response, PROTOCOL_VERSION,
+};
 
 struct AppState {
     client: Mutex<Option<DaemonClient>>,
@@ -457,12 +459,16 @@ fn preflight_hooks() -> PreflightCheck {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let codex_home = std::env::var_os("CODEX_HOME").map(PathBuf::from);
     let executable = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("terminalai"));
+    let endpoint = DaemonClient::connect_with_timeout(PREFLIGHT_DAEMON_TIMEOUT)
+        .ok()
+        .and_then(|client| client.hook_endpoint().ok());
     let mut detected = Vec::new();
     let mut details = Vec::new();
     let mut healthy = true;
     for agent in [Agent::Claude, Agent::Codex] {
         let path = terminalai_core::hook_config_path(agent, &home, codex_home.as_deref());
-        match terminalai_core::hook_status_at(agent, &path, &executable) {
+        let transport = hook_transport(agent, &executable, endpoint.as_ref());
+        match terminalai_core::hook_status_at_with_transport(agent, &path, &transport) {
             Ok(status) => {
                 let state = if status.disabled {
                     "disabled"
@@ -500,12 +506,48 @@ fn install_preflight_hooks() -> Result<(), String> {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let codex_home = std::env::var_os("CODEX_HOME").map(PathBuf::from);
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let endpoint = connect_or_start_daemon()
+        .ok()
+        .and_then(|client| client.hook_endpoint().ok());
     for agent in [Agent::Claude, Agent::Codex] {
         let path = terminalai_core::hook_config_path(agent, &home, codex_home.as_deref());
-        terminalai_core::install_hooks_at(agent, &path, &executable)
-            .map_err(|error| format!("install {} hooks: {error}", agent.command_name()))?;
+        let transport = hook_transport(agent, &executable, endpoint.as_ref());
+        let result = terminalai_core::install_hooks_at_with_transport(agent, &path, &transport);
+        if let Err(error) = result {
+            if matches!(transport, HookTransport::Http { .. }) {
+                terminalai_core::install_hooks_at(agent, &path, &executable).map_err(
+                    |fallback| {
+                        format!(
+                            "install {} hooks ({error}); command fallback also failed: {fallback}",
+                            agent.command_name()
+                        )
+                    },
+                )?;
+            } else {
+                return Err(format!("install {} hooks: {error}", agent.command_name()));
+            }
+        }
     }
     Ok(())
+}
+
+fn hook_transport(
+    agent: Agent,
+    executable: &std::path::Path,
+    endpoint: Option<&HookEndpoint>,
+) -> HookTransport {
+    if agent == Agent::Claude {
+        if let Some(endpoint) = endpoint {
+            return HookTransport::Http {
+                url: endpoint.url_for(agent),
+                host: endpoint.host.clone(),
+                bearer_token: endpoint.bearer_token.clone(),
+            };
+        }
+    }
+    HookTransport::Command {
+        executable: executable.to_path_buf(),
+    }
 }
 
 fn preflight_daemon() -> PreflightCheck {

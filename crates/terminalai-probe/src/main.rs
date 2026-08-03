@@ -17,9 +17,9 @@ use std::{io, io::Read};
 
 use terminalai_core::agent::{self, Agent};
 use terminalai_core::launch::{Effort, LaunchSpec, Permission, ResolvedCommand, Sandbox};
-use terminalai_core::parse_hook;
 use terminalai_core::pty::{self, PtySession};
-use terminalai_daemon::{DaemonClient, Request, Response};
+use terminalai_core::{parse_hook, HookTransport};
+use terminalai_daemon::{DaemonClient, HookEndpoint, Request, Response};
 
 const USAGE: &str = "\
 terminalai-probe — machine-facing checks for TerminalAI
@@ -307,6 +307,14 @@ fn cmd_hooks(args: &[String]) -> i32 {
     let executable = executable
         .or_else(|| std::env::current_exe().ok())
         .unwrap_or_else(|| PathBuf::from("terminalai-probe"));
+    let endpoint = if agent == Agent::Claude {
+        DaemonClient::connect_with_timeout(Duration::from_millis(750))
+            .ok()
+            .and_then(|client| client.hook_endpoint().ok())
+    } else {
+        None
+    };
+    let transport = hook_transport(agent, &executable, endpoint.as_ref());
 
     match operation {
         "preview" => {
@@ -316,14 +324,26 @@ fn cmd_hooks(args: &[String]) -> i32 {
             );
             0
         }
-        "status" => match terminalai_core::hook_status_at(agent, &config, &executable) {
-            Ok(status) => print_json(status),
-            Err(error) => print_error(error),
-        },
-        "install" => match terminalai_core::install_hooks_at(agent, &config, &executable) {
-            Ok(change) => print_json(change),
-            Err(error) => print_error(error),
-        },
+        "status" => {
+            match terminalai_core::hook_status_at_with_transport(agent, &config, &transport) {
+                Ok(status) => print_json(status),
+                Err(error) => print_error(error),
+            }
+        }
+        "install" => {
+            match terminalai_core::install_hooks_at_with_transport(agent, &config, &transport) {
+                Ok(change) => print_json(change),
+                Err(error) if matches!(transport, HookTransport::Http { .. }) => {
+                    match terminalai_core::install_hooks_at(agent, &config, &executable) {
+                        Ok(change) => print_json(change),
+                        Err(fallback) => print_error(format!(
+                            "HTTP hook install failed: {error}; command fallback failed: {fallback}"
+                        )),
+                    }
+                }
+                Err(error) => print_error(error),
+            }
+        }
         "remove" => match terminalai_core::remove_hooks_at(agent, &config, &executable) {
             Ok(change) => print_json(change),
             Err(error) => print_error(error),
@@ -332,6 +352,25 @@ fn cmd_hooks(args: &[String]) -> i32 {
             eprintln!("unknown hooks operation: {other}");
             1
         }
+    }
+}
+
+fn hook_transport(
+    agent: Agent,
+    executable: &std::path::Path,
+    endpoint: Option<&HookEndpoint>,
+) -> HookTransport {
+    if agent == Agent::Claude {
+        if let Some(endpoint) = endpoint {
+            return HookTransport::Http {
+                url: endpoint.url_for(agent),
+                host: endpoint.host.clone(),
+                bearer_token: endpoint.bearer_token.clone(),
+            };
+        }
+    }
+    HookTransport::Command {
+        executable: executable.to_path_buf(),
     }
 }
 

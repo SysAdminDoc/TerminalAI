@@ -111,13 +111,6 @@ researcher continues from R-88.
 
 ### P2
 
-- [ ] R-77 · P2 — Widen hook coverage and ingest over HTTP
-  Why: the supervisor observes a small fraction of the lifecycle both agents emit, and it ingests through `command` hooks, which on Windows cost a process spawn per event — on the platform whose documented weakness is precisely per-spawn console cost.
-  Evidence: Claude Code documents 31 hook events across five handler types, including `type: "http"` with `$VAR`-interpolated headers gated by the `allowedHttpHookUrls` and `httpHookAllowedEnvVars` settings; Codex's `HookEventName` enum carries 11 (`preToolUse, permissionRequest, postToolUse, preCompact, postCompact, sessionStart, sessionEnd, userPromptSubmit, subagentStart, subagentStop, stop`) where the published docs list seven. `crates/terminalai-core/src/hook_config.rs` installs a narrower set.
-  Touches: `crates/terminalai-core/src/hook_config.rs`, `hooks.rs`, `crates/terminalai-daemon/`
-  Acceptance: the installed hook set covers every event that changes a row — session start and end, prompt submit, tool use and failure, permission request and denial, subagent start and stop, compaction, stop; ingest uses a loopback `type: "http"` endpoint carrying a startup-generated bearer token in `headers`, with a literal `Host` allowlist and `Origin` rejection, falling back to `command` hooks where HTTP is unavailable; unknown event names are retained and surfaced rather than dropped.
-  Complexity: M
-
 - [ ] R-78 · P2 — Feature-detect models and reasoning efforts
   Why: the launcher's model and effort lists are compile-time constants against products that change monthly, so the GUI will refuse valid combinations and offer dead ones — and it already disagrees with the published documentation in both directions.
   Evidence: `crates/terminalai-core/src/agent.rs` `suggested_models` and `crates/terminalai-core/src/launch.rs` `supported_efforts` are static. Verified 2026-08-02: `codex debug models` reports `max` as supported only on the gpt-5.6 family (sol, terra, luna) and absent from gpt-5.5/5.4/5.3; the app-server schema types `ReasoningEffort` as a non-empty string with per-model `supportedReasoningEfforts`, while the published config reference omits `max` entirely. Claude exposes `system/init.capabilities[]` for the same purpose, and this machine runs two Claude Code versions simultaneously (2.1.170 on PATH, 2.1.220 in-process), so version comparison is not a usable proxy.

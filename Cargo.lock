@@ -3879,6 +3879,7 @@ name = "terminalai-daemon"
 version = "0.2.0"
 dependencies = [
  "dirs",
+ "getrandom 0.3.4",
  "interprocess",
  "serde",
  "serde_json",

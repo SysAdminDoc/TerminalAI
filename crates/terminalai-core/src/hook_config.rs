@@ -16,17 +16,33 @@ pub const MANAGED_MARKER: &str = "--terminalai-managed";
 
 const CLAUDE_EVENTS: &[&str] = &[
     "SessionStart",
+    "SessionEnd",
+    "UserPromptSubmit",
     "Stop",
+    "StopFailure",
     "Notification",
     "PreToolUse",
+    "PermissionRequest",
+    "PermissionDenied",
     "PostToolUse",
+    "PostToolUseFailure",
+    "PostToolBatch",
+    "SubagentStart",
+    "SubagentStop",
+    "PreCompact",
+    "PostCompact",
 ];
 const CODEX_EVENTS: &[&str] = &[
     "SessionStart",
     "SessionEnd",
+    "UserPromptSubmit",
     "PermissionRequest",
     "PreToolUse",
     "PostToolUse",
+    "PreCompact",
+    "PostCompact",
+    "SubagentStart",
+    "SubagentStop",
     "Stop",
 ];
 
@@ -45,6 +61,26 @@ pub enum HookConfigError {
     },
     #[error("Codex hooks are disabled by the existing features.hooks=false setting")]
     HooksDisabled,
+    #[error("{agent} does not support HTTP hook handlers")]
+    UnsupportedTransport { agent: &'static str },
+}
+
+/// How TerminalAI delivers normalized hook payloads to the daemon.
+///
+/// Claude Code supports HTTP handlers, so a live daemon can avoid a process
+/// spawn for every hook. Codex currently accepts command handlers only; its
+/// callers deliberately use the command variant and retain the existing
+/// fail-open CLI adapter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HookTransport {
+    Command {
+        executable: PathBuf,
+    },
+    Http {
+        url: String,
+        host: String,
+        bearer_token: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -61,6 +97,7 @@ pub struct HookStatus {
     pub stale: bool,
     pub disabled: bool,
     pub fallback_installed: bool,
+    pub http_installed: bool,
 }
 
 pub fn config_path(agent: Agent, home: &Path, codex_home: Option<&Path>) -> PathBuf {
@@ -86,9 +123,13 @@ pub fn preview(agent: Agent, executable: &Path) -> String {
     let command = command_for(agent, executable);
     match agent {
         Agent::Claude => {
+            let handler = claude_handler(&HookTransport::Command {
+                executable: executable.to_path_buf(),
+            })
+            .unwrap_or_else(|_| json!({"type": "command", "command": command, "async": true}));
             let hooks: Map<String, JsonValue> = CLAUDE_EVENTS
                 .iter()
-                .map(|event| ((*event).into(), json!([claude_group(&command)])))
+                .map(|event| ((*event).into(), json!([claude_group(handler.clone())])))
                 .collect();
             serde_json::to_string_pretty(&json!({ "hooks": hooks })).unwrap_or_default()
         }
@@ -105,11 +146,29 @@ pub fn install_at(
     path: &Path,
     executable: &Path,
 ) -> Result<HookChange, HookConfigError> {
+    install_at_with_transport(
+        agent,
+        path,
+        &HookTransport::Command {
+            executable: executable.to_path_buf(),
+        },
+    )
+}
+
+pub fn install_at_with_transport(
+    agent: Agent,
+    path: &Path,
+    transport: &HookTransport,
+) -> Result<HookChange, HookConfigError> {
     let before = read_optional(path)?;
-    let command = command_for(agent, executable);
     let after = match agent {
-        Agent::Claude => install_claude_text(before.as_deref(), &command)?,
-        Agent::Codex => install_codex_text(before.as_deref(), &command)?,
+        Agent::Claude => install_claude_text(before.as_deref(), transport)?,
+        Agent::Codex => {
+            let HookTransport::Command { executable } = transport else {
+                return Err(HookConfigError::UnsupportedTransport { agent: "Codex" });
+            };
+            install_codex_text(before.as_deref(), &command_for(agent, executable))?
+        }
     };
     let changed = write_if_changed(path, before.as_deref(), &after)?;
     Ok(HookChange {
@@ -145,25 +204,55 @@ pub fn status_at(
     path: &Path,
     executable: &Path,
 ) -> Result<HookStatus, HookConfigError> {
-    let command = command_for(agent, executable);
-    let (installed, stale, disabled, fallback_installed) = match read_optional(path)? {
-        None => (false, false, false, false),
-        Some(text) => match agent {
-            Agent::Claude => inspect_claude_text(&text, &command)?,
-            Agent::Codex => inspect_codex_text(&text, &command)?,
+    status_at_with_transport(
+        agent,
+        path,
+        &HookTransport::Command {
+            executable: executable.to_path_buf(),
         },
+    )
+}
+
+pub fn status_at_with_transport(
+    agent: Agent,
+    path: &Path,
+    transport: &HookTransport,
+) -> Result<HookStatus, HookConfigError> {
+    let executable = match transport {
+        HookTransport::Command { executable } => executable,
+        HookTransport::Http { .. } => Path::new("terminalai.exe"),
     };
+    let command = command_for(agent, executable);
+    let (installed, stale, disabled, fallback_installed, http_installed) =
+        match read_optional(path)? {
+            None => (false, false, false, false, false),
+            Some(text) => match agent {
+                Agent::Claude => inspect_claude_text(&text, &command, transport)?,
+                Agent::Codex => {
+                    let HookTransport::Command { .. } = transport else {
+                        return Err(HookConfigError::UnsupportedTransport { agent: "Codex" });
+                    };
+                    let (installed, stale, disabled, fallback) =
+                        inspect_codex_text(&text, &command)?;
+                    (installed, stale, disabled, fallback, false)
+                }
+            },
+        };
     Ok(HookStatus {
         agent,
         path: path.to_path_buf(),
-        installed: installed || fallback_installed,
+        installed: installed || fallback_installed || http_installed,
         stale,
         disabled,
         fallback_installed,
+        http_installed,
     })
 }
 
-fn install_claude_text(text: Option<&str>, command: &str) -> Result<String, HookConfigError> {
+fn install_claude_text(
+    text: Option<&str>,
+    transport: &HookTransport,
+) -> Result<String, HookConfigError> {
     let mut root = match text {
         Some(text) => serde_json::from_str::<JsonValue>(text)?,
         None => json!({}),
@@ -172,33 +261,46 @@ fn install_claude_text(text: Option<&str>, command: &str) -> Result<String, Hook
         agent: "Claude",
         field: "root",
     })?;
-    let hooks = object
-        .entry("hooks")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .ok_or(HookConfigError::InvalidShape {
-            agent: "Claude",
-            field: "hooks",
-        })?;
-    for event in CLAUDE_EVENTS {
-        let groups = hooks
-            .entry(*event)
-            .or_insert_with(|| json!([]))
-            .as_array_mut()
+    let handler = claude_handler(transport)?;
+    {
+        let hooks = object
+            .entry("hooks")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
             .ok_or(HookConfigError::InvalidShape {
                 agent: "Claude",
-                field: "hooks event",
+                field: "hooks",
             })?;
-        remove_claude_groups(groups, Agent::Claude);
-        groups.push(claude_group(command));
+        for event in CLAUDE_EVENTS {
+            let groups = hooks
+                .entry(*event)
+                .or_insert_with(|| json!([]))
+                .as_array_mut()
+                .ok_or(HookConfigError::InvalidShape {
+                    agent: "Claude",
+                    field: "hooks event",
+                })?;
+            remove_claude_groups(groups, Agent::Claude);
+            groups.push(claude_group(handler.clone()));
+        }
     }
+    update_claude_allowlist(object, transport)?;
     Ok(serde_json::to_string_pretty(&root)? + "\n")
 }
 
 fn remove_claude_text(text: &str) -> Result<String, HookConfigError> {
     let mut root: JsonValue = serde_json::from_str(text)?;
     let Some(hooks) = root.get_mut("hooks").and_then(JsonValue::as_object_mut) else {
-        return Ok(text.to_owned());
+        update_claude_allowlist(
+            root.as_object_mut().ok_or(HookConfigError::InvalidShape {
+                agent: "Claude",
+                field: "root",
+            })?,
+            &HookTransport::Command {
+                executable: PathBuf::new(),
+            },
+        )?;
+        return Ok(serde_json::to_string_pretty(&root)? + "\n");
     };
     for event in CLAUDE_EVENTS {
         let Some(groups) = hooks.get_mut(*event).and_then(JsonValue::as_array_mut) else {
@@ -208,6 +310,14 @@ fn remove_claude_text(text: &str) -> Result<String, HookConfigError> {
         if groups.is_empty() {
             hooks.remove(*event);
         }
+    }
+    if let Some(object) = root.as_object_mut() {
+        update_claude_allowlist(
+            object,
+            &HookTransport::Command {
+                executable: PathBuf::new(),
+            },
+        )?;
     }
     Ok(serde_json::to_string_pretty(&root)? + "\n")
 }
@@ -224,26 +334,80 @@ fn remove_claude_groups(groups: &mut Vec<JsonValue>, agent: Agent) -> bool {
         else {
             return true;
         };
-        handlers.retain(|handler| {
-            !handler
-                .get("command")
-                .and_then(JsonValue::as_str)
-                .is_some_and(|command| is_managed_command(command, agent))
-        });
+        handlers.retain(|handler| !is_managed_claude_handler(handler, agent));
         !handlers.is_empty()
     });
     before != groups.len()
 }
 
-fn claude_group(command: &str) -> JsonValue {
+fn claude_group(handler: JsonValue) -> JsonValue {
     json!({
         "matcher": "",
-        "hooks": [{
-            "type": "command",
-            "command": command,
-            "async": true
-        }]
+        "hooks": [handler]
     })
+}
+
+fn claude_handler(transport: &HookTransport) -> Result<JsonValue, HookConfigError> {
+    match transport {
+        HookTransport::Command { executable } => Ok(json!({
+            "type": "command",
+            "command": command_for(Agent::Claude, executable),
+            "async": true
+        })),
+        HookTransport::Http {
+            url, bearer_token, ..
+        } => Ok(json!({
+            "type": "http",
+            "url": url,
+            "timeout": 2,
+            "headers": {
+                "Authorization": format!("Bearer {bearer_token}"),
+                "X-TerminalAI-Managed": MANAGED_MARKER
+            }
+        })),
+    }
+}
+
+fn update_claude_allowlist(
+    object: &mut Map<String, JsonValue>,
+    transport: &HookTransport,
+) -> Result<(), HookConfigError> {
+    let desired = match transport {
+        HookTransport::Http { url, .. } => Some(url.as_str()),
+        HookTransport::Command { .. } => None,
+    };
+    let Some(existing) = object.get("allowedHttpHookUrls") else {
+        if let Some(url) = desired {
+            object.insert("allowedHttpHookUrls".into(), json!([url]));
+        }
+        return Ok(());
+    };
+    let Some(values) = existing.as_array() else {
+        if desired.is_none() {
+            return Ok(());
+        }
+        return Err(HookConfigError::InvalidShape {
+            agent: "Claude",
+            field: "allowedHttpHookUrls",
+        });
+    };
+    let mut urls = Vec::new();
+    for value in values {
+        let Some(value) = value.as_str() else {
+            return Err(HookConfigError::InvalidShape {
+                agent: "Claude",
+                field: "allowedHttpHookUrls entry",
+            });
+        };
+        if !is_terminalai_http_url(value) && !urls.iter().any(|url| url == value) {
+            urls.push(value.to_owned());
+        }
+    }
+    if let Some(url) = desired {
+        urls.push(url.to_owned());
+    }
+    object.insert("allowedHttpHookUrls".into(), json!(urls));
+    Ok(())
 }
 
 fn install_codex_text(text: Option<&str>, command: &str) -> Result<String, HookConfigError> {
@@ -401,28 +565,78 @@ fn codex_hooks_disabled(doc: &Document) -> bool {
         == Some(false)
 }
 
+fn is_managed_claude_handler(handler: &JsonValue, agent: Agent) -> bool {
+    handler
+        .get("command")
+        .and_then(JsonValue::as_str)
+        .is_some_and(|command| is_managed_command(command, agent))
+        || (agent == Agent::Claude
+            && handler.get("type").and_then(JsonValue::as_str) == Some("http")
+            && handler
+                .get("headers")
+                .and_then(JsonValue::as_object)
+                .and_then(|headers| headers.get("X-TerminalAI-Managed"))
+                .and_then(JsonValue::as_str)
+                == Some(MANAGED_MARKER))
+}
+
+fn is_terminalai_http_url(value: &str) -> bool {
+    value.starts_with("http://127.0.0.1:") && value.contains("/hooks/")
+}
+
+fn matches_http_transport(handler: &JsonValue, transport: &HookTransport) -> bool {
+    let HookTransport::Http {
+        url,
+        bearer_token,
+        host,
+    } = transport
+    else {
+        return false;
+    };
+    let Some(handler_url) = handler.get("url").and_then(JsonValue::as_str) else {
+        return false;
+    };
+    let authorization = handler
+        .get("headers")
+        .and_then(JsonValue::as_object)
+        .and_then(|headers| headers.get("Authorization"))
+        .and_then(JsonValue::as_str);
+    let expected_authorization = format!("Bearer {bearer_token}");
+    handler_url == url
+        && url.starts_with(&format!("http://{host}/"))
+        && authorization == Some(expected_authorization.as_str())
+}
+
 fn inspect_claude_text(
     text: &str,
     command: &str,
-) -> Result<(bool, bool, bool, bool), HookConfigError> {
+    transport: &HookTransport,
+) -> Result<(bool, bool, bool, bool, bool), HookConfigError> {
     let root: JsonValue = serde_json::from_str(text)?;
-    let mut current = false;
+    let mut current_command = false;
+    let mut current_http = false;
     let mut stale = false;
     if let Some(hooks) = root.get("hooks").and_then(JsonValue::as_object) {
-        for event in CLAUDE_EVENTS {
-            if let Some(groups) = hooks.get(*event).and_then(JsonValue::as_array) {
-                for group in groups {
-                    if let Some(handlers) = group.get("hooks").and_then(JsonValue::as_array) {
-                        for handler in handlers {
-                            if let Some(value) = handler.get("command").and_then(JsonValue::as_str)
+        for groups in hooks.values().filter_map(JsonValue::as_array) {
+            for group in groups {
+                if let Some(handlers) = group.get("hooks").and_then(JsonValue::as_array) {
+                    for handler in handlers {
+                        if !is_managed_claude_handler(handler, Agent::Claude) {
+                            continue;
+                        }
+                        if let Some(value) = handler.get("command").and_then(JsonValue::as_str) {
+                            if matches!(transport, HookTransport::Command { .. })
+                                && value == command
                             {
-                                if is_managed_command(value, Agent::Claude) {
-                                    if value == command {
-                                        current = true;
-                                    } else {
-                                        stale = true;
-                                    }
-                                }
+                                current_command = true;
+                            } else {
+                                stale = true;
+                            }
+                        } else if handler.get("type").and_then(JsonValue::as_str) == Some("http") {
+                            if matches_http_transport(handler, transport) {
+                                current_http = true;
+                            } else {
+                                stale = true;
                             }
                         }
                     }
@@ -430,7 +644,13 @@ fn inspect_claude_text(
             }
         }
     }
-    Ok((current, stale, false, false))
+    Ok((
+        current_command || current_http,
+        stale,
+        false,
+        false,
+        current_http,
+    ))
 }
 
 fn inspect_codex_text(
@@ -582,6 +802,55 @@ mod tests {
         let removed = fs::read_to_string(&path).expect("read removed");
         assert!(!removed.contains(MANAGED_MARKER));
         assert!(removed.contains("user-hook"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn claude_http_install_covers_lifecycle_and_falls_back_to_command() {
+        let dir = test_dir();
+        let path = dir.join("settings.json");
+        fs::write(
+            &path,
+            r#"{"allowedHttpHookUrls":["http://user.example/hook"]}"#,
+        )
+        .expect("seed settings");
+        let transport = HookTransport::Http {
+            url: "http://127.0.0.1:43123/hooks/claude".into(),
+            host: "127.0.0.1:43123".into(),
+            bearer_token: "token".into(),
+        };
+        install_at_with_transport(Agent::Claude, &path, &transport).expect("install HTTP");
+        let installed = fs::read_to_string(&path).expect("read settings");
+        let root: JsonValue = serde_json::from_str(&installed).expect("settings JSON");
+        for event in CLAUDE_EVENTS {
+            assert_eq!(root["hooks"][*event][0]["hooks"][0]["type"], "http");
+        }
+        assert_eq!(
+            root["hooks"]["PostToolUseFailure"][0]["hooks"][0]["headers"]["Authorization"],
+            "Bearer token"
+        );
+        assert!(root["allowedHttpHookUrls"]
+            .as_array()
+            .expect("allowlist")
+            .iter()
+            .any(|value| value == "http://user.example/hook"));
+        assert!(root["allowedHttpHookUrls"]
+            .as_array()
+            .expect("allowlist")
+            .iter()
+            .any(|value| value == "http://127.0.0.1:43123/hooks/claude"));
+        let status = status_at_with_transport(Agent::Claude, &path, &transport).expect("status");
+        assert!(status.installed);
+        assert!(status.http_installed);
+        assert!(!status.stale);
+
+        let executable = Path::new(r"C:\\Program Files\\TerminalAI\\terminalai.exe");
+        install_at(Agent::Claude, &path, executable).expect("command fallback");
+        let fallback = fs::read_to_string(&path).expect("read fallback settings");
+        assert!(!fallback.contains("\"type\": \"http\""));
+        assert!(!fallback.contains("127.0.0.1:43123"));
+        assert!(fallback.contains(MANAGED_MARKER));
+        assert!(fallback.contains("user.example"));
         let _ = fs::remove_dir_all(dir);
     }
 

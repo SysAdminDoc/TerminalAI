@@ -50,8 +50,10 @@ pub use external::{claude_sessions, ExternalSession, ExternalState};
 pub use grid::{TerminalGrid, TerminalGridSnapshot, DEFAULT_GRID_COLS, DEFAULT_GRID_ROWS};
 pub use hook_config::{
     command_for as hook_command, config_path as hook_config_path, install_at as install_hooks_at,
-    preview as hook_config_preview, remove_at as remove_hooks_at, status_at as hook_status_at,
-    HookChange, HookConfigError, HookStatus, MANAGED_MARKER,
+    install_at_with_transport as install_hooks_at_with_transport,
+    preview as hook_config_preview, remove_at as remove_hooks_at,
+    status_at as hook_status_at, status_at_with_transport as hook_status_at_with_transport,
+    HookChange, HookConfigError, HookStatus, HookTransport, MANAGED_MARKER,
 };
 pub use hooks::{parse_hook, HookEvent, HookNotification, HookParseError, HookSignal};
 pub use launch::{Effort, LaunchError, LaunchSpec, Permission, ResolvedCommand, Resume, Sandbox};

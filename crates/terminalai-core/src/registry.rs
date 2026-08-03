@@ -823,6 +823,14 @@ impl SessionRegistry {
     /// hooks from agents launched outside TerminalAI must not fabricate rows or
     /// delete state.
     pub fn apply_hook(&self, event: HookEvent) -> bool {
+        if let HookSignal::Unknown { event: hook_name } = &event.signal {
+            tracing::warn!(
+                agent = ?event.agent,
+                session_id = ?event.session_id,
+                hook_event = %hook_name,
+                "unknown agent hook event observed"
+            );
+        }
         self.apply_hook_from(event, StatusSource::Hook)
     }
 
@@ -924,11 +932,24 @@ impl SessionRegistry {
                         entry.session.tool_progress = None;
                     }
                 }
-                HookSignal::Stop => entry.session.set_status_from(SessionStatus::Idle, source),
-                HookSignal::PreToolUse => entry
+                HookSignal::SessionEnd | HookSignal::Stop | HookSignal::StopFailure => {
+                    entry.session.set_status_from(SessionStatus::Idle, source)
+                }
+                HookSignal::UserPromptSubmit
+                | HookSignal::PreToolUse
+                | HookSignal::SubagentStart => entry
                     .session
                     .set_status_from(SessionStatus::Working, source),
-                HookSignal::PostToolUse => entry
+                HookSignal::PostToolUse
+                | HookSignal::PostToolUseFailure
+                | HookSignal::SubagentStop
+                | HookSignal::PostCompact => entry
+                    .session
+                    .set_status_from(SessionStatus::Thinking, source),
+                HookSignal::PermissionRequest | HookSignal::PermissionDenied => entry
+                    .session
+                    .set_status_from(SessionStatus::NeedsApproval, source),
+                HookSignal::PreCompact => entry
                     .session
                     .set_status_from(SessionStatus::Thinking, source),
                 HookSignal::Notification { notification } => match notification {
@@ -940,6 +961,7 @@ impl SessionRegistry {
                         .set_status_from(SessionStatus::AwaitingInput, source),
                     HookNotification::Other => {}
                 },
+                HookSignal::Unknown { .. } => {}
             }
             let session = entry.session.clone();
             let notifications = state.notifications.observe(
