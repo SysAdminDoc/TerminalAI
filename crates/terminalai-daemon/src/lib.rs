@@ -494,6 +494,11 @@ fn dispatch_with_quarantine(
     registry: &SessionRegistry,
     store_quarantine: Option<&str>,
 ) -> Response {
+    if registry.is_poisoned() && request_requires_registry(&request) {
+        return Response::Error {
+            message: "registry lock is poisoned; stateful request refused".into(),
+        };
+    }
     match request {
         Request::Hello { .. } => Response::Error {
             message: "Hello was already completed".into(),
@@ -666,6 +671,18 @@ fn dispatch_with_quarantine(
             },
         },
     }
+}
+
+fn request_requires_registry(request: &Request) -> bool {
+    !matches!(
+        request,
+        Request::Hello { .. }
+            | Request::Subscribe
+            | Request::Ping
+            | Request::Close
+            | Request::Resolve { .. }
+            | Request::Preview { .. }
+    )
 }
 
 fn resolve_registry_error(error: terminalai_core::RegistryError) -> String {

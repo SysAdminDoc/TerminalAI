@@ -59,6 +59,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Background grids now honor DECSTBM scroll margins, saved-line erase, terminal resize, custom tab
   stops, automatic wrapping, and Unicode wide-character cell widths, with recorded CLI reference
   streams and arbitrary-byte parser coverage.
+- A poisoned registry lock is now recovered safely; the daemon keeps serving health and metadata
+  requests while returning an explicit state-unavailable error for fleet mutations and snapshots.
 - R-16 adds lifecycle-aware attention notifications with stable dedup keys, repository grouping,
   automatic retraction on progress, and startup/long-tool grace suppression. The shell consumes
   raised notifications as deduplicated, click-to-focus in-app alerts.

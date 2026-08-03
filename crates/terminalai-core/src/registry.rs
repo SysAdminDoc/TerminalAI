@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
@@ -164,6 +164,23 @@ struct Inner {
     state: Mutex<State>,
 }
 
+impl Inner {
+    fn is_poisoned(&self) -> bool {
+        self.state.is_poisoned()
+    }
+}
+
+/// A panic while holding the registry lock must not turn the daemon into a
+/// second, silent failure. Recover the guard so callers can inspect or shut
+/// down the fleet, while the daemon checks [`SessionRegistry::is_poisoned`]
+/// and returns an explicit error for stateful requests.
+fn lock_state(inner: &Inner) -> MutexGuard<'_, State> {
+    inner
+        .state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Owns all sessions and publishes changes without requiring a UI toolkit.
 #[derive(Clone)]
 pub struct SessionRegistry {
@@ -177,6 +194,10 @@ impl Default for SessionRegistry {
 }
 
 impl SessionRegistry {
+    pub fn is_poisoned(&self) -> bool {
+        self.inner.is_poisoned()
+    }
+
     pub fn new() -> Self {
         Self::with_admission(AdmissionConfig::default())
     }
@@ -210,7 +231,7 @@ impl SessionRegistry {
         admission: AdmissionConfig,
     ) -> Self {
         let registry = Self::with_admission(admission);
-        let mut state = registry.inner.state.lock().expect("registry poisoned");
+        let mut state = lock_state(&registry.inner);
         let archives = snapshot.archives;
         for archive in &archives {
             state.next_id = state.next_id.max(next_sequence(&archive.id));
@@ -257,7 +278,7 @@ impl SessionRegistry {
     }
 
     pub fn admission_snapshot(&self) -> AdmissionSnapshot {
-        let state = self.inner.state.lock().expect("registry poisoned");
+        let state = lock_state(&self.inner);
         AdmissionSnapshot {
             max_live_sessions: state.admission.max_live_sessions,
             live_sessions: admitted_count(&state),
@@ -271,7 +292,7 @@ impl SessionRegistry {
     }
 
     pub fn is_queued(&self, id: &SessionId) -> Result<bool, RegistryError> {
-        let state = self.inner.state.lock().expect("registry poisoned");
+        let state = lock_state(&self.inner);
         state
             .entries
             .get(id)
@@ -282,7 +303,7 @@ impl SessionRegistry {
     /// Capture only serializable state; live PTY handles and parsed grids are
     /// intentionally reconstructed on restore.
     pub fn store_snapshot(&self) -> SessionStoreSnapshot {
-        let state = self.inner.state.lock().expect("registry poisoned");
+        let state = lock_state(&self.inner);
         SessionStoreSnapshot {
             schema_version: crate::store::SESSION_STORE_SCHEMA_VERSION,
             sessions: state
@@ -302,18 +323,13 @@ impl SessionRegistry {
     /// Subscribe to pushed changes. Closed receivers are removed automatically.
     pub fn subscribe(&self) -> Receiver<RegistryEvent> {
         let (sender, receiver) = mpsc::channel();
-        self.inner
-            .state
-            .lock()
-            .expect("registry poisoned")
-            .subscribers
-            .push(sender);
+        lock_state(&self.inner).subscribers.push(sender);
         receiver
     }
 
     /// Current rows, sorted with attention first and longest dwell time next.
     pub fn snapshot(&self) -> Vec<Session> {
-        let state = self.inner.state.lock().expect("registry poisoned");
+        let state = lock_state(&self.inner);
         let mut sessions: Vec<_> = state
             .entries
             .values()
@@ -327,7 +343,7 @@ impl SessionRegistry {
     /// registry lock while Git inspects each session directory.
     pub fn review_snapshot(&self) -> Vec<ReviewItem> {
         let sessions: Vec<_> = {
-            let state = self.inner.state.lock().expect("registry poisoned");
+            let state = lock_state(&self.inner);
             state
                 .entries
                 .values()
@@ -349,12 +365,7 @@ impl SessionRegistry {
     }
 
     pub fn focused(&self) -> Option<SessionId> {
-        self.inner
-            .state
-            .lock()
-            .expect("registry poisoned")
-            .focused
-            .clone()
+        lock_state(&self.inner).focused.clone()
     }
 
     /// Spawn a session and immediately make it visible to subscribers.
@@ -369,18 +380,13 @@ impl SessionRegistry {
                 binary: binary.agent.command_name(),
             });
         }
-        let admission = self
-            .inner
-            .state
-            .lock()
-            .expect("registry poisoned")
-            .admission;
+        let admission = lock_state(&self.inner).admission;
         if spec.agent == crate::agent::Agent::Claude && spec.max_budget_usd.is_none() {
             spec.max_budget_usd = admission.default_budget_usd;
         }
         let command = spec.resolve(&binary)?;
         let (id, queued) = {
-            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let mut state = lock_state(&self.inner);
             let id = SessionId::new(state.next_id);
             state.next_id = state.next_id.saturating_add(1);
             let queued = admitted_count(&state) >= state.admission.max_live_sessions;
@@ -438,7 +444,7 @@ impl SessionRegistry {
     /// Automatic restart never calls this path.
     pub fn revive(&self, id: &SessionId) -> Result<SessionId, RegistryError> {
         let (command, generation, queued) = {
-            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let mut state = lock_state(&self.inner);
             let admission_full = admitted_count(&state) >= state.admission.max_live_sessions;
             let entry = state
                 .entries
@@ -481,15 +487,14 @@ impl SessionRegistry {
         }
 
         if let Err(error) = self.start_entry(id, command, generation) {
-            if let Ok(mut state) = self.inner.state.lock() {
-                if let Some(entry) = state.entries.get_mut(id) {
-                    if entry.generation == generation {
-                        entry.session.mark_resurrectable_at_from(
-                            None,
-                            SystemTime::now(),
-                            StatusSource::Manual,
-                        );
-                    }
+            let mut state = lock_state(&self.inner);
+            if let Some(entry) = state.entries.get_mut(id) {
+                if entry.generation == generation {
+                    entry.session.mark_resurrectable_at_from(
+                        None,
+                        SystemTime::now(),
+                        StatusSource::Manual,
+                    );
                 }
             }
             self.emit_session(id);
@@ -502,7 +507,7 @@ impl SessionRegistry {
     /// layout, cwd and exact command in the durable archive.
     pub fn archive(&self, id: &SessionId) -> Result<ArchivedSession, RegistryError> {
         let archived = {
-            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let mut state = lock_state(&self.inner);
             let Some(entry) = state.entries.get(id) else {
                 return Err(RegistryError::Missing(id.clone()));
             };
@@ -527,7 +532,7 @@ impl SessionRegistry {
     pub fn resize(&self, id: &SessionId, size: PtySize) -> Result<(), RegistryError> {
         let pty = self.pty(id)?;
         pty.resize(size).map_err(RegistryError::from)?;
-        let mut state = self.inner.state.lock().expect("registry poisoned");
+        let mut state = lock_state(&self.inner);
         let entry = state
             .entries
             .get_mut(id)
@@ -538,7 +543,7 @@ impl SessionRegistry {
 
     pub fn kill(&self, id: &SessionId) -> Result<(), RegistryError> {
         let (pty, generation) = {
-            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let mut state = lock_state(&self.inner);
             let entry = state
                 .entries
                 .get_mut(id)
@@ -584,10 +589,9 @@ impl SessionRegistry {
             (pty, entry.generation)
         };
         if let Err(error) = pty.kill() {
-            if let Ok(mut state) = self.inner.state.lock() {
-                if let Some(entry) = state.entries.get_mut(id) {
-                    entry.stop_requested = false;
-                }
+            let mut state = lock_state(&self.inner);
+            if let Some(entry) = state.entries.get_mut(id) {
+                entry.stop_requested = false;
             }
             return Err(error.into());
         }
@@ -616,7 +620,7 @@ impl SessionRegistry {
 
     fn apply_hook_from(&self, event: HookEvent, source: StatusSource) -> bool {
         let id = {
-            let state = self.inner.state.lock().expect("registry poisoned");
+            let state = lock_state(&self.inner);
             event
                 .session_id
                 .as_deref()
@@ -647,7 +651,7 @@ impl SessionRegistry {
         let Some(id) = id else { return false };
 
         let (session, notification) = {
-            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let mut state = lock_state(&self.inner);
             let Some(entry) = state.entries.get_mut(&id) else {
                 return false;
             };
@@ -727,7 +731,7 @@ impl SessionRegistry {
     }
 
     fn has_native_session(&self, agent: crate::agent::Agent, native_id: &str) -> bool {
-        let state = self.inner.state.lock().expect("registry poisoned");
+        let state = lock_state(&self.inner);
         state.entries.values().any(|entry| {
             entry.session.agent == agent && entry.session.resume_id.as_deref() == Some(native_id)
         })
@@ -738,7 +742,7 @@ impl SessionRegistry {
             self.require(id)?;
         }
         {
-            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let mut state = lock_state(&self.inner);
             state.focused = id.clone();
             if let Some(id) = &id {
                 if let Some(entry) = state.entries.get_mut(id) {
@@ -754,7 +758,7 @@ impl SessionRegistry {
 
     pub fn toggle_pin(&self, id: &SessionId) -> Result<bool, RegistryError> {
         let pinned = {
-            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let mut state = lock_state(&self.inner);
             let currently_pinned = state
                 .entries
                 .get(id)
@@ -780,7 +784,7 @@ impl SessionRegistry {
     }
 
     pub fn scrollback(&self, id: &SessionId) -> Result<Vec<u8>, RegistryError> {
-        let state = self.inner.state.lock().expect("registry poisoned");
+        let state = lock_state(&self.inner);
         state
             .entries
             .get(id)
@@ -792,7 +796,7 @@ impl SessionRegistry {
     /// The focused browser renderer does not need this path: it resets once and
     /// replays the raw bounded ring returned by [`Self::scrollback`].
     pub fn grid_snapshot(&self, id: &SessionId) -> Result<TerminalGridSnapshot, RegistryError> {
-        let state = self.inner.state.lock().expect("registry poisoned");
+        let state = lock_state(&self.inner);
         state
             .entries
             .get(id)
@@ -801,7 +805,7 @@ impl SessionRegistry {
     }
 
     pub fn spec(&self, id: &SessionId) -> Result<LaunchSpec, RegistryError> {
-        let state = self.inner.state.lock().expect("registry poisoned");
+        let state = lock_state(&self.inner);
         state
             .entries
             .get(id)
@@ -811,7 +815,7 @@ impl SessionRegistry {
 
     pub fn shutdown(&self) {
         let sessions: Vec<_> = {
-            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let mut state = lock_state(&self.inner);
             state
                 .entries
                 .values_mut()
@@ -841,7 +845,7 @@ impl SessionRegistry {
     }
 
     fn pty(&self, id: &SessionId) -> Result<Arc<PtySession>, RegistryError> {
-        let state = self.inner.state.lock().expect("registry poisoned");
+        let state = lock_state(&self.inner);
         state
             .entries
             .get(id)
@@ -850,7 +854,7 @@ impl SessionRegistry {
     }
 
     fn require(&self, id: &SessionId) -> Result<(), RegistryError> {
-        let state = self.inner.state.lock().expect("registry poisoned");
+        let state = lock_state(&self.inner);
         if state.entries.contains_key(id) {
             Ok(())
         } else {
@@ -860,7 +864,7 @@ impl SessionRegistry {
 
     fn update(&self, id: &SessionId, f: impl FnOnce(&mut Session)) -> Result<(), RegistryError> {
         {
-            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let mut state = lock_state(&self.inner);
             let entry = state
                 .entries
                 .get_mut(id)
@@ -895,7 +899,7 @@ impl SessionRegistry {
 
     fn emit_session(&self, id: &SessionId) {
         let session = {
-            let state = self.inner.state.lock().expect("registry poisoned");
+            let state = lock_state(&self.inner);
             state.entries.get(id).map(|entry| entry.session.clone())
         };
         if let Some(session) = session {
@@ -926,7 +930,7 @@ impl SessionRegistry {
             }
         };
         let accepted = {
-            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let mut state = lock_state(&self.inner);
             match state.entries.get_mut(id) {
                 Some(entry)
                     if entry.generation == generation
@@ -956,7 +960,7 @@ impl SessionRegistry {
         &self,
         id: &SessionId,
     ) -> Result<(std::path::PathBuf, EnvironmentSpec, Vec<u16>), RegistryError> {
-        let state = self.inner.state.lock().expect("registry poisoned");
+        let state = lock_state(&self.inner);
         let entry = state
             .entries
             .get(id)
@@ -971,7 +975,7 @@ impl SessionRegistry {
     fn drain_queue(&self) {
         loop {
             let (id, command, generation) = {
-                let mut state = self.inner.state.lock().expect("registry poisoned");
+                let mut state = lock_state(&self.inner);
                 if admitted_count(&state) >= state.admission.max_live_sessions {
                     return;
                 }
@@ -994,7 +998,7 @@ impl SessionRegistry {
             self.emit_session(&id);
             if self.start_entry(&id, command, generation).is_err() {
                 let session = {
-                    let mut state = self.inner.state.lock().expect("registry poisoned");
+                    let mut state = lock_state(&self.inner);
                     let Some(entry) = state.entries.get_mut(&id) else {
                         continue;
                     };
@@ -1014,7 +1018,7 @@ impl SessionRegistry {
     }
 
     fn emit(&self, event: RegistryEvent) {
-        let mut state = self.inner.state.lock().expect("registry poisoned");
+        let mut state = lock_state(&self.inner);
         state
             .subscribers
             .retain(|subscriber| subscriber.send(event.clone()).is_ok());
@@ -1022,7 +1026,7 @@ impl SessionRegistry {
 
     fn remove_entry(&self, id: &SessionId) {
         let removed = {
-            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let mut state = lock_state(&self.inner);
             if state.focused.as_ref() == Some(id) {
                 state.focused = None;
             }
@@ -1035,7 +1039,7 @@ impl SessionRegistry {
 
     fn mark_process_exit(&self, id: &SessionId, generation: u64, exit_code: Option<u32>) {
         let (restart, session, notification, teardown) = {
-            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let mut state = lock_state(&self.inner);
             let Some(entry) = state.entries.get_mut(id) else {
                 return;
             };
@@ -1093,7 +1097,7 @@ impl SessionRegistry {
 
     fn mark_process_unknown(&self, id: &SessionId, generation: u64) {
         let session = {
-            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let mut state = lock_state(&self.inner);
             let Some(entry) = state.entries.get_mut(id) else {
                 return;
             };
@@ -1121,7 +1125,7 @@ impl SessionRegistry {
 
     fn restart(&self, id: SessionId, pending_generation: u64) {
         let (command, generation) = {
-            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let mut state = lock_state(&self.inner);
             let admission_full = admitted_count(&state) >= state.admission.max_live_sessions;
             let Some(entry) = state.entries.get_mut(&id) else {
                 return;
@@ -1151,7 +1155,7 @@ impl SessionRegistry {
 
     fn restart_spawn_failed(&self, id: &SessionId, generation: u64) {
         let restart = {
-            let mut state = self.inner.state.lock().expect("registry poisoned");
+            let mut state = lock_state(&self.inner);
             let Some(entry) = state.entries.get_mut(id) else {
                 return;
             };
@@ -1198,7 +1202,7 @@ impl SessionRegistry {
 
 fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u8]) {
     let (send_output, session, notification) = {
-        let mut state = inner.state.lock().expect("registry poisoned");
+        let mut state = lock_state(inner);
         let focused = state.focused.as_ref() == Some(id);
         let Some(entry) = state.entries.get_mut(id) else {
             return;
@@ -1245,7 +1249,7 @@ fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u
 }
 
 fn emit_inner(inner: &Arc<Inner>, event: RegistryEvent) {
-    let mut state = inner.state.lock().expect("registry poisoned");
+    let mut state = lock_state(inner);
     state
         .subscribers
         .retain(|subscriber| subscriber.send(event.clone()).is_ok());
@@ -1435,30 +1439,24 @@ mod tests {
         active.status = SessionStatus::Idle;
         active.phase = SessionPhase::Idle;
         active.health = crate::session::SessionHealth::Degraded;
-        registry
-            .inner
-            .state
-            .lock()
-            .expect("registry poisoned")
-            .entries
-            .insert(
-                active_id.clone(),
-                Entry {
-                    session: active,
-                    spec: spec.clone(),
-                    command: ResolvedCommand {
-                        program: PathBuf::from("active-agent"),
-                        args: Vec::new(),
-                        cwd: cwd.clone(),
-                    },
-                    pty: None,
-                    scrollback: RingBuffer::default(),
-                    grid: TerminalGrid::default(),
-                    generation: 1,
-                    stop_requested: false,
-                    teardown_done: true,
+        lock_state(&registry.inner).entries.insert(
+            active_id.clone(),
+            Entry {
+                session: active,
+                spec: spec.clone(),
+                command: ResolvedCommand {
+                    program: PathBuf::from("active-agent"),
+                    args: Vec::new(),
+                    cwd: cwd.clone(),
                 },
-            );
+                pty: None,
+                scrollback: RingBuffer::default(),
+                grid: TerminalGrid::default(),
+                generation: 1,
+                stop_requested: false,
+                teardown_done: true,
+            },
+        );
 
         let queued_id = registry
             .launch(
@@ -1476,24 +1474,13 @@ mod tests {
         assert_eq!(snapshot.live_sessions, 1);
         assert_eq!(snapshot.queued_sessions, 1);
         assert_eq!(
-            registry
-                .inner
-                .state
-                .lock()
-                .expect("registry poisoned")
-                .entries[&queued_id]
+            lock_state(&registry.inner).entries[&queued_id]
                 .spec
                 .max_budget_usd,
             Some(4.5)
         );
 
-        registry
-            .inner
-            .state
-            .lock()
-            .expect("registry poisoned")
-            .entries
-            .remove(&active_id);
+        lock_state(&registry.inner).entries.remove(&active_id);
         registry.drain_queue();
         assert_eq!(
             registry.snapshot()[0].status,
@@ -1512,30 +1499,24 @@ mod tests {
         let mut session = Session::new(id.clone(), &spec);
         session.status = SessionStatus::Working;
         session.phase = SessionPhase::Working;
-        registry
-            .inner
-            .state
-            .lock()
-            .expect("registry poisoned")
-            .entries
-            .insert(
-                id.clone(),
-                Entry {
-                    session,
-                    spec,
-                    command: ResolvedCommand {
-                        program: PathBuf::from("test-agent"),
-                        args: Vec::new(),
-                        cwd,
-                    },
-                    pty: None,
-                    scrollback: RingBuffer::default(),
-                    grid: TerminalGrid::default(),
-                    generation: 1,
-                    stop_requested: false,
-                    teardown_done: true,
+        lock_state(&registry.inner).entries.insert(
+            id.clone(),
+            Entry {
+                session,
+                spec,
+                command: ResolvedCommand {
+                    program: PathBuf::from("test-agent"),
+                    args: Vec::new(),
+                    cwd,
                 },
-            );
+                pty: None,
+                scrollback: RingBuffer::default(),
+                grid: TerminalGrid::default(),
+                generation: 1,
+                stop_requested: false,
+                teardown_done: true,
+            },
+        );
 
         let events = registry.subscribe();
         registry.mark_process_unknown(&id, 1);
@@ -1559,30 +1540,24 @@ mod tests {
         let spec = spec_for(Agent::Claude, &cwd);
         let id = SessionId::new(1);
         let session = Session::new(id.clone(), &spec);
-        registry
-            .inner
-            .state
-            .lock()
-            .expect("registry poisoned")
-            .entries
-            .insert(
-                id.clone(),
-                Entry {
-                    session,
-                    command: ResolvedCommand {
-                        program: PathBuf::from("test-agent"),
-                        args: Vec::new(),
-                        cwd: cwd.clone(),
-                    },
-                    spec,
-                    pty: None,
-                    scrollback: RingBuffer::default(),
-                    grid: TerminalGrid::default(),
-                    generation: 1,
-                    stop_requested: false,
-                    teardown_done: true,
+        lock_state(&registry.inner).entries.insert(
+            id.clone(),
+            Entry {
+                session,
+                command: ResolvedCommand {
+                    program: PathBuf::from("test-agent"),
+                    args: Vec::new(),
+                    cwd: cwd.clone(),
                 },
-            );
+                spec,
+                pty: None,
+                scrollback: RingBuffer::default(),
+                grid: TerminalGrid::default(),
+                generation: 1,
+                stop_requested: false,
+                teardown_done: true,
+            },
+        );
 
         let events = registry.subscribe();
         handle_output(&registry.inner, &id, 1, b"hello\x1b[2;1Hworld");
@@ -1657,30 +1632,24 @@ mod tests {
         let spec = spec_for(Agent::Claude, &cwd);
         let id = SessionId::new(1);
         let session = Session::new(id.clone(), &spec);
-        registry
-            .inner
-            .state
-            .lock()
-            .expect("registry poisoned")
-            .entries
-            .insert(
-                id.clone(),
-                Entry {
-                    session,
-                    command: ResolvedCommand {
-                        program: PathBuf::from("claude.exe"),
-                        args: vec!["--resume".into(), "native-1".into()],
-                        cwd: cwd.clone(),
-                    },
-                    spec,
-                    pty: None,
-                    scrollback: RingBuffer::default(),
-                    grid: TerminalGrid::default(),
-                    generation: 1,
-                    stop_requested: false,
-                    teardown_done: true,
+        lock_state(&registry.inner).entries.insert(
+            id.clone(),
+            Entry {
+                session,
+                command: ResolvedCommand {
+                    program: PathBuf::from("claude.exe"),
+                    args: vec!["--resume".into(), "native-1".into()],
+                    cwd: cwd.clone(),
                 },
-            );
+                spec,
+                pty: None,
+                scrollback: RingBuffer::default(),
+                grid: TerminalGrid::default(),
+                generation: 1,
+                stop_requested: false,
+                teardown_done: true,
+            },
+        );
 
         let archive = registry.archive(&id).expect("archive");
         assert_eq!(archive.id, id);
@@ -1694,7 +1663,7 @@ mod tests {
     #[test]
     fn snapshots_are_sorted_by_attention() {
         let registry = SessionRegistry::new();
-        let mut state = registry.inner.state.lock().expect("registry poisoned");
+        let mut state = lock_state(&registry.inner);
         let cwd = Path::new(".").to_path_buf();
         for (id, status) in [
             ("s0001", SessionStatus::Idle),
@@ -1748,30 +1717,24 @@ mod tests {
         let spec = spec_for(Agent::Claude, &cwd);
         let id = SessionId::new(1);
         let session = Session::new(id.clone(), &spec);
-        registry
-            .inner
-            .state
-            .lock()
-            .expect("registry poisoned")
-            .entries
-            .insert(
-                id.clone(),
-                Entry {
-                    session,
-                    command: ResolvedCommand {
-                        program: PathBuf::from("test-agent"),
-                        args: Vec::new(),
-                        cwd: cwd.clone(),
-                    },
-                    spec,
-                    pty: None,
-                    scrollback: RingBuffer::default(),
-                    grid: TerminalGrid::default(),
-                    generation: 1,
-                    stop_requested: false,
-                    teardown_done: true,
+        lock_state(&registry.inner).entries.insert(
+            id.clone(),
+            Entry {
+                session,
+                command: ResolvedCommand {
+                    program: PathBuf::from("test-agent"),
+                    args: Vec::new(),
+                    cwd: cwd.clone(),
                 },
-            );
+                spec,
+                pty: None,
+                scrollback: RingBuffer::default(),
+                grid: TerminalGrid::default(),
+                generation: 1,
+                stop_requested: false,
+                teardown_done: true,
+            },
+        );
 
         assert!(registry.apply_hook(HookEvent {
             agent: Agent::Claude,
@@ -1810,30 +1773,24 @@ mod tests {
         let mut session = Session::new(id.clone(), &spec);
         session.status = SessionStatus::Idle;
         session.state_since = std::time::SystemTime::UNIX_EPOCH;
-        registry
-            .inner
-            .state
-            .lock()
-            .expect("registry poisoned")
-            .entries
-            .insert(
-                id.clone(),
-                Entry {
-                    session,
-                    command: ResolvedCommand {
-                        program: PathBuf::from("test-agent"),
-                        args: Vec::new(),
-                        cwd: cwd.clone(),
-                    },
-                    spec,
-                    pty: None,
-                    scrollback: RingBuffer::default(),
-                    grid: TerminalGrid::default(),
-                    generation: 1,
-                    stop_requested: false,
-                    teardown_done: true,
+        lock_state(&registry.inner).entries.insert(
+            id.clone(),
+            Entry {
+                session,
+                command: ResolvedCommand {
+                    program: PathBuf::from("test-agent"),
+                    args: Vec::new(),
+                    cwd: cwd.clone(),
                 },
-            );
+                spec,
+                pty: None,
+                scrollback: RingBuffer::default(),
+                grid: TerminalGrid::default(),
+                generation: 1,
+                stop_requested: false,
+                teardown_done: true,
+            },
+        );
         let events = registry.subscribe();
         let attention = HookEvent {
             agent: Agent::Claude,
@@ -1891,30 +1848,24 @@ mod tests {
         let id = SessionId::new(1);
         let mut session = Session::new(id.clone(), &spec);
         session.resume_id = Some("thread-1".into());
-        registry
-            .inner
-            .state
-            .lock()
-            .expect("registry poisoned")
-            .entries
-            .insert(
-                id.clone(),
-                Entry {
-                    session,
-                    command: ResolvedCommand {
-                        program: PathBuf::from("test-agent"),
-                        args: Vec::new(),
-                        cwd: cwd.clone(),
-                    },
-                    spec,
-                    pty: None,
-                    scrollback: RingBuffer::default(),
-                    grid: TerminalGrid::default(),
-                    generation: 1,
-                    stop_requested: false,
-                    teardown_done: true,
+        lock_state(&registry.inner).entries.insert(
+            id.clone(),
+            Entry {
+                session,
+                command: ResolvedCommand {
+                    program: PathBuf::from("test-agent"),
+                    args: Vec::new(),
+                    cwd: cwd.clone(),
                 },
-            );
+                spec,
+                pty: None,
+                scrollback: RingBuffer::default(),
+                grid: TerminalGrid::default(),
+                generation: 1,
+                stop_requested: false,
+                teardown_done: true,
+            },
+        );
         let events = registry.subscribe();
 
         assert!(registry.apply_agent_event(AgentEvent::AppServer(
@@ -2041,5 +1992,23 @@ mod tests {
         assert!(saw_backoff, "unexpected supervision state: {session:?}");
         assert!(session.restarts >= 2, "restart did not occur: {session:?}");
         registry.shutdown();
+    }
+
+    #[test]
+    fn poisoned_state_lock_is_recovered_without_panicking() {
+        let registry = SessionRegistry::new();
+        let poisoned = registry.clone();
+        std::thread::spawn(move || {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _state = lock_state(&poisoned.inner);
+                panic!("poison registry test lock");
+            }));
+        })
+        .join()
+        .expect("poisoning thread");
+
+        assert!(registry.is_poisoned());
+        assert!(registry.snapshot().is_empty());
+        assert_eq!(registry.admission_snapshot().live_sessions, 0);
     }
 }
