@@ -3,6 +3,21 @@
 All notable changes to TerminalAI are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `terminalai-probe mcp` exposes the fleet to an MCP client over stdio. Read tools — list sessions
+  (both supervised and external), read one session's status, read the tail of its terminal output,
+  read fleet cost — are ungated. Mutating tools require *both* an out-of-band write token and a
+  session opted in when the server starts, are not advertised at all unless enabled, and every
+  attempt is logged whether it was allowed or refused. Session transcripts are never exposed and
+  the session summary is a whitelist, so a field added to `Session` later cannot leak through a
+  tool that was reviewed once. Tool metadata is compile-time constant — asserted by comparing the
+  advertised tools across two different fleets — because tool poisoning is only possible when
+  metadata comes from somewhere mutable. Terminal output is stripped of escape sequences before it
+  leaves the process.
+
 ## [0.3.0] — 2026-08-03
 
 ### Added

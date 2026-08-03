@@ -24,6 +24,7 @@ pub mod i18n;
 pub mod land;
 pub mod launch;
 pub mod lease;
+pub mod mcp;
 pub mod notification;
 pub(crate) mod process_tree;
 pub mod pty;

@@ -15,13 +15,13 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
-use std::{io, io::Read, io::Write};
+use std::{io, io::BufRead, io::Read, io::Write};
 
 use serde::Serialize;
 use terminalai_core::agent::{self, Agent};
 use terminalai_core::launch::{Effort, LaunchSpec, Permission, ResolvedCommand, Sandbox};
 use terminalai_core::pty::{self, PtySession};
-use terminalai_core::{parse_hook, HookTransport};
+use terminalai_core::{parse_hook, HookTransport, SessionId};
 use terminalai_daemon::{DaemonClient, HookEndpoint, Request, Response};
 
 const USAGE: &str = "\
@@ -38,6 +38,7 @@ USAGE:
   terminalai-probe send    <session-id> <text> --json
   terminalai-probe status  <session-id> --json
   terminalai-probe shutdown
+  terminalai-probe mcp     [--write-token <t> --write-session <id>]...  (MCP server on stdio)
   terminalai-probe land    --source <dir> --target <dir> [--expect-head <sha>]
                            [--verify <program> [--verify-arg <arg>]...] [--verify-timeout <s>]
   terminalai-probe hook    <claude|codex>    (read one hook JSON object from stdin)
@@ -82,6 +83,7 @@ fn main() {
         Some("cpu-idle") => cmd_cpu_idle(&args[1..]),
         Some("hygiene") => cmd_hygiene(&args[1..]),
         Some("land") => cmd_land(&args[1..]),
+        Some("mcp") => cmd_mcp(&args[1..]),
         Some("hook") => cmd_hook(&args[1..]),
         Some("hooks") => cmd_hooks(&args[1..]),
         Some("--help") | Some("-h") | None => {
@@ -270,6 +272,178 @@ fn cmd_land(args: &[String]) -> i32 {
         }
         Ok(response) => print_control_response(response, true),
         Err(error) => print_control_error(error, true),
+    }
+}
+
+/// Bridge the fleet to an MCP client over stdio.
+///
+/// The daemon owns the registry, so this is a thin translator: one JSON-RPC
+/// line in, one control request out, one line back. Every fleet read is a fresh
+/// daemon call rather than a cached snapshot, because a sibling agent asking
+/// "what is s0002 doing" wants the answer now.
+fn cmd_mcp(args: &[String]) -> i32 {
+    let mut token: Option<String> = None;
+    let mut sessions: Vec<String> = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--write-token" => {
+                index += 1;
+                match args.get(index) {
+                    Some(value) => token = Some(value.clone()),
+                    None => {
+                        eprintln!("--write-token needs a value");
+                        return 2;
+                    }
+                }
+            }
+            "--write-session" => {
+                index += 1;
+                match args.get(index) {
+                    Some(value) => sessions.push(value.clone()),
+                    None => {
+                        eprintln!("--write-session needs a session id");
+                        return 2;
+                    }
+                }
+            }
+            other => {
+                eprintln!("unknown mcp option: {other}");
+                return 2;
+            }
+        }
+        index += 1;
+    }
+
+    // Both halves or neither. A token with no opted-in session would advertise
+    // mutating tools that always refuse, and an opted-in session with no token
+    // reads as protection that is not there.
+    if token.is_some() != !sessions.is_empty() {
+        eprintln!(
+            "--write-token and --write-session must be given together; without both the server is read-only"
+        );
+        return 2;
+    }
+    let gate = match token {
+        Some(token) => terminalai_core::mcp::WriteGate::new(token, sessions),
+        None => terminalai_core::mcp::WriteGate::default(),
+    };
+
+    let mut server = terminalai_core::mcp::McpServer::new(DaemonFleet, gate);
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+    for line in stdin.lock().lines() {
+        let line = match line {
+            Ok(line) => line,
+            Err(error) => {
+                eprintln!("mcp: could not read stdin: {error}");
+                return 1;
+            }
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Some(response) = server.handle_line(&line) {
+            if writeln!(stdout, "{response}").is_err() || stdout.flush().is_err() {
+                // The client closed the pipe. Not an error worth a nonzero exit.
+                return 0;
+            }
+        }
+    }
+    0
+}
+
+/// [`FleetAccess`] backed by the running daemon.
+struct DaemonFleet;
+
+impl DaemonFleet {
+    fn call(&self, request: Request) -> Result<Response, String> {
+        control_call(request)
+    }
+}
+
+impl terminalai_core::mcp::FleetAccess for DaemonFleet {
+    fn sessions(&self) -> Result<Vec<serde_json::Value>, String> {
+        match self.call(Request::Snapshot)? {
+            Response::Snapshot { sessions, .. } => sessions
+                .into_iter()
+                .map(|session| {
+                    serde_json::to_value(session).map_err(|error| error.to_string())
+                })
+                .collect(),
+            Response::Error { message } => Err(message),
+            other => Err(format!("unexpected snapshot response: {other:?}")),
+        }
+    }
+
+    fn external_sessions(&self) -> Result<Vec<serde_json::Value>, String> {
+        match self.call(Request::ExternalSessions)? {
+            Response::ExternalSessions { sessions } => sessions
+                .into_iter()
+                .map(|session| {
+                    serde_json::to_value(session).map_err(|error| error.to_string())
+                })
+                .collect(),
+            Response::Error { message } => Err(message),
+            other => Err(format!("unexpected external-session response: {other:?}")),
+        }
+    }
+
+    fn admission(&self) -> Result<serde_json::Value, String> {
+        match self.call(Request::Snapshot)? {
+            Response::Snapshot { admission, .. } => {
+                serde_json::to_value(admission).map_err(|error| error.to_string())
+            }
+            Response::Error { message } => Err(message),
+            other => Err(format!("unexpected snapshot response: {other:?}")),
+        }
+    }
+
+    fn last_output(&self, id: &str, max_lines: usize) -> Result<String, String> {
+        let data = match self.call(Request::Scrollback {
+            id: SessionId(id.to_owned()),
+        })? {
+            Response::Scrollback { data } => data,
+            Response::Error { message } => return Err(message),
+            other => return Err(format!("unexpected scrollback response: {other:?}")),
+        };
+        // The ring holds raw pty bytes including escape sequences. A sibling
+        // agent wants readable text, and forwarding control bytes into a tool
+        // result is how a terminal-shaped payload reaches a model.
+        let text = String::from_utf8_lossy(&data);
+        let plain = terminalai_core::mcp::strip_terminal_control(&text);
+        let lines: Vec<&str> = plain.lines().filter(|line| !line.trim().is_empty()).collect();
+        let start = lines.len().saturating_sub(max_lines);
+        Ok(lines[start..].join("\n"))
+    }
+
+    fn write_session(&self, id: &str, data: &str) -> Result<(), String> {
+        match self.call(Request::Write {
+            id: SessionId(id.to_owned()),
+            data: data.to_owned(),
+        })? {
+            Response::Ok => Ok(()),
+            Response::Error { message } => Err(message),
+            other => Err(format!("unexpected write response: {other:?}")),
+        }
+    }
+
+    fn kill_session(&self, id: &str) -> Result<(), String> {
+        match self.call(Request::Kill {
+            id: SessionId(id.to_owned()),
+        })? {
+            Response::Ok => Ok(()),
+            Response::Error { message } => Err(message),
+            other => Err(format!("unexpected kill response: {other:?}")),
+        }
+    }
+
+    fn log_mutation(&self, tool: &str, session: &str, allowed: bool, detail: &str) {
+        // stderr, not stdout: stdout is the JSON-RPC channel and anything else
+        // written there corrupts the stream. The daemon's own diagnostics
+        // timeline records the resulting Write/Kill separately.
+        let outcome = if allowed { "allowed" } else { "refused" };
+        eprintln!("mcp mutation {outcome}: tool={tool} session={session} {detail}");
     }
 }
 
