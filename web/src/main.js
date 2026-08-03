@@ -1906,6 +1906,13 @@ async function start() {
   try {
     await listen("terminalai:event", ({ payload }) => handleDaemonEvent(payload));
     await listen("terminalai:logs", ({ payload }) => appendLogs(payload));
+    // A clicked Windows toast names the session that wanted attention. Focusing
+    // it is the whole point of the click — landing on the fleet list and making
+    // the operator find the row again would waste the notification.
+    await listen("terminalai:focus-session", ({ payload }) => {
+      const id = typeof payload === "string" ? payload : payload?.id;
+      if (id) void focusSession(id);
+    });
   } catch (error) {
     showToast(`Event stream unavailable: ${error}`);
   }

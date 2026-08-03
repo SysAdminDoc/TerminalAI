@@ -1,4 +1,5 @@
 mod preset;
+mod toast;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -995,11 +996,22 @@ fn bridge_daemon_events(
         .unwrap_or_default();
     let receiver = client.events();
     let app = app.clone();
+    // Toast clicks arrive on a WinRT thread; the listener moves that work onto
+    // a thread the Tauri runtime knows about.
+    let (toast_activations, toast_clicks) = std::sync::mpsc::channel();
+    spawn_toast_activation_listener(app.clone(), toast_clicks);
     let _ = thread::Builder::new()
         .name("terminalai-ui-events".into())
         .spawn(move || {
             let mut waiting = initial_waiting;
             let mut rendered_waiting = None;
+            // Which sessions already have a toast out. Keyed by id and status so
+            // a session that moves from one attention state to another toasts
+            // again, while repeated hook deliveries for the same state do not.
+            let mut toasted: HashMap<SessionId, SessionStatus> = HashMap::new();
+            // A missing Start Menu shortcut makes every toast silently fail.
+            // Reported once rather than on every attention event.
+            let mut toast_failed = false;
             update_taskbar_waiting_count(&app, waiting.len());
             let mut pending = HashMap::<SessionId, Vec<u8>>::new();
             let mut pending_logs = VecDeque::<LogEntry>::new();
@@ -1032,9 +1044,16 @@ fn bridge_daemon_events(
                                 } else {
                                     waiting.remove(&session.id);
                                 }
+                                maybe_toast(
+                                    session,
+                                    &mut toasted,
+                                    &toast_activations,
+                                    &mut toast_failed,
+                                );
                             }
                             RegistryEvent::SessionRemoved { id } => {
                                 waiting.remove(id);
+                                toasted.remove(id);
                             }
                             _ => {}
                         }
@@ -1066,6 +1085,59 @@ fn bridge_daemon_events(
                 }
             }
         });
+}
+
+/// Raise a toast when a session newly wants the operator.
+///
+/// Keyed on (id, status): a session moving from `AwaitingInput` to
+/// `NeedsApproval` is a new thing to say, but the same status arriving twice —
+/// which it does, because hooks fire per tool call — is not.
+fn maybe_toast(
+    session: &Session,
+    toasted: &mut HashMap<SessionId, SessionStatus>,
+    activations: &std::sync::mpsc::Sender<toast::ToastActivation>,
+    failed: &mut bool,
+) {
+    if !toast::wants_attention(session.status) {
+        // Leaving an attention state clears the memo, so the next one toasts.
+        toasted.remove(&session.id);
+        return;
+    }
+    if toasted.get(&session.id) == Some(&session.status) {
+        return;
+    }
+    toasted.insert(session.id.clone(), session.status);
+    if let Err(error) =
+        toast::raise_attention_toast(APP_USER_MODEL_ID, session, activations.clone())
+    {
+        if !*failed {
+            // Once. A fleet of thirty would otherwise print this per event, and
+            // the cause is always the same missing Start Menu shortcut.
+            *failed = true;
+            eprintln!(
+                "terminalai: desktop notifications unavailable ({error});                  run the Start-Menu shortcut preflight fix"
+            );
+        }
+    }
+}
+
+/// Focus the session a clicked toast names, and raise the window.
+fn spawn_toast_activation_listener(
+    app: tauri::AppHandle,
+    activations: std::sync::mpsc::Receiver<toast::ToastActivation>,
+) {
+    thread::spawn(move || {
+        // The WinRT handler only sends on this channel; everything that touches
+        // Tauri happens here, on a thread the runtime knows about.
+        while let Ok(toast::ToastActivation::Focus(id)) = activations.recv() {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            let _ = app.emit("terminalai:focus-session", id);
+        }
+    });
 }
 
 fn is_waiting_session(session: &Session) -> bool {

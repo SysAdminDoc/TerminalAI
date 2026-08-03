@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Windows toasts for sessions that want the operator. A session entering `NeedsYou`,
+  `NeedsApproval` or `AwaitingInput` raises a toast naming it, why it is blocked, and which repo it
+  is in — a toast reading only "Needs you" is useless with thirty sessions. Clicking it focuses
+  that session and raises the window, using the in-process `on_activated` handler rather than a COM
+  activator: the app is by definition already running when it raises the toast. A rate-limited
+  session deliberately does not toast — it is blocked, but there is nothing the operator can do.
+  Toasts are short-duration because an unpackaged process cannot reliably withdraw one from the
+  action centre, and a toast outliving the state it describes sends the operator to a session that
+  has moved on. A missing Start Menu shortcut makes every toast silently fail, so that is reported
+  once rather than per event.
 - Split view for pinned sessions. Up to three pinned sessions now render live panes beneath the
   focused terminal, drawn from the Rust-side grids the daemon already kept for them rather than
   from more xterm instances — one renderer is what lets the fleet hold ~29 rows, and three more

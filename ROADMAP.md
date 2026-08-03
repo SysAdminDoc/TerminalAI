@@ -4,14 +4,13 @@ Single task tracker for this repo. Newest phase at the top; completed items are 
 
 ## v0.3.0 — knowing what the fleet is doing
 
-- [ ] Windows toast on `NeedsYou`, with click-to-focus
-      — *2026-08-02 research: an unpackaged Win32 app cannot raise a toast without a Start Menu shortcut carrying
-      `System.AppUserModelID`. Use `tauri-winrt-notification`; click-to-activate additionally needs a COM activator
-      registered under `HKCU\Software\Classes\CLSID\{...}\LocalServer32`, which that crate does not do. Pair with
-      R-16 so toasts self-retract.*
-      — *2026-08-02 research: prefer `tauri-winrt-notification` 0.8.1 over `tauri-plugin-notification` 2.3.3 —
-      the plugin is documented to show the PowerShell name and icon in development and to work only for installed
-      apps, and neither provides the COM activator. Fix R-48 first or toasts will outlive their sessions.*
+- [ ] Verify Windows toast delivery on an interactive desktop
+      — *Implemented and unit-tested (which states toast, the text, dedup by session+status,
+      click-to-focus via the in-process `on_activated` handler). Delivery itself was never
+      observed on this machine: the app is launched onto a private desktop where notifications
+      do not render, and PowerShell cannot load the WinRT projection to raise one independently.
+      What is needed is one run on the interactive desktop with the Start-Menu shortcut present —
+      confirm the toast appears, names the session, and that clicking it focuses that row.*
 
 ## v0.4.0 — many sessions, one operator
 
