@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Added Windows process-hygiene controls: background ConPTY sessions use reversible EcoQoS and
+  memory-priority settings, focus and pin changes restore normal priority, waiting-session counts
+  render as a numeric taskbar overlay, and `terminalai-probe hygiene` publishes repeatable console
+  churn and input-latency measurements.
 - Added one shared Fluent catalog at `web/src/i18n/terminalai.ftl`, loaded and validated by the
   Rust daemon and formatted by the web renderer. Status diagnostics now carry structured reason
   kinds with arguments, while localized counts and dwell labels use `Intl.PluralRules` and

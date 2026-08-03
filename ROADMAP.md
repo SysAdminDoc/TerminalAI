@@ -111,13 +111,6 @@ researcher continues from R-88.
 
 ### P2
 
-- [ ] R-79 · P2 — Make Windows process hygiene the measured differentiator
-  Why: this is the one axis no competitor can copy cheaply — they are all Electron, Node or tmux — and both agent CLIs have open defects that worsen with session count, so the claim is worth proving rather than asserting.
-  Evidence: anthropics/claude-code#66540 (open) — subprocesses spawn without `windowsHide`/`CREATE_NO_WINDOW`, so N sessions times M MCP servers flash M+1 console windows per tool call, with reported sustained keystroke loss at 12 concurrent sessions; #74107 (open) requests persistent terminal sessions for the same reason; #67220 (open) requests a native Windows toast channel; openai/codex discussion #29949 documents process-enumeration storms on high-spec Windows machines. A ConPTY-hosted child inherits the pseudoconsole rather than allocating a new conhost. Windows also exposes `SetProcessInformation(ProcessPowerThrottling)` (EcoQoS) and `ProcessMemoryPriority`, and Tauri 2.11.5 exposes `set_progress_bar`, `set_overlay_icon` and `set_badge_count`.
-  Touches: `crates/terminalai-core/src/pty.rs`, `registry.rs`, `crates/terminalai-app/src/main.rs`, `README.md`
-  Acceptance: a repeatable measurement counts console-window creations and input latency for N supervised sessions versus N terminal-launched sessions, and the result is published in the README with its method; background sessions (neither focused nor pinned) get EcoQoS and lowered memory priority, restored on focus; the taskbar shows the waiting-session count via overlay or badge. Depends on R-40 for job objects.
-  Complexity: M
-
 - [ ] R-81 · P2 — Per-session environment leases beyond ports
   Why: this is the most-repeated unsolved complaint in the entire community corpus — worktrees isolate files and nothing else, so parallel agents collide on ports, databases, docker projects and untracked config, and several people abandoned parallel agents specifically over it.
   Evidence: HN 46424131 ("none of them mention databases... ten different copies of my database"), 47870590 (quit after a sprint over test-data isolation and a shared migration), 47871667 ("can't easily copy secrets, ports conflict"), 48244818 (per-worktree docker compose prefix, hand-rolled), 47004368 ("two weeks just getting a second copy of the dev environment running"). Both Superset and Conductor explicitly punt to a user-written setup script. R-22 already ships deterministic port blocks and setup/teardown hooks; this extends that seam.

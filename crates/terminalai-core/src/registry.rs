@@ -1029,13 +1029,42 @@ impl SessionRegistry {
         if let Some(id) = &id {
             self.require(id)?;
         }
-        {
+        let priorities = {
             let mut state = lock_state(&self.inner);
+            let previous = state.focused.clone();
             state.focused = id.clone();
             if let Some(id) = &id {
                 if let Some(entry) = state.entries.get_mut(id) {
                     entry.session.unread = false;
                 }
+            }
+            let mut candidates = Vec::new();
+            if let Some(previous) = previous {
+                candidates.push(previous);
+            }
+            if let Some(id) = id.clone() {
+                if !candidates.contains(&id) {
+                    candidates.push(id);
+                }
+            }
+            candidates
+                .into_iter()
+                .filter_map(|candidate| {
+                    let entry = state.entries.get(&candidate)?;
+                    let pty = entry.pty.clone()?;
+                    let background =
+                        state.focused.as_ref() != Some(&candidate) && !entry.session.pinned;
+                    Some((pty, background))
+                })
+                .collect::<Vec<_>>()
+        };
+        for (pty, background) in priorities {
+            if let Err(error) = pty.set_background(background) {
+                tracing::warn!(
+                    background,
+                    error = %error,
+                    "could not update process priority after focus change"
+                );
             }
         }
         if let Some(id) = id {
@@ -1045,7 +1074,7 @@ impl SessionRegistry {
     }
 
     pub fn toggle_pin(&self, id: &SessionId) -> Result<bool, RegistryError> {
-        let pinned = {
+        let (pinned, priority) = {
             let mut state = lock_state(&self.inner);
             let currently_pinned = state
                 .entries
@@ -1065,8 +1094,23 @@ impl SessionRegistry {
             }
             let entry = state.entries.get_mut(id).expect("checked above");
             entry.session.pinned = !currently_pinned;
-            entry.session.pinned
+            let pinned = entry.session.pinned;
+            let priority = entry
+                .pty
+                .clone()
+                .map(|pty| (pty, !pinned && state.focused.as_ref() != Some(id)));
+            (pinned, priority)
         };
+        if let Some((pty, background)) = priority {
+            if let Err(error) = pty.set_background(background) {
+                tracing::warn!(
+                    session_id = %id,
+                    background,
+                    error = %error,
+                    "could not update process priority after pin change"
+                );
+            }
+        }
         self.emit_session(id);
         Ok(pinned)
     }
@@ -1261,6 +1305,21 @@ impl SessionRegistry {
             let _ = pty.kill();
             let _ = environment::run_teardown(&environment_spec, &id.0, &cwd, &ports);
             return Err(RegistryError::NotRunning(id.clone()));
+        }
+        let background = {
+            let state = lock_state(&self.inner);
+            state
+                .entries
+                .get(id)
+                .is_some_and(|entry| state.focused.as_ref() != Some(id) && !entry.session.pinned)
+        };
+        if let Err(error) = pty.set_background(background) {
+            tracing::warn!(
+                session_id = %id,
+                background,
+                error = %error,
+                "could not apply process background policy"
+            );
         }
         tracing::info!(pid = ?pty.pid(), "session process started");
         self.emit_session(id);

@@ -28,6 +28,12 @@ pub trait AgentSession: Send + Sync {
     fn try_wait(&self) -> Result<Option<u32>, DomainError>;
     fn wait_for_exit(&self) -> Result<u32, DomainError>;
     fn kill(&self) -> Result<(), DomainError>;
+    /// Apply or restore the platform's background execution policy. Remote
+    /// domains may leave the default no-op in place when they do not own a
+    /// local process.
+    fn set_background(&self, _background: bool) -> Result<(), DomainError> {
+        Ok(())
+    }
 }
 
 /// Creates and supervises sessions in one execution domain.
@@ -82,6 +88,10 @@ impl AgentSession for PtySession {
 
     fn kill(&self) -> Result<(), DomainError> {
         PtySession::kill(self).map_err(DomainError::from)
+    }
+
+    fn set_background(&self, background: bool) -> Result<(), DomainError> {
+        PtySession::set_background(self, background).map_err(DomainError::from)
     }
 }
 

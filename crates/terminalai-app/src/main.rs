@@ -1,6 +1,6 @@
 mod preset;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::mpsc::RecvTimeoutError;
@@ -17,7 +17,7 @@ use terminalai_core::agent::Agent;
 use terminalai_core::launch::LaunchSpec;
 use terminalai_core::{
     parse_hook, AdmissionSnapshot, AgentCapabilities, HookTransport, LogEntry, RegistryEvent,
-    ReviewItem, Session, SessionId, MAX_LOG_ENTRIES,
+    ReviewItem, Session, SessionId, SessionStatus, MAX_LOG_ENTRIES,
 };
 use terminalai_daemon::{
     DaemonClient, HookEndpoint, IpcError, Request, Response, PROTOCOL_VERSION,
@@ -909,11 +909,22 @@ fn bridge_daemon_events(
     client: &DaemonClient,
     output_channels: Arc<Mutex<HashMap<SessionId, Channel<InvokeResponseBody>>>>,
 ) {
+    let initial_waiting = client
+        .call_with_timeout(Request::Snapshot, Duration::from_secs(2))
+        .ok()
+        .and_then(|response| match response {
+            Response::Snapshot { sessions, .. } => Some(waiting_sessions(&sessions)),
+            _ => None,
+        })
+        .unwrap_or_default();
     let receiver = client.events();
     let app = app.clone();
     let _ = thread::Builder::new()
         .name("terminalai-ui-events".into())
         .spawn(move || {
+            let mut waiting = initial_waiting;
+            let mut rendered_waiting = None;
+            update_taskbar_waiting_count(&app, waiting.len());
             let mut pending = HashMap::<SessionId, Vec<u8>>::new();
             let mut pending_logs = VecDeque::<LogEntry>::new();
             let mut next_output_flush = Instant::now() + OUTPUT_BATCH_INTERVAL;
@@ -938,6 +949,23 @@ fn bridge_daemon_events(
                         }
                     }
                     Some(Ok(event)) => {
+                        match &event {
+                            RegistryEvent::SessionUpdated { session } => {
+                                if is_waiting_session(session) {
+                                    waiting.insert(session.id.clone());
+                                } else {
+                                    waiting.remove(&session.id);
+                                }
+                            }
+                            RegistryEvent::SessionRemoved { id } => {
+                                waiting.remove(id);
+                            }
+                            _ => {}
+                        }
+                        if rendered_waiting != Some(waiting.len()) {
+                            update_taskbar_waiting_count(&app, waiting.len());
+                            rendered_waiting = Some(waiting.len());
+                        }
                         flush_output_batches(&mut pending, &output_channels);
                         next_output_flush = Instant::now() + OUTPUT_BATCH_INTERVAL;
                         if app.emit("terminalai:event", event).is_err() {
@@ -962,6 +990,122 @@ fn bridge_daemon_events(
                 }
             }
         });
+}
+
+fn is_waiting_session(session: &Session) -> bool {
+    matches!(
+        session.status,
+        SessionStatus::NeedsApproval | SessionStatus::AwaitingInput | SessionStatus::NeedsYou
+    )
+}
+
+fn waiting_sessions(sessions: &[Session]) -> HashSet<SessionId> {
+    sessions
+        .iter()
+        .filter(|session| is_waiting_session(session))
+        .map(|session| session.id.clone())
+        .collect()
+}
+
+#[cfg(target_os = "windows")]
+fn taskbar_badge_image(count: usize) -> tauri::image::Image<'static> {
+    const SIZE: usize = 32;
+    const DIGITS: [[u8; 7]; 10] = [
+        [
+            0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110,
+        ],
+        [
+            0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
+        ],
+        [
+            0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111,
+        ],
+        [
+            0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110,
+        ],
+        [
+            0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010,
+        ],
+        [
+            0b11111, 0b10000, 0b10000, 0b11110, 0b00001, 0b00001, 0b11110,
+        ],
+        [
+            0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110,
+        ],
+        [
+            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000,
+        ],
+        [
+            0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110,
+        ],
+        [
+            0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b11100,
+        ],
+    ];
+    let text = if count > 99 {
+        "99+".to_string()
+    } else {
+        count.to_string()
+    };
+    let scale = if text.len() == 1 { 3usize } else { 2usize };
+    let glyph_width = 5 * scale;
+    let spacing = scale;
+    let total_width = text.len() * glyph_width + text.len().saturating_sub(1) * spacing;
+    let start_x = (SIZE.saturating_sub(total_width)) / 2;
+    let start_y = (SIZE - 7 * scale) / 2;
+    let mut rgba = vec![0u8; SIZE * SIZE * 4];
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let dx = x as isize - 16;
+            let dy = y as isize - 16;
+            if dx * dx + dy * dy <= 15 * 15 {
+                let offset = (y * SIZE + x) * 4;
+                rgba[offset..offset + 4].copy_from_slice(&[210, 76, 74, 255]);
+            }
+        }
+    }
+    let mut cursor_x = start_x;
+    for character in text.chars() {
+        let glyph = if let Some(digit) = character.to_digit(10) {
+            DIGITS[digit as usize]
+        } else {
+            [
+                0b00000, 0b00100, 0b00100, 0b11111, 0b00100, 0b00100, 0b00000,
+            ]
+        };
+        for (row, bits) in glyph.iter().enumerate() {
+            for col in 0..5 {
+                if bits & (1 << (4 - col)) == 0 {
+                    continue;
+                }
+                for dy in 0..scale {
+                    for dx in 0..scale {
+                        let x = cursor_x + col * scale + dx;
+                        let y = start_y + row * scale + dy;
+                        if x < SIZE && y < SIZE {
+                            let offset = (y * SIZE + x) * 4;
+                            rgba[offset..offset + 4].copy_from_slice(&[255, 255, 255, 255]);
+                        }
+                    }
+                }
+            }
+        }
+        cursor_x += glyph_width + spacing;
+    }
+    tauri::image::Image::new_owned(rgba, SIZE as u32, SIZE as u32)
+}
+
+fn update_taskbar_waiting_count(app: &tauri::AppHandle, count: usize) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    #[cfg(target_os = "windows")]
+    let result = window.set_overlay_icon((count != 0).then(|| taskbar_badge_image(count)));
+    #[cfg(not(target_os = "windows"))]
+    let result = window.set_badge_count((count != 0).then_some(count as i64));
+    if let Err(error) = result {
+        eprintln!("could not update taskbar waiting count ({count}): {error}");
+    }
 }
 
 fn flush_log_batches(pending: &mut VecDeque<LogEntry>, app: &tauri::AppHandle) -> bool {

@@ -12,10 +12,12 @@
 //! Exit codes: 0 success, 1 usage error, 2 resolution failure, 3 spawn failure.
 
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
-use std::{io, io::Read};
+use std::{io, io::Read, io::Write};
 
+use serde::Serialize;
 use terminalai_core::agent::{self, Agent};
 use terminalai_core::launch::{Effort, LaunchSpec, Permission, ResolvedCommand, Sandbox};
 use terminalai_core::pty::{self, PtySession};
@@ -39,6 +41,7 @@ USAGE:
   terminalai-probe hook    <claude|codex>    (read one hook JSON object from stdin)
   terminalai-probe hooks   <status|preview|install|remove> <claude|codex> [options]
   terminalai-probe cpu-idle [--sessions <n>] [--seconds <s>] [--poll]
+  terminalai-probe hygiene  [--sessions <n>] [--json] [--output <path>]
 
 OPTIONS:
   --cwd <dir>          working directory (default: current)
@@ -75,6 +78,7 @@ fn main() {
         Some("shutdown") => cmd_shutdown(&args[1..]),
         Some("exec") => cmd_exec(&args[1..]),
         Some("cpu-idle") => cmd_cpu_idle(&args[1..]),
+        Some("hygiene") => cmd_hygiene(&args[1..]),
         Some("hook") => cmd_hook(&args[1..]),
         Some("hooks") => cmd_hooks(&args[1..]),
         Some("--help") | Some("-h") | None => {
@@ -604,6 +608,470 @@ fn cmd_cpu_idle(args: &[String]) -> i32 {
     }
 }
 
+#[derive(Debug, Serialize)]
+struct HygieneReport {
+    sessions: usize,
+    method: &'static str,
+    supervised_conpty: HygieneRun,
+    terminal_launched: HygieneRun,
+}
+
+#[derive(Debug, Serialize)]
+struct HygieneRun {
+    console_windows_created: usize,
+    input_latency_ms: LatencySummary,
+}
+
+#[derive(Debug, Serialize)]
+struct LatencySummary {
+    samples: usize,
+    min: f64,
+    median: f64,
+    max: f64,
+}
+
+impl LatencySummary {
+    fn from_durations(mut values: Vec<Duration>) -> Self {
+        values.sort_unstable();
+        let milliseconds = values
+            .iter()
+            .map(Duration::as_secs_f64)
+            .map(|seconds| seconds * 1000.0)
+            .collect::<Vec<_>>();
+        let samples = milliseconds.len();
+        let median = match samples {
+            0 => 0.0,
+            count if count % 2 == 0 => {
+                (milliseconds[count / 2 - 1] + milliseconds[count / 2]) / 2.0
+            }
+            count => milliseconds[count / 2],
+        };
+        Self {
+            samples,
+            min: milliseconds.first().copied().unwrap_or(0.0),
+            median,
+            max: milliseconds.last().copied().unwrap_or(0.0),
+        }
+    }
+}
+
+fn cmd_hygiene(args: &[String]) -> i32 {
+    #[cfg(not(windows))]
+    {
+        let _ = args;
+        eprintln!("hygiene measurement is currently implemented for Windows only");
+        return 1;
+    }
+    #[cfg(windows)]
+    {
+        cmd_hygiene_windows(args)
+    }
+}
+
+#[cfg(windows)]
+fn cmd_hygiene_windows(args: &[String]) -> i32 {
+    let mut sessions = 8usize;
+    let mut machine = false;
+    let mut output = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--sessions" => {
+                index += 1;
+                sessions = match args.get(index).and_then(|value| value.parse().ok()) {
+                    Some(value @ 1..=32) => value,
+                    _ => {
+                        eprintln!("--sessions must be between 1 and 32");
+                        return 1;
+                    }
+                };
+            }
+            "--json" => machine = true,
+            "--output" => {
+                index += 1;
+                output = match args.get(index) {
+                    Some(value) => Some(PathBuf::from(value)),
+                    None => {
+                        eprintln!("--output needs a path");
+                        return 1;
+                    }
+                };
+            }
+            other => {
+                eprintln!("unknown option: {other}");
+                return 1;
+            }
+        }
+        index += 1;
+    }
+
+    let supervised = match measure_supervised_conpty(sessions) {
+        Ok(result) => result,
+        Err(error) => {
+            eprintln!("supervised ConPTY measurement failed: {error}");
+            return 3;
+        }
+    };
+    let terminal = match measure_terminal_launches(sessions) {
+        Ok(result) => result,
+        Err(error) => {
+            eprintln!("terminal-launched measurement failed: {error}");
+            return 3;
+        }
+    };
+    let report = HygieneReport {
+        sessions,
+        method: "ConsoleWindowClass snapshots on the current desktop, falling back to new conhost.exe process snapshots when the isolated desktop does not enumerate console windows, plus marker round trips over redirected stdin/stdout siblings using the same CREATE_NEW_CONSOLE launch flag",
+        supervised_conpty: supervised,
+        terminal_launched: terminal,
+    };
+    let json = match serde_json::to_string_pretty(&report) {
+        Ok(json) => json,
+        Err(error) => {
+            eprintln!("could not encode hygiene report: {error}");
+            return 1;
+        }
+    };
+    if let Some(path) = output {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                eprintln!("could not create hygiene output directory: {error}");
+                return 1;
+            }
+        }
+        if let Err(error) = std::fs::write(&path, &json) {
+            eprintln!("could not write hygiene report {}: {error}", path.display());
+            return 1;
+        }
+    }
+    if machine {
+        println!("{json}");
+    } else {
+        println!(
+            "supervised_conpty: {} console windows, median input {:.3} ms",
+            report.supervised_conpty.console_windows_created,
+            report.supervised_conpty.input_latency_ms.median
+        );
+        println!(
+            "terminal_launched: {} console windows, median input {:.3} ms",
+            report.terminal_launched.console_windows_created,
+            report.terminal_launched.input_latency_ms.median
+        );
+    }
+    0
+}
+
+#[cfg(windows)]
+fn hygiene_command() -> ResolvedCommand {
+    ResolvedCommand {
+        program: PathBuf::from("cmd.exe"),
+        args: vec!["/d".into(), "/q".into(), "/k".into()],
+        cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+    }
+}
+
+#[cfg(windows)]
+fn marker_round_trip(
+    rx: &mpsc::Receiver<Vec<u8>>,
+    marker: &[u8],
+    started: std::time::Instant,
+) -> Result<Duration, String> {
+    let deadline = started + Duration::from_secs(5);
+    let mut output = Vec::new();
+    while std::time::Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        match rx.recv_timeout(remaining.min(Duration::from_millis(250))) {
+            Ok(chunk) => {
+                output.extend_from_slice(&chunk);
+                if output.windows(marker.len()).any(|window| window == marker) {
+                    return Ok(started.elapsed());
+                }
+                if output.len() > 64 * 1024 {
+                    output.drain(..output.len() - 64 * 1024);
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err("child output reader disconnected".into())
+            }
+        }
+    }
+    Err(format!(
+        "child did not echo marker {} within 5 seconds",
+        String::from_utf8_lossy(marker)
+    ))
+}
+
+#[cfg(windows)]
+fn measure_supervised_conpty(sessions: usize) -> Result<HygieneRun, String> {
+    let mut tracker = ConsoleWindowTracker::new();
+    let mut live = Vec::with_capacity(sessions);
+    for index in 0..sessions {
+        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        let session = PtySession::spawn(&hygiene_command(), pty::default_size(), move |chunk| {
+            let _ = tx.send(chunk.to_vec());
+        })
+        .map_err(|error| error.to_string())?;
+        live.push((session, rx));
+        tracker.sample();
+        if index == 0 {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+    let mut latencies = Vec::with_capacity(sessions);
+    for (index, (session, rx)) in live.iter().enumerate() {
+        let marker = format!("TERMINALAI_SUPERVISED_{index}");
+        let started = std::time::Instant::now();
+        session
+            .write(format!("echo {marker}\r").as_bytes())
+            .map_err(|error| error.to_string())?;
+        latencies.push(marker_round_trip(rx, marker.as_bytes(), started)?);
+        tracker.sample();
+    }
+    for (session, _) in &live {
+        let _ = session.kill();
+    }
+    for _ in 0..10 {
+        tracker.sample();
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    Ok(HygieneRun {
+        console_windows_created: tracker.created(false),
+        input_latency_ms: LatencySummary::from_durations(latencies),
+    })
+}
+
+#[cfg(windows)]
+struct TerminalLaunch {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    rx: mpsc::Receiver<Vec<u8>>,
+}
+
+#[cfg(windows)]
+impl Drop for TerminalLaunch {
+    fn drop(&mut self) {
+        if self.child.try_wait().ok().flatten().is_none() {
+            let _ = self.child.kill();
+        }
+        let _ = self.child.wait();
+    }
+}
+
+#[cfg(windows)]
+fn spawn_terminal_launch() -> Result<TerminalLaunch, String> {
+    use std::os::windows::process::CommandExt;
+    let mut command = Command::new("cmd.exe");
+    command
+        .args(["/d", "/q", "/k"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .creation_flags(windows_sys::Win32::System::Threading::CREATE_NEW_CONSOLE);
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "terminal baseline did not expose stdin".to_string())?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "terminal baseline did not expose stdout".to_string())?;
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buffer = [0u8; 8192];
+        loop {
+            match stdout.read(&mut buffer) {
+                Ok(0) | Err(_) => break,
+                Ok(size) if tx.send(buffer[..size].to_vec()).is_err() => break,
+                Ok(_) => {}
+            }
+        }
+    });
+    Ok(TerminalLaunch { child, stdin, rx })
+}
+
+#[cfg(windows)]
+fn measure_terminal_launches(sessions: usize) -> Result<HygieneRun, String> {
+    let console_windows_created = measure_terminal_console_windows(sessions)?;
+    let input_latency_ms = measure_terminal_round_trips(sessions)?;
+    Ok(HygieneRun {
+        console_windows_created,
+        input_latency_ms: LatencySummary::from_durations(input_latency_ms),
+    })
+}
+
+#[cfg(windows)]
+fn measure_terminal_console_windows(sessions: usize) -> Result<usize, String> {
+    use std::os::windows::process::CommandExt;
+    let mut tracker = ConsoleWindowTracker::new();
+    let mut children = Vec::with_capacity(sessions);
+    for _ in 0..sessions {
+        let mut command = Command::new("cmd.exe");
+        command
+            .args(["/d", "/q", "/c", "ping.exe 127.0.0.1 -n 5 >nul"])
+            .creation_flags(windows_sys::Win32::System::Threading::CREATE_NEW_CONSOLE);
+        children.push(command.spawn().map_err(|error| error.to_string())?);
+        tracker.sample();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    for _ in 0..20 {
+        tracker.sample();
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    for child in &mut children {
+        if child.try_wait().ok().flatten().is_none() {
+            let _ = child.kill();
+        }
+        let _ = child.wait();
+    }
+    tracker.sample();
+    Ok(tracker.created(true))
+}
+
+#[cfg(windows)]
+fn measure_terminal_round_trips(sessions: usize) -> Result<Vec<Duration>, String> {
+    let mut tracker = ConsoleWindowTracker::new();
+    let mut live = Vec::with_capacity(sessions);
+    for _ in 0..sessions {
+        live.push(spawn_terminal_launch()?);
+        tracker.sample();
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let mut latencies = Vec::with_capacity(sessions);
+    for (index, session) in live.iter_mut().enumerate() {
+        let marker = format!("TERMINALAI_TERMINAL_{index}");
+        let started = std::time::Instant::now();
+        session
+            .stdin
+            .write_all(format!("echo {marker}\r\n").as_bytes())
+            .map_err(|error| error.to_string())?;
+        session.stdin.flush().map_err(|error| error.to_string())?;
+        latencies.push(marker_round_trip(&session.rx, marker.as_bytes(), started)?);
+        tracker.sample();
+    }
+    for _ in 0..10 {
+        tracker.sample();
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    Ok(latencies)
+}
+
+#[cfg(windows)]
+struct ConsoleWindowTracker {
+    baseline: std::collections::HashSet<isize>,
+    created: std::collections::HashSet<isize>,
+    baseline_hosts: std::collections::HashSet<u32>,
+    created_hosts: std::collections::HashSet<u32>,
+}
+
+#[cfg(windows)]
+impl ConsoleWindowTracker {
+    fn new() -> Self {
+        Self {
+            baseline: console_windows(),
+            created: std::collections::HashSet::new(),
+            baseline_hosts: console_hosts(),
+            created_hosts: std::collections::HashSet::new(),
+        }
+    }
+
+    fn sample(&mut self) {
+        for handle in console_windows() {
+            if !self.baseline.contains(&handle) {
+                self.created.insert(handle);
+            }
+        }
+        for process_id in console_hosts() {
+            if !self.baseline_hosts.contains(&process_id) {
+                self.created_hosts.insert(process_id);
+            }
+        }
+    }
+
+    fn created(&self, allow_host_fallback: bool) -> usize {
+        if allow_host_fallback && self.created.is_empty() {
+            self.created_hosts.len()
+        } else {
+            self.created.len()
+        }
+    }
+}
+
+#[cfg(windows)]
+fn console_hosts() -> std::collections::HashSet<u32> {
+    use std::mem::size_of;
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return std::collections::HashSet::new();
+    }
+    let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+    entry.dwSize = size_of::<PROCESSENTRY32W>() as u32;
+    let mut hosts = std::collections::HashSet::new();
+    let first = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+    if first {
+        loop {
+            let length = entry
+                .szExeFile
+                .iter()
+                .position(|value| *value == 0)
+                .unwrap_or(entry.szExeFile.len());
+            let name = String::from_utf16_lossy(&entry.szExeFile[..length]);
+            if name.eq_ignore_ascii_case("conhost.exe") {
+                hosts.insert(entry.th32ProcessID);
+            }
+            if unsafe { Process32NextW(snapshot, &mut entry) } == 0 {
+                break;
+            }
+        }
+    }
+    unsafe {
+        CloseHandle(snapshot);
+    }
+    hosts
+}
+
+#[cfg(windows)]
+fn console_windows() -> std::collections::HashSet<isize> {
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows_sys::Win32::System::StationsAndDesktops::{EnumDesktopWindows, GetThreadDesktop};
+    use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetClassNameW, IsWindowVisible};
+
+    unsafe extern "system" fn collect(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        if IsWindowVisible(hwnd) == 0 {
+            return 1;
+        }
+        let mut class = [0u16; 64];
+        let length = GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32);
+        if length > 0 && String::from_utf16_lossy(&class[..length as usize]) == "ConsoleWindowClass"
+        {
+            let handles = &mut *(lparam as *mut std::collections::HashSet<isize>);
+            handles.insert(hwnd as isize);
+        }
+        1
+    }
+
+    let desktop = unsafe { GetThreadDesktop(GetCurrentThreadId()) };
+    if desktop.is_null() {
+        return std::collections::HashSet::new();
+    }
+    let mut handles = std::collections::HashSet::new();
+    unsafe {
+        EnumDesktopWindows(desktop, Some(collect), &mut handles as *mut _ as LPARAM);
+    }
+    handles
+}
+
 /// Kernel plus user CPU time consumed by this process so far.
 fn process_cpu_time() -> Option<Duration> {
     #[cfg(windows)]
@@ -929,6 +1397,20 @@ mod tests {
         assert_eq!(spec.environment.teardown.as_deref(), Some("pnpm env:down"));
         assert_eq!(spec.environment.port_base, 43_000);
         assert_eq!(spec.environment.port_count, 2);
+    }
+
+    #[test]
+    fn hygiene_latency_summary_sorts_and_averages_even_samples() {
+        let summary = LatencySummary::from_durations(vec![
+            Duration::from_millis(4),
+            Duration::from_millis(1),
+            Duration::from_millis(3),
+            Duration::from_millis(2),
+        ]);
+        assert_eq!(summary.samples, 4);
+        assert_eq!(summary.min, 1.0);
+        assert_eq!(summary.median, 2.5);
+        assert_eq!(summary.max, 4.0);
     }
 
     #[test]

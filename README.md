@@ -58,6 +58,9 @@ Working today (`terminalai-probe`, headless):
   xterm without corrupting multi-byte sequences split across reads
 - Windows PTY sessions use kill-on-close job objects so stopping a session reaps its descendants;
   daemon shutdown runs active teardown hooks once
+- Background ConPTY sessions use Windows EcoQoS and low memory priority while neither focused nor
+  pinned; focus or pinning restores normal priority. Waiting-session counts appear as a numeric
+  Windows taskbar overlay.
 - Native Claude and Codex version checks run through the same sanitized environment allowlist as
   live sessions, including opt-in proxy variables without inheriting parent secrets
 - Ships an installer that actually starts: the NSIS and MSI bundles carry the daemon and probe as
@@ -240,6 +243,9 @@ terminalai-probe capabilities codex --json
 # "this agent is behaving oddly under a pty".
 terminalai-probe exec cmd.exe /c "echo hello"
 
+# Measure console churn and marker input latency on Windows (the default is 8 sessions).
+terminalai-probe hygiene --sessions 8 --json --output .\hygiene.json
+
 # Deliver one Claude/Codex hook payload without a browser-reachable listener.
 echo '{"session_id":"...","hook_event_name":"Notification","notification_type":"permission_prompt"}' |
   terminalai-probe hook claude
@@ -250,6 +256,18 @@ terminalai-probe hooks status claude --executable .\target\release\terminalai.ex
 terminalai-probe hooks install claude --executable .\target\release\terminalai.exe
 terminalai-probe hooks remove claude --executable .\target\release\terminalai.exe
 ```
+
+The Windows hygiene probe was run on 2026-08-03 with eight sessions inside the required isolated
+non-input desktop. It samples `ConsoleWindowClass` handles on that desktop; when Windows keeps a
+console host non-enumerable there, it falls back to the delta of `conhost.exe` process snapshots.
+Input latency is a marker round trip over redirected stdin/stdout, so it does not inject keyboard
+input into any desktop. Each row contains eight latency samples; the console count is a creation
+churn count, so host cleanup races can make it exceed the requested session count.
+
+| launch mode | console-window/host creations | min input (ms) | median (ms) | max (ms) |
+|---|---:|---:|---:|---:|
+| TerminalAI supervised ConPTY | 0 enumerable windows | 0.1565 | 0.1694 | 0.1810 |
+| Normal `CREATE_NEW_CONSOLE` launch | 10 `conhost.exe` hosts | 0.2281 | 0.2632 | 56.3870 |
 
 `shutdown` asks the daemon to tear down its owned sessions and exit cleanly. The daemon also
 handles Windows console-close and shutdown signals. Protocol compatibility is negotiated on the

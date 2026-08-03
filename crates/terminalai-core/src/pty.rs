@@ -34,6 +34,8 @@ pub enum PtyError {
     Write(#[from] std::io::Error),
     #[error("could not contain child process: {0}")]
     Job(String),
+    #[error("could not update child process priority: {0}")]
+    Priority(String),
 }
 
 /// A live agent process attached to a pseudo-console.
@@ -242,6 +244,23 @@ impl PtySession {
 
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
+    }
+
+    /// Mark the root process as background work or restore its normal policy.
+    ///
+    /// The registry calls this whenever focus or pin state changes. The job
+    /// object still owns descendant cleanup; this policy controls scheduling
+    /// and memory pressure for the supervised process boundary.
+    pub fn set_background(&self, background: bool) -> Result<(), PtyError> {
+        #[cfg(windows)]
+        {
+            let pid = self.pid().ok_or(PtyError::Gone)?;
+            crate::process_tree::set_background_priority(pid, background)
+                .map_err(PtyError::Priority)?;
+        }
+        #[cfg(not(windows))]
+        let _ = background;
+        Ok(())
     }
 
     /// Process identity for supervision and diagnostics. The child handle is
