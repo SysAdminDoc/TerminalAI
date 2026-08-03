@@ -16,12 +16,13 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::agent::{AgentBinary, Origin};
 use crate::app_server::{AgentEvent, AppServerEvent};
 use crate::diagnostics::{LogEntry, StatusSource};
+use crate::domain::{AgentDomain, AgentSession, DomainError, LocalPtyDomain};
 use crate::environment::{self, EnvironmentError, EnvironmentSpec};
 use crate::grid::{TerminalGrid, TerminalGridSnapshot};
 use crate::hooks::{HookEvent, HookNotification, HookSignal};
 use crate::launch::{LaunchError, LaunchSpec, ResolvedCommand, Resume};
 use crate::notification::{NotificationCenter, NotificationChange, NotificationEvent};
-use crate::pty::{PtyError, PtySession, PtySize};
+use crate::pty::PtySize;
 use crate::review::{collect_reviews, ReviewItem};
 use crate::session::{
     fleet_order, RestartDecision, Session, SessionId, SessionPhase, SessionStatus,
@@ -152,7 +153,7 @@ pub enum RegistryError {
     #[error(transparent)]
     Environment(#[from] EnvironmentError),
     #[error(transparent)]
-    Pty(#[from] PtyError),
+    Domain(#[from] DomainError),
     #[error("session does not exist: {0}")]
     Missing(SessionId),
     #[error("at most three sessions may be pinned")]
@@ -178,7 +179,7 @@ struct Entry {
     session: Session,
     spec: LaunchSpec,
     command: ResolvedCommand,
-    pty: Option<Arc<PtySession>>,
+    pty: Option<Arc<dyn AgentSession>>,
     scrollback: RingBuffer,
     grid: TerminalGrid,
     generation: u64,
@@ -238,6 +239,7 @@ impl PartialOrd for RestartTask {
 
 struct Inner {
     state: Mutex<State>,
+    domain: Arc<dyn AgentDomain>,
     dropped_events: AtomicU64,
     restart_tx: Sender<RestartTask>,
     restart_sequence: AtomicU64,
@@ -282,6 +284,20 @@ impl SessionRegistry {
     }
 
     pub fn with_admission(admission: AdmissionConfig) -> Self {
+        Self::with_domain_and_admission(Arc::new(LocalPtyDomain), admission)
+    }
+
+    /// Use an injected execution domain with the default admission policy.
+    /// Remote domains can implement the same session contract without
+    /// exposing a local process handle to the registry.
+    pub fn with_domain(domain: Arc<dyn AgentDomain>) -> Self {
+        Self::with_domain_and_admission(domain, AdmissionConfig::default())
+    }
+
+    pub fn with_domain_and_admission(
+        domain: Arc<dyn AgentDomain>,
+        admission: AdmissionConfig,
+    ) -> Self {
         let (restart_tx, restart_rx) = mpsc::channel();
         let inner = Arc::new(Inner {
             state: Mutex::new(State {
@@ -295,6 +311,7 @@ impl SessionRegistry {
                 notifications: NotificationCenter::default(),
                 subscribers: Vec::new(),
             }),
+            domain,
             dropped_events: AtomicU64::new(0),
             restart_tx,
             restart_sequence: AtomicU64::new(0),
@@ -313,11 +330,26 @@ impl SessionRegistry {
         Self::from_store_with_admission(snapshot, AdmissionConfig::default())
     }
 
+    pub fn from_store_with_domain(
+        snapshot: SessionStoreSnapshot,
+        domain: Arc<dyn AgentDomain>,
+    ) -> Self {
+        Self::from_store_with_domain_and_admission(snapshot, domain, AdmissionConfig::default())
+    }
+
     pub fn from_store_with_admission(
         snapshot: SessionStoreSnapshot,
         admission: AdmissionConfig,
     ) -> Self {
-        let registry = Self::with_admission(admission);
+        Self::from_store_with_domain_and_admission(snapshot, Arc::new(LocalPtyDomain), admission)
+    }
+
+    pub fn from_store_with_domain_and_admission(
+        snapshot: SessionStoreSnapshot,
+        domain: Arc<dyn AgentDomain>,
+        admission: AdmissionConfig,
+    ) -> Self {
+        let registry = Self::with_domain_and_admission(domain, admission);
         let mut state = lock_state(&registry.inner);
         let extra = snapshot.extra;
         let archives = snapshot.archives;
@@ -1065,7 +1097,7 @@ impl SessionRegistry {
         }
     }
 
-    fn pty(&self, id: &SessionId) -> Result<Arc<PtySession>, RegistryError> {
+    fn pty(&self, id: &SessionId) -> Result<Arc<dyn AgentSession>, RegistryError> {
         let state = lock_state(&self.inner);
         state
             .entries
@@ -1102,22 +1134,21 @@ impl SessionRegistry {
         command: &ResolvedCommand,
         generation: u64,
         environment: &[(String, String)],
-    ) -> Result<Arc<PtySession>, RegistryError> {
+    ) -> Result<Arc<dyn AgentSession>, RegistryError> {
         let weak = Arc::downgrade(&self.inner);
         let callback_id = id.clone();
         let span = self.span_for(id);
-        let pty = PtySession::spawn_with_environment(
+        Ok(self.inner.domain.spawn(
             command,
             crate::pty::default_size(),
             environment,
-            move |chunk| {
+            Box::new(move |chunk| {
                 let _entered = span.enter();
                 if let Some(inner) = weak.upgrade() {
                     handle_output(&inner, &callback_id, generation, chunk);
                 }
-            },
-        )?;
-        Ok(Arc::new(pty))
+            }),
+        )?)
     }
 
     fn emit_session(&self, id: &SessionId) {
@@ -1657,7 +1688,7 @@ impl SessionRegistry {
     fn spawn_monitor(
         &self,
         id: SessionId,
-        pty: Arc<PtySession>,
+        session: Arc<dyn AgentSession>,
         generation: u64,
         span: tracing::Span,
     ) {
@@ -1666,22 +1697,22 @@ impl SessionRegistry {
             .name(format!("terminalai-session-{id}"))
             .spawn(move || {
                 let _entered = span.enter();
-                if let Ok(status) = pty.wait_for_exit() {
+                if let Ok(status) = session.wait_for_exit() {
                     registry.mark_process_exit(&id, generation, Some(status));
                     return;
                 }
-                Self::poll_until_exit(&registry, &id, &pty, generation);
+                Self::poll_until_exit(&registry, &id, session.as_ref(), generation);
             });
     }
 
     fn poll_until_exit(
         registry: &SessionRegistry,
         id: &SessionId,
-        pty: &PtySession,
+        session: &dyn AgentSession,
         generation: u64,
     ) {
         loop {
-            match pty.try_wait() {
+            match session.try_wait() {
                 Ok(Some(status)) => {
                     registry.mark_process_exit(id, generation, Some(status));
                     return;
@@ -1939,8 +1970,82 @@ mod tests {
     use super::*;
     use crate::agent::{Agent, AgentBinary, Origin};
     use crate::app_server::{AppServerEvent, AppServerThreadStatus, AppServerTokenUsage};
+    use crate::domain::{AgentDomain, AgentSession, DomainError, OutputHandler};
     use crate::launch::spec_for;
     use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    struct RecordingDomain {
+        spawns: Arc<AtomicUsize>,
+    }
+
+    struct ExitedSession;
+
+    impl AgentSession for ExitedSession {
+        fn write(&self, _bytes: &[u8]) -> Result<(), DomainError> {
+            Err(DomainError::Message("session is not writable".into()))
+        }
+
+        fn resize(&self, _size: PtySize) -> Result<(), DomainError> {
+            Err(DomainError::Message("session is not resizable".into()))
+        }
+
+        fn pid(&self) -> Option<u32> {
+            None
+        }
+
+        fn try_wait(&self) -> Result<Option<u32>, DomainError> {
+            Ok(Some(0))
+        }
+
+        fn wait_for_exit(&self) -> Result<u32, DomainError> {
+            Err(DomainError::Message("remote wait is unavailable".into()))
+        }
+
+        fn kill(&self) -> Result<(), DomainError> {
+            Ok(())
+        }
+    }
+
+    impl AgentDomain for RecordingDomain {
+        fn spawn(
+            &self,
+            _command: &ResolvedCommand,
+            _size: PtySize,
+            _environment: &[(String, String)],
+            _on_output: OutputHandler,
+        ) -> Result<Arc<dyn AgentSession>, DomainError> {
+            self.spawns.fetch_add(1, Ordering::Relaxed);
+            Ok(Arc::new(ExitedSession))
+        }
+    }
+
+    #[test]
+    fn registry_launch_uses_an_injected_domain_without_local_process_access() {
+        let spawns = Arc::new(AtomicUsize::new(0));
+        let registry = SessionRegistry::with_domain(Arc::new(RecordingDomain {
+            spawns: spawns.clone(),
+        }));
+        let cwd = std::env::current_dir().expect("cwd");
+        let spec = spec_for(Agent::Claude, &cwd);
+        registry
+            .launch(
+                spec,
+                AgentBinary {
+                    agent: Agent::Claude,
+                    path: PathBuf::from("claude.exe"),
+                    origin: Origin::Configured,
+                },
+            )
+            .expect("injected domain launch");
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while spawns.load(Ordering::Relaxed) == 0 && Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert_eq!(spawns.load(Ordering::Relaxed), 1);
+    }
 
     #[test]
     fn ring_buffer_keeps_a_bounded_tail() {
@@ -2194,10 +2299,7 @@ mod tests {
                 scrollback: b"restored\r\n".to_vec(),
             }],
             archives: Vec::new(),
-            extra: BTreeMap::from([(
-                "future_field".into(),
-                serde_json::json!({"retained": true}),
-            )]),
+            extra: BTreeMap::from([("future_field".into(), serde_json::json!({"retained": true}))]),
         };
 
         let registry = SessionRegistry::from_store(snapshot);

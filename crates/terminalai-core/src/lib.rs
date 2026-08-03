@@ -13,6 +13,7 @@ pub mod agent;
 pub mod app_server;
 pub mod atomic_file;
 pub mod diagnostics;
+pub mod domain;
 pub mod environment;
 pub mod external;
 pub mod grid;
@@ -37,6 +38,7 @@ pub use app_server::{
 pub use diagnostics::{
     LogEntry, StatusDiagnostic, StatusSource, MAX_LOG_ENTRIES, MAX_STATUS_HISTORY,
 };
+pub use domain::{AgentDomain, AgentSession, DomainError, LocalPtyDomain, OutputHandler};
 pub use environment::{
     EnvironmentError, EnvironmentSpec, DEFAULT_PORT_BASE, DEFAULT_PORT_COUNT, MAX_PORT_COUNT,
     PORT_BLOCK_STRIDE,

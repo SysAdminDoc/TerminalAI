@@ -7,6 +7,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- `SessionRegistry` now supervises sessions through an object-safe `AgentDomain`/`AgentSession`
+  contract. `LocalPtyDomain` keeps the existing ConPTY behavior as the default while a future
+  remote relay can supply input, output, resize and lifecycle operations without local handles.
 - Session persistence now carries a `TerminalAI.session-store` magic string and schema 2. Legacy
   schema 0 and 1 files migrate atomically after a `sessions.v<old>.bak` copy, future versions are
   still refused, and unknown top-level fields survive through `serde(flatten)` and registry writes.

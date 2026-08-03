@@ -293,6 +293,11 @@ crates/
 web/                   Vite frontend, Catppuccin fleet surface and xterm renderer
 ```
 
+The core registry supervises an injected `AgentDomain` through an object-safe `AgentSession`
+contract. `LocalPtyDomain` is the default ConPTY implementation; a remote transport can provide
+the same output, input, resize and lifecycle seam without exposing a local process handle to the
+registry.
+
 ## Licence
 
 MIT — see [LICENSE](LICENSE).

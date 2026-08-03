@@ -99,13 +99,6 @@ From `RESEARCH.md`. IDs R-01…R-63; the next researcher continues from R-64.
 
 ### P3
 
-- [ ] R-31 · P3 — `AgentDomain` trait for non-local sessions
-  Why: remote execution is what every commercial competitor charges for; introducing the seam now keeps it from being a rewrite later.
-  Evidence: WezTerm's `Domain` trait abstracts local/WSL/SSH/mux behind spawn/split/attach/detach; RESEARCH.md paywall analysis item 1.
-  Touches: `crates/terminalai-core`
-  Acceptance: local ConPTY is one implementation of the trait; no call site assumes a local process handle.
-  Complexity: M
-
 - [ ] R-32 · P3 — Internationalization scaffolding
   Why: retrofitting string extraction after the UI exists is far more expensive than starting with it, even though the initial audience is English-only.
   Evidence: no competitor in the survey ships localization; wmux is actively translating post-hoc.
