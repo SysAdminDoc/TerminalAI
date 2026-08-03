@@ -5,7 +5,7 @@ use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use terminalai_core::SessionStoreSnapshot;
+use terminalai_core::{SessionRegistry, SessionStoreSnapshot};
 
 const STORE_DEBOUNCE: Duration = Duration::from_millis(200);
 
@@ -58,20 +58,20 @@ fn write_crash_record(info: &std::panic::PanicHookInfo<'_>) {
 
 #[derive(Clone)]
 pub(crate) struct StoreWriter {
-    sender: SyncSender<SessionStoreSnapshot>,
+    sender: SyncSender<()>,
 }
 
 impl StoreWriter {
-    pub(crate) fn spawn(path: PathBuf) -> Self {
+    pub(crate) fn spawn(path: PathBuf, registry: SessionRegistry) -> Self {
         let (sender, receiver) = mpsc::sync_channel(1);
         let _ = thread::Builder::new()
             .name("terminalai-session-store".into())
-            .spawn(move || run_writer(&path, receiver));
+            .spawn(move || run_writer(&path, registry, receiver));
         Self { sender }
     }
 
-    pub(crate) fn update(&self, snapshot: SessionStoreSnapshot) {
-        match self.sender.try_send(snapshot) {
+    pub(crate) fn update(&self) {
+        match self.sender.try_send(()) {
             Ok(()) | Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {}
         }
     }
@@ -155,11 +155,10 @@ fn file_safe_utc_timestamp(now: SystemTime) -> String {
     format!("{year:04}-{month:02}-{day:02}T{hour:02}-{minute:02}-{second:02}Z")
 }
 
-fn run_writer(path: &Path, receiver: mpsc::Receiver<SessionStoreSnapshot>) {
-    while let Ok(mut snapshot) = receiver.recv() {
-        while let Ok(next) = receiver.recv_timeout(STORE_DEBOUNCE) {
-            snapshot = next;
-        }
+fn run_writer(path: &Path, registry: SessionRegistry, receiver: mpsc::Receiver<()>) {
+    while receiver.recv().is_ok() {
+        while receiver.recv_timeout(STORE_DEBOUNCE).is_ok() {}
+        let snapshot = registry.store_snapshot();
         if let Err(error) = snapshot.write(path) {
             eprintln!("terminalai-daemon: could not persist session store: {error}");
         }
@@ -170,6 +169,8 @@ fn run_writer(path: &Path, receiver: mpsc::Receiver<SessionStoreSnapshot>) {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use terminalai_core::store::{ArchivedSession, StoredSession};
+    use terminalai_core::{Agent, LaunchSpec, ResolvedCommand, Session, SessionId};
 
     static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -225,5 +226,52 @@ mod tests {
     #[test]
     fn future_store_schema_is_quarantined_and_loads_empty() {
         assert_fixture_is_quarantined("schema-999");
+    }
+
+    #[test]
+    fn update_wakes_a_worker_that_snapshots_the_registry_after_debounce() {
+        let dir = test_dir();
+        let path = dir.join("sessions.json");
+        let cwd = std::env::current_dir().expect("cwd");
+        let spec = LaunchSpec {
+            agent: Agent::Claude,
+            cwd: cwd.clone(),
+            ..LaunchSpec::default()
+        };
+        let session = Session::new(SessionId::new(1), &spec);
+        let registry = SessionRegistry::from_store(SessionStoreSnapshot {
+            schema_version: terminalai_core::store::SESSION_STORE_SCHEMA_VERSION,
+            sessions: vec![StoredSession {
+                session,
+                spec: spec.clone(),
+                command: ResolvedCommand {
+                    program: "claude.exe".into(),
+                    args: Vec::new(),
+                    cwd,
+                },
+                scrollback: b"worker-built".to_vec(),
+            }],
+            archives: vec![ArchivedSession {
+                id: SessionId::new(8),
+                agent: Agent::Codex,
+                name: "archived".into(),
+                cwd: spec.cwd.clone(),
+                command: "codex.exe".into(),
+            }],
+        });
+        let writer = StoreWriter::spawn(path.clone(), registry);
+        writer.update();
+        thread::sleep(STORE_DEBOUNCE + Duration::from_millis(100));
+        drop(writer);
+
+        let written = SessionStoreSnapshot::read(&path)
+            .expect("read worker snapshot")
+            .expect("snapshot exists");
+        assert_eq!(written.sessions[0].scrollback, b"worker-built");
+        assert_eq!(written.archives.len(), 1);
+        assert!(!fs::read_to_string(&path)
+            .expect("read metadata")
+            .contains("scrollback"));
+        let _ = fs::remove_dir_all(dir);
     }
 }

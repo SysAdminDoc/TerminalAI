@@ -51,9 +51,9 @@ Working today (`terminalai-probe`, headless):
   daemon shutdown runs active teardown hooks once
 - Native Claude and Codex version checks run through the same sanitized environment allowlist as
   live sessions, including opt-in proxy variables without inheriting parent secrets
-- 111 default tests over the flag mapping, real-pty boundary, supervision state machine, registry,
+- 112 default tests over the flag mapping, real-pty boundary, supervision state machine, registry,
   diagnostics, review aggregation, daemon protocol, presets, launch golden fixtures, atomic file
-  recovery, corrupt-store quarantine, deterministic fleet ordering, prompt safety and fleet-row model; 113
+  recovery, corrupt-store quarantine, deterministic fleet ordering, prompt safety and fleet-row model; 114
   with the opt-in app-server
   transport enabled
 
@@ -64,7 +64,8 @@ daemon keeps live sessions independent of the window; see
 [ROADMAP.md](ROADMAP.md).
 
 The daemon writes a versioned, human-readable session store to
-`%LOCALAPPDATA%\TerminalAI\sessions.json`. If the file is unreadable or has an unsupported schema,
+`%LOCALAPPDATA%\TerminalAI\sessions.json` and raw replay tails to its adjacent
+`sessions.json.scrollback` directory. If the file is unreadable or has an unsupported schema,
 the daemon moves it to a timestamped `sessions.corrupt-...json` quarantine and starts with an empty
 fleet; the window shows the quarantine path in a dismissible banner. Reconnecting the window reattaches to live rows and
 replays bounded scrollback; rows recovered after a daemon restart remain stopped until the operator

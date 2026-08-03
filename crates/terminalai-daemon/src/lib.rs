@@ -230,9 +230,11 @@ impl DaemonServer {
         let (registry, store_writer, store_quarantine) = match persistence::default_path() {
             Some(path) => {
                 let loaded = persistence::load(&path).map_err(IpcError::Store)?;
+                let registry =
+                    SessionRegistry::from_store_with_admission(loaded.snapshot, admission);
                 (
-                    SessionRegistry::from_store_with_admission(loaded.snapshot, admission),
-                    Some(StoreWriter::spawn(path)),
+                    registry.clone(),
+                    Some(StoreWriter::spawn(path, registry)),
                     loaded
                         .quarantined_path
                         .map(|path| path.to_string_lossy().into_owned()),
@@ -324,7 +326,7 @@ fn bridge_store(registry: SessionRegistry, writer: StoreWriter) {
                     event,
                     RegistryEvent::SessionUpdated { .. } | RegistryEvent::SessionRemoved { .. }
                 ) {
-                    writer.update(registry.store_snapshot());
+                    writer.update();
                 }
             }
         });

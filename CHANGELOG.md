@@ -49,6 +49,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - The PTY environment now preserves the Windows user/runtime directories, processor count and
   present HTTP(S)/no-proxy settings; installed Claude and Codex binaries are covered by sanitized
   `--version` launch tests while parent-only secrets remain excluded.
+- Session persistence now wakes a worker with a lightweight signal; it builds the registry snapshot
+  after the debounce and stores replay tails as per-session binary sidecars instead of cloning and
+  JSON-encoding a full ring for every output event.
 - R-16 adds lifecycle-aware attention notifications with stable dedup keys, repository grouping,
   automatic retraction on progress, and startup/long-tool grace suppression. The shell consumes
   raised notifications as deduplicated, click-to-focus in-app alerts.

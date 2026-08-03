@@ -37,6 +37,9 @@ pub struct StoredSession {
     pub session: Session,
     pub spec: LaunchSpec,
     pub command: ResolvedCommand,
+    /// Loaded from `<store>.scrollback/<session>.bin`; old inline stores are
+    /// still accepted for a one-time compatibility read.
+    #[serde(default, skip_serializing)]
     pub scrollback: Vec<u8>,
 }
 
@@ -78,13 +81,14 @@ impl SessionStoreSnapshot {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         };
-        let snapshot: Self = serde_json::from_str(&text)?;
+        let mut snapshot: Self = serde_json::from_str(&text)?;
         if snapshot.schema_version != SESSION_STORE_SCHEMA_VERSION {
             return Err(SessionStoreError::UnsupportedVersion {
                 found: snapshot.schema_version,
                 supported: SESSION_STORE_SCHEMA_VERSION,
             });
         }
+        load_sidecars(path, &mut snapshot)?;
         Ok(Some(snapshot))
     }
 
@@ -100,9 +104,77 @@ impl SessionStoreSnapshot {
         }
         let mut text = serde_json::to_string_pretty(self)?;
         text.push('\n');
+        write_sidecars(path, self)?;
         write_atomic(path, text.as_bytes(), true)?;
         Ok(())
     }
+}
+
+fn sidecar_dir(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("sessions.json");
+    path.with_file_name(format!("{name}.scrollback"))
+}
+
+fn sidecar_path(path: &Path, id: &SessionId) -> PathBuf {
+    sidecar_dir(path).join(format!("{}.bin", sidecar_name(id)))
+}
+
+fn sidecar_name(id: &SessionId) -> String {
+    let mut name = String::with_capacity(id.0.len());
+    for byte in id.0.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') {
+            name.push(byte as char);
+        } else {
+            name.push_str(&format!("_{byte:02x}"));
+        }
+    }
+    if name.is_empty() {
+        "session".into()
+    } else {
+        name
+    }
+}
+
+fn load_sidecars(
+    path: &Path,
+    snapshot: &mut SessionStoreSnapshot,
+) -> Result<(), SessionStoreError> {
+    for stored in &mut snapshot.sessions {
+        let sidecar = sidecar_path(path, &stored.session.id);
+        match fs::read(sidecar) {
+            Ok(bytes) => stored.scrollback = bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+fn write_sidecars(path: &Path, snapshot: &SessionStoreSnapshot) -> Result<(), SessionStoreError> {
+    let directory = sidecar_dir(path);
+    if snapshot
+        .sessions
+        .iter()
+        .any(|session| !session.scrollback.is_empty())
+    {
+        fs::create_dir_all(&directory)?;
+    }
+    for stored in &snapshot.sessions {
+        let sidecar = sidecar_path(path, &stored.session.id);
+        if stored.scrollback.is_empty() {
+            match fs::remove_file(sidecar) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        } else {
+            write_atomic(&sidecar, &stored.scrollback, false)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -147,6 +219,8 @@ mod tests {
         snapshot.write(&path).expect("write");
         let text = fs::read_to_string(&path).expect("read");
         assert!(text.contains("\n  \"schema_version\": 1,"));
+        assert!(!text.contains("\"scrollback\""));
+        assert!(sidecar_path(&path, &SessionId::new(1)).is_file());
         assert_eq!(
             SessionStoreSnapshot::read(&path)
                 .expect("read snapshot")
