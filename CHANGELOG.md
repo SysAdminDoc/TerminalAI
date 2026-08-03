@@ -63,6 +63,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   requests while returning an explicit state-unavailable error for fleet mutations and snapshots.
 - Notification retraction is now session-wide across attention-state changes and archive/kill/remove
   paths, preventing stale badges and toasts.
+- Automatic restarts now share one bounded timer scheduler; admission-blocked attempts consume
+  restart backoff and budget, and scheduler failure marks the session failed instead of abandoning it.
 - Registry and IPC event delivery now use bounded nonblocking queues with counted drops, and each
   subscribed connection stops and joins its event bridge before the writer thread is joined.
 - R-16 adds lifecycle-aware attention notifications with stable dedup keys, repository grouping,

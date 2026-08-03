@@ -5,12 +5,13 @@
 //! fleet metadata together, then publishes small events to any interested
 //! shell. This makes closing or reloading a view harmless to live agents.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::cmp::Ordering as CmpOrdering;
+use std::collections::{BTreeMap, BinaryHeap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TrySendError};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::thread;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::agent::{AgentBinary, Origin};
 use crate::app_server::{AgentEvent, AppServerEvent};
@@ -167,9 +168,34 @@ struct State {
     subscribers: Vec<SyncSender<RegistryEvent>>,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+struct RestartTask {
+    due: Instant,
+    sequence: u64,
+    id: SessionId,
+    generation: u64,
+}
+
+impl Ord for RestartTask {
+    fn cmp(&self, other: &Self) -> CmpOrdering {
+        other
+            .due
+            .cmp(&self.due)
+            .then_with(|| other.sequence.cmp(&self.sequence))
+    }
+}
+
+impl PartialOrd for RestartTask {
+    fn partial_cmp(&self, other: &Self) -> Option<CmpOrdering> {
+        Some(self.cmp(other))
+    }
+}
+
 struct Inner {
     state: Mutex<State>,
     dropped_events: AtomicU64,
+    restart_tx: Sender<RestartTask>,
+    restart_sequence: AtomicU64,
 }
 
 impl Inner {
@@ -211,21 +237,27 @@ impl SessionRegistry {
     }
 
     pub fn with_admission(admission: AdmissionConfig) -> Self {
-        Self {
-            inner: Arc::new(Inner {
-                state: Mutex::new(State {
-                    next_id: 1,
-                    focused: None,
-                    entries: BTreeMap::new(),
-                    archives: Vec::new(),
-                    queue: VecDeque::new(),
-                    admission,
-                    notifications: NotificationCenter::default(),
-                    subscribers: Vec::new(),
-                }),
-                dropped_events: AtomicU64::new(0),
+        let (restart_tx, restart_rx) = mpsc::channel();
+        let inner = Arc::new(Inner {
+            state: Mutex::new(State {
+                next_id: 1,
+                focused: None,
+                entries: BTreeMap::new(),
+                archives: Vec::new(),
+                queue: VecDeque::new(),
+                admission,
+                notifications: NotificationCenter::default(),
+                subscribers: Vec::new(),
             }),
-        }
+            dropped_events: AtomicU64::new(0),
+            restart_tx,
+            restart_sequence: AtomicU64::new(0),
+        });
+        let weak = Arc::downgrade(&inner);
+        let _ = thread::Builder::new()
+            .name("terminalai-restart-scheduler".into())
+            .spawn(move || restart_scheduler_loop(restart_rx, weak));
+        Self { inner }
     }
 
     /// Rehydrate rows from the last durable snapshot without starting any
@@ -1163,13 +1195,21 @@ impl SessionRegistry {
     }
 
     fn schedule_restart(&self, id: SessionId, generation: u64, delay: Duration) {
-        let registry = self.clone();
-        let _ = thread::Builder::new()
-            .name(format!("terminalai-restart-{id}"))
-            .spawn(move || {
-                thread::sleep(delay);
-                registry.restart(id, generation);
-            });
+        let sequence = self.inner.restart_sequence.fetch_add(1, Ordering::Relaxed);
+        let task_id = id.clone();
+        if self
+            .inner
+            .restart_tx
+            .send(RestartTask {
+                due: Instant::now() + delay,
+                sequence,
+                id,
+                generation,
+            })
+            .is_err()
+        {
+            self.mark_restart_failed(&task_id, generation);
+        }
     }
 
     fn restart(&self, id: SessionId, pending_generation: u64) {
@@ -1188,7 +1228,7 @@ impl SessionRegistry {
             }
             if admission_full {
                 drop(state);
-                self.schedule_restart(id, pending_generation, Duration::from_millis(250));
+                self.restart_spawn_failed(&id, pending_generation);
                 return;
             }
             entry.generation = entry.generation.saturating_add(1);
@@ -1203,7 +1243,7 @@ impl SessionRegistry {
     }
 
     fn restart_spawn_failed(&self, id: &SessionId, generation: u64) {
-        let restart = {
+        let (restart, session, notifications) = {
             let mut state = lock_state(&self.inner);
             let Some(entry) = state.entries.get_mut(id) else {
                 return;
@@ -1211,20 +1251,63 @@ impl SessionRegistry {
             if entry.generation != generation {
                 return;
             }
+            let previous_status = entry.session.status;
+            let previous_state_since = entry.session.state_since;
+            let now = SystemTime::now();
             entry.generation = entry.generation.saturating_add(1);
-            match entry.session.schedule_restart_at_from(
-                None,
-                SystemTime::now(),
-                StatusSource::Supervisor,
-            ) {
-                RestartDecision::Backoff(delay) => Some((entry.generation, delay)),
-                RestartDecision::Failed => None,
-            }
+            let restart =
+                match entry
+                    .session
+                    .schedule_restart_at_from(None, now, StatusSource::Supervisor)
+                {
+                    RestartDecision::Backoff(delay) => Some((entry.generation, delay)),
+                    RestartDecision::Failed => None,
+                };
+            let session = entry.session.clone();
+            let notifications =
+                state
+                    .notifications
+                    .observe(&session, previous_status, previous_state_since, now);
+            (restart, session, notifications)
         };
-        self.emit_session(id);
+        self.emit(RegistryEvent::SessionUpdated { session });
+        self.emit_notification_changes(notifications);
         if let Some((generation, delay)) = restart {
             self.schedule_restart(id.clone(), generation, delay);
         }
+    }
+
+    fn mark_restart_failed(&self, id: &SessionId, generation: u64) {
+        let (session, notifications) = {
+            let mut state = lock_state(&self.inner);
+            let Some(entry) = state.entries.get_mut(id) else {
+                return;
+            };
+            if entry.generation != generation
+                || entry.pty.is_some()
+                || entry.stop_requested
+                || entry.session.phase != SessionPhase::Backoff
+            {
+                return;
+            }
+            let previous_status = entry.session.status;
+            let previous_state_since = entry.session.state_since;
+            let now = SystemTime::now();
+            entry
+                .session
+                .mark_resurrectable_at_from(None, now, StatusSource::Supervisor);
+            entry.session.phase = SessionPhase::Failed;
+            entry.session.health = crate::session::SessionHealth::Failed;
+            entry.generation = entry.generation.saturating_add(1);
+            let session = entry.session.clone();
+            let notifications =
+                state
+                    .notifications
+                    .observe(&session, previous_status, previous_state_since, now);
+            (session, notifications)
+        };
+        self.emit(RegistryEvent::SessionUpdated { session });
+        self.emit_notification_changes(notifications);
     }
 
     fn spawn_monitor(&self, id: SessionId, pty: Arc<PtySession>, generation: u64) {
@@ -1246,6 +1329,36 @@ impl SessionRegistry {
                 }
                 thread::sleep(Duration::from_millis(50));
             });
+    }
+}
+
+fn restart_scheduler_loop(receiver: Receiver<RestartTask>, inner: Weak<Inner>) {
+    let mut pending: BinaryHeap<RestartTask> = BinaryHeap::new();
+    loop {
+        while pending
+            .peek()
+            .map(|task| task.due <= Instant::now())
+            .unwrap_or(false)
+        {
+            let task = pending.pop().expect("restart task disappeared");
+            let Some(inner) = inner.upgrade() else {
+                return;
+            };
+            SessionRegistry { inner }.restart(task.id, task.generation);
+        }
+
+        if let Some(task) = pending.peek() {
+            match receiver.recv_timeout(task.due.saturating_duration_since(Instant::now())) {
+                Ok(task) => pending.push(task),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+        } else {
+            match receiver.recv() {
+                Ok(task) => pending.push(task),
+                Err(_) => return,
+            }
+        }
     }
 }
 
@@ -2061,6 +2174,80 @@ mod tests {
                 event: AgentEvent::AppServer(AppServerEvent::TokenUsageUpdated { .. })
             }
         )));
+    }
+
+    #[test]
+    fn admission_blocked_restart_consumes_budget_without_spawning_retry_threads() {
+        let registry = SessionRegistry::with_admission(AdmissionConfig::new(1, None));
+        let cwd = Path::new(".").to_path_buf();
+        let spec = spec_for(Agent::Claude, &cwd);
+        let active_id = SessionId::new(1);
+        let target_id = SessionId::new(2);
+        let mut active = Session::new(active_id.clone(), &spec);
+        active.set_status(SessionStatus::Idle);
+        let mut target = Session::new(target_id.clone(), &spec);
+        target.status = SessionStatus::Exited;
+        target.phase = SessionPhase::Backoff;
+        target.health = crate::session::SessionHealth::Degraded;
+        target.restarts = 1;
+        target.backoff_until = Some(SystemTime::UNIX_EPOCH);
+        {
+            let mut state = lock_state(&registry.inner);
+            state.entries.insert(
+                active_id,
+                Entry {
+                    session: active,
+                    command: ResolvedCommand {
+                        program: PathBuf::from("active-agent.exe"),
+                        args: Vec::new(),
+                        cwd: cwd.clone(),
+                    },
+                    spec: spec.clone(),
+                    pty: None,
+                    scrollback: RingBuffer::default(),
+                    grid: TerminalGrid::default(),
+                    generation: 1,
+                    stop_requested: false,
+                    teardown_done: true,
+                },
+            );
+            state.entries.insert(
+                target_id.clone(),
+                Entry {
+                    session: target,
+                    command: ResolvedCommand {
+                        program: PathBuf::from("retry-agent.exe"),
+                        args: Vec::new(),
+                        cwd,
+                    },
+                    spec,
+                    pty: None,
+                    scrollback: RingBuffer::default(),
+                    grid: TerminalGrid::default(),
+                    generation: 1,
+                    stop_requested: false,
+                    teardown_done: true,
+                },
+            );
+        }
+
+        registry.schedule_restart(target_id.clone(), 1, Duration::ZERO);
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while std::time::Instant::now() < deadline {
+            let row = registry
+                .snapshot()
+                .into_iter()
+                .find(|session| session.id == target_id)
+                .expect("restart row");
+            if row.restarts >= 2 {
+                assert_eq!(row.phase, SessionPhase::Backoff);
+                assert!(row.backoff_until.is_some());
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        panic!("admission-blocked restart did not consume its budget");
     }
 
     #[cfg(windows)]
