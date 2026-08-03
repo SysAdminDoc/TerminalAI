@@ -207,23 +207,18 @@ fn checklist_item(trimmed: &str) -> Option<Item<'_>> {
         .or_else(|| trimmed.strip_prefix("* "))
         .or_else(|| trimmed.strip_prefix("+ "))?;
     let rest = rest.trim_start();
-    let checked = if let Some(rest) = rest.strip_prefix("[ ]") {
+    if let Some(rest) = rest.strip_prefix("[ ]") {
         return Some(Item {
             checked: false,
             text: rest.trim(),
         });
-    } else if let Some(rest) = rest
-        .strip_prefix("[x]")
+    }
+    rest.strip_prefix("[x]")
         .or_else(|| rest.strip_prefix("[X]"))
-    {
-        Some(Item {
+        .map(|rest| Item {
             checked: true,
             text: rest.trim(),
         })
-    } else {
-        None
-    };
-    checked
 }
 
 fn truncate(text: &str) -> String {
