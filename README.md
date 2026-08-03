@@ -45,9 +45,9 @@ Working today (`terminalai-probe`, headless):
 - Spawns and drives either agent on a live ConPTY
 - Runs a Tauri 2.11.5/WebView2 shell with the Catppuccin fleet list, launcher, presets and one
   reused xterm renderer
-- 101 default tests over the flag mapping, real-pty boundary, supervision state machine, registry,
+- 103 default tests over the flag mapping, real-pty boundary, supervision state machine, registry,
   diagnostics, review aggregation, daemon protocol, presets, launch golden fixtures, atomic file
-  recovery and fleet-row model; 103
+  recovery, prompt safety and fleet-row model; 105
   with the opt-in app-server
   transport enabled
 
@@ -191,7 +191,9 @@ Verified flags, not guesses.
 | Web search | — | `--search` |
 
 Options an agent cannot express are **refused, not dropped**. Asking for a read-only sandbox and
-silently getting an unsandboxed Claude session is the kind of thing that costs you a repo.
+silently getting an unsandboxed Claude session is the kind of thing that costs you a repo. Prompts
+are placed after an explicit `--` option terminator, so pasted text beginning with `-` remains text.
+The `extra_args` escape hatch is trusted-input-only and is never populated from prompt text.
 
 ## Layout
 

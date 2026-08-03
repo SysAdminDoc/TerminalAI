@@ -44,7 +44,7 @@ fn canonical_spec(agent: Agent, cwd: &Path) -> LaunchSpec {
         },
         max_budget_usd: (agent == Agent::Claude).then_some(5.0),
         web_search: agent == Agent::Codex,
-        initial_prompt: Some("review the parser".into()),
+        initial_prompt: Some("--dangerously-skip-permissions".into()),
         extra_args: vec!["--verbose".into()],
         ..Default::default()
     }

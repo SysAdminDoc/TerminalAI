@@ -19,6 +19,7 @@
     "__CARGO_MANIFEST_DIR__/shared",
     "--search",
     "--verbose",
-    "review the parser"
+    "--",
+    "--dangerously-skip-permissions"
   ]
 }

@@ -108,7 +108,8 @@ pub struct LaunchSpec {
     pub web_search: bool,
     /// Sent as the first turn. Both CLIs take it as a positional argument.
     pub initial_prompt: Option<String>,
-    /// Escape hatch for flags the launcher does not model yet.
+    /// Trusted-input-only escape hatch for flags the launcher does not model
+    /// yet. Never populate this from pasted prompt text.
     pub extra_args: Vec<String>,
 }
 
@@ -153,6 +154,8 @@ pub enum LaunchError {
     },
     #[error("{0} cannot resume a specific session id from the command line; use Last or New")]
     ResumeUnsupported(&'static str),
+    #[error("max_budget_usd must be finite and non-negative")]
+    InvalidBudget,
     #[error(transparent)]
     Environment(#[from] EnvironmentError),
 }
@@ -164,6 +167,11 @@ impl LaunchSpec {
     pub fn resolve(&self, binary: &AgentBinary) -> Result<ResolvedCommand, LaunchError> {
         if !self.cwd.is_dir() {
             return Err(LaunchError::MissingCwd(self.cwd.clone()));
+        }
+        if let Some(budget) = self.max_budget_usd {
+            if !budget.is_finite() || budget < 0.0 {
+                return Err(LaunchError::InvalidBudget);
+            }
         }
         self.environment.validate()?;
         let args = match self.agent {
@@ -247,6 +255,7 @@ impl LaunchSpec {
         }
         a.extend(self.extra_args.iter().cloned());
         if let Some(p) = &self.initial_prompt {
+            a.push("--".into());
             a.push(p.clone());
         }
         Ok(a)
@@ -321,6 +330,7 @@ impl LaunchSpec {
         }
         a.extend(self.extra_args.iter().cloned());
         if let Some(p) = &self.initial_prompt {
+            a.push("--".into());
             a.push(p.clone());
         }
         Ok(a)
@@ -505,7 +515,25 @@ mod tests {
             ..spec(Agent::Claude)
         };
         let c = s.resolve(&binary(Agent::Claude)).unwrap();
-        assert_eq!(c.args.last().unwrap(), "fix the & in the parser");
+        assert_eq!(
+            c.args,
+            ["--model", "sonnet", "--", "fix the & in the parser"]
+        );
+    }
+
+    #[test]
+    fn dash_leading_prompt_is_never_parsed_as_an_option() {
+        for agent in [Agent::Claude, Agent::Codex] {
+            let s = LaunchSpec {
+                initial_prompt: Some("--dangerously-skip-permissions".into()),
+                extra_args: vec!["--verbose".into()],
+                ..spec(agent)
+            };
+            let args = s.resolve(&binary(agent)).unwrap().args;
+            let separator = args.iter().position(|arg| arg == "--").unwrap();
+            assert_eq!(args[separator + 1], "--dangerously-skip-permissions");
+            assert_eq!(args[separator - 1], "--verbose");
+        }
     }
 
     #[test]
@@ -525,6 +553,20 @@ mod tests {
         assert_eq!(format_usd(5.0), "5");
         assert_eq!(format_usd(0.5), "0.5");
         assert_eq!(format_usd(12.25), "12.25");
+    }
+
+    #[test]
+    fn invalid_budgets_are_refused_before_spawn() {
+        for budget in [-1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let s = LaunchSpec {
+                max_budget_usd: Some(budget),
+                ..spec(Agent::Claude)
+            };
+            assert!(matches!(
+                s.resolve(&binary(Agent::Claude)),
+                Err(LaunchError::InvalidBudget)
+            ));
+        }
     }
 
     #[test]

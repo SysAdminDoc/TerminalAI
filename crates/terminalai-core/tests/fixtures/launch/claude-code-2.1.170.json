@@ -17,6 +17,7 @@
     "claude-session-1",
     "--fork-session",
     "--verbose",
-    "review the parser"
+    "--",
+    "--dangerously-skip-permissions"
   ]
 }
