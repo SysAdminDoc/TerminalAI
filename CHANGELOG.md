@@ -140,6 +140,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   laid out below it.
 - Closing the launcher, or pressing Enter in any launcher field, no longer spawns an agent —
   every dialog control is an explicit button and the form refuses submission outright.
+- The focused terminal now fits its pane. The fit addon was constructed and registered but never
+  called and there was no resize listener, so the grid stayed at a hard-coded 120x40 regardless of
+  pane size. Measured in WebView2's engine: 99 columns at a 1356px window, 141 at 1920px, and back
+  down when the panel narrows. Resizes are debounced by 180 ms and skipped when the size is
+  unchanged, because agent TUIs hard-wrap and a resize arriving mid-drag corrupts the output the
+  supervisor parses for status.
+- A focus switch now carries a generation token, so output that arrives late for the session you
+  just left is discarded instead of being written into the new session's grid.
 - The control protocol enforces a 1 MiB frame limit on read, so a peer that sends bytes without a
   newline can no longer exhaust memory on either end. Oversized `Write` payloads are refused whole
   with a typed error rather than truncated — half a prompt reaching an agent is worse than none.

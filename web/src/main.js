@@ -76,6 +76,9 @@ const state = {
   terminal: null,
   outputChannel: null,
   fitAddon: null,
+  focusGeneration: 0,
+  resizeTimer: null,
+  lastSentSize: null,
   previewTimer: null,
   preflight: null,
   preflightMode: false,
@@ -98,8 +101,13 @@ function terminalBytes(payload) {
   return new TextEncoder().encode(String(payload ?? ""));
 }
 
-function writeTerminalBytes(payload, id = state.focused) {
-  if (id === state.focused && state.terminal) state.terminal.write(terminalBytes(payload));
+// Output arrives asynchronously and a focus switch spans two awaits, so a chunk
+// for the session we just left can land after the new one is installed. The
+// generation token is bumped on every switch; anything stamped with an older one
+// is discarded rather than written into the wrong session's grid.
+function writeTerminalBytes(payload, id = state.focused, generation = state.focusGeneration) {
+  if (id !== state.focused || generation !== state.focusGeneration) return;
+  if (state.terminal) state.terminal.write(terminalBytes(payload));
 }
 
 function escapeHtml(value) {
@@ -849,6 +857,8 @@ function renderTerminalPlaceholder() {
   const attached = Boolean(state.focused);
   $("terminal-placeholder").classList.toggle("view-hidden", attached);
   $("terminal-host").classList.toggle("terminal-host-attached", attached);
+  // The host only has a usable box once the placeholder is out of flow.
+  if (attached) scheduleFit();
 }
 
 function updateTerminalHeader() {
@@ -1000,7 +1010,9 @@ async function loadSnapshot() {
 async function focusSession(id) {
   const previousFocused = state.focused;
   state.focused = id;
+  state.focusGeneration += 1;
   state.terminal?.reset();
+  fitTerminal();
   renderRows();
   updateTerminalHeader();
   try {
@@ -1016,8 +1028,9 @@ async function focusSession(id) {
 }
 
 function createOutputChannel(id) {
+  const generation = state.focusGeneration;
   const channel = new Channel();
-  channel.onmessage = (data) => writeTerminalBytes(data, id);
+  channel.onmessage = (data) => writeTerminalBytes(data, id, generation);
   return channel;
 }
 
@@ -1237,6 +1250,61 @@ function openLauncher() {
   $("cwd-input").focus();
 }
 
+const DEFAULT_COLS = 120;
+const DEFAULT_ROWS = 40;
+/// Agent TUIs hard-wrap and do not reflow, so a resize arriving mid-drag
+/// corrupts the very output the supervisor parses for status. Coalesce.
+const RESIZE_DEBOUNCE_MS = 180;
+
+function terminalSizeLabel(cols, rows) {
+  $("terminal-grid").textContent = `GRID  ${cols} × ${rows}`;
+}
+
+/// Fit the grid to the pane and tell the pty, at most once per settled resize.
+function fitTerminal({ notify = true } = {}) {
+  if (!state.terminal || !state.fitAddon) return;
+  const host = $("terminal-host");
+  if (!host || host.clientWidth <= 0 || host.clientHeight <= 0) return;
+  let size;
+  try {
+    size = state.fitAddon.proposeDimensions();
+  } catch {
+    return;
+  }
+  if (!size || !Number.isFinite(size.cols) || !Number.isFinite(size.rows)) return;
+  const cols = Math.max(20, Math.floor(size.cols));
+  const rows = Math.max(5, Math.floor(size.rows));
+  if (state.terminal.cols !== cols || state.terminal.rows !== rows) {
+    state.terminal.resize(cols, rows);
+  }
+  terminalSizeLabel(cols, rows);
+  if (!notify || !state.focused) return;
+  const signature = `${cols}x${rows}`;
+  if (state.lastSentSize === signature) return;
+  state.lastSentSize = signature;
+  invoke("resize_session", { id: state.focused, rows, cols }).catch(() => {
+    // A resize the daemon refuses is not worth a toast; the next one retries.
+    state.lastSentSize = null;
+  });
+}
+
+function scheduleFit() {
+  if (state.resizeTimer) clearTimeout(state.resizeTimer);
+  state.resizeTimer = setTimeout(() => {
+    state.resizeTimer = null;
+    fitTerminal();
+  }, RESIZE_DEBOUNCE_MS);
+}
+
+function observeTerminalSize() {
+  const host = $("terminal-host");
+  if (!host) return;
+  if (typeof ResizeObserver === "function") {
+    new ResizeObserver(scheduleFit).observe(host);
+  }
+  window.addEventListener("resize", scheduleFit);
+}
+
 function setupTerminal() {
   state.terminal = new Terminal({
     allowProposedApi: false,
@@ -1265,7 +1333,10 @@ function setupTerminal() {
   state.fitAddon = new FitAddon();
   state.terminal.loadAddon(state.fitAddon);
   state.terminal.open($("terminal-host"));
-  state.terminal.resize(120, 40);
+  state.terminal.resize(DEFAULT_COLS, DEFAULT_ROWS);
+  // The addon was constructed and registered but never called, so the grid
+  // stayed at its hard-coded size no matter how large the pane was.
+  observeTerminalSize();
   state.terminal.onData(async (data) => {
     if (!state.focused) return;
     try {
@@ -1403,9 +1474,9 @@ function bindEvents() {
   $("terminal-resize").addEventListener("click", async () => {
     if (!state.focused) return;
     try {
-      await invoke("resize_session", { id: state.focused, rows: 40, cols: 120 });
-      state.terminal?.resize(120, 40);
-      showToast("Terminal reset to canonical 120 × 40 grid", "success");
+      state.lastSentSize = null;
+      fitTerminal();
+      showToast(`Terminal refitted to ${state.terminal.cols} × ${state.terminal.rows}`, "success");
     } catch (error) {
       showToast(String(error));
     }

@@ -97,13 +97,6 @@ From `RESEARCH.md`. IDs R-01…R-63; the next researcher continues from R-64.
 
 ### P2
 
-- [ ] R-57 · P2 — Correct terminal sizing and the focus-switch race
-  Why: the terminal is hard-coded to 120×40 regardless of pane size, and output arriving during a focus switch is written to the wrong session.
-  Evidence: `web/src/main.js:721-724` instantiates and registers `FitAddon` but never calls `.fit()`, and there is no window `resize` listener. `main.js:462-471` assigns `state.focused` after the awaited `reattach`; `hydrateTerminal` (`main.js:480-492`) resets then writes across another await.
-  Touches: `web/src/main.js`
-  Acceptance: the terminal fits its pane, with resize debounced into an explicit PTY resize request and never fired on splitter drag (agent TUIs hard-wrap and do not reflow, so a drag-driven resize corrupts the output being parsed for status); focus switches carry a generation token so late output for the previous session is discarded; replay uses DEC 2026 synchronized output and `onWriteParsed` (both new in `@xterm/xterm` 6.0.0, already pinned) to avoid tearing.
-  Complexity: M
-
 - [ ] R-59 · P2 — Daemon lifecycle: shutdown, skew diagnosis, no duplicate spawn
   Why: nothing ever stops the daemon, and on protocol skew the app spawns a second one that cannot bind, then reports a generic timeout while the old daemon keeps running with live agents and no UI.
   Evidence: `serve()` (`lib.rs:270-285`) loops until killed — no console-control handler, no idle or last-client shutdown; the client's typed `VersionMismatch` arm (`lib.rs:690`) is dead code because the daemon answers `Response::Error` (`lib.rs:367-380`); `crates/terminalai-app/src/main.rs:261-300` treats any connect failure as "no daemon running"; `PIPE_NAME` embeds `v2` (`lib.rs:38`), so a future v3 orphans the v2 daemon permanently. `interprocess` already sets `FILE_FLAG_FIRST_PIPE_INSTANCE`.
