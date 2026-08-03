@@ -47,9 +47,11 @@ Working today (`terminalai-probe`, headless):
   reused xterm renderer
 - Preserves PTY and replay output as raw bytes end to end, delivering focused-session batches to
   xterm without corrupting multi-byte sequences split across reads
-- 108 default tests over the flag mapping, real-pty boundary, supervision state machine, registry,
+- Windows PTY sessions use kill-on-close job objects so stopping a session reaps its descendants;
+  daemon shutdown runs active teardown hooks once
+- 110 default tests over the flag mapping, real-pty boundary, supervision state machine, registry,
   diagnostics, review aggregation, daemon protocol, presets, launch golden fixtures, atomic file
-  recovery, corrupt-store quarantine, deterministic fleet ordering, prompt safety and fleet-row model; 110
+  recovery, corrupt-store quarantine, deterministic fleet ordering, prompt safety and fleet-row model; 112
   with the opt-in app-server
   transport enabled
 

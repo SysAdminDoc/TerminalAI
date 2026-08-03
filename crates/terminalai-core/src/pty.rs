@@ -13,6 +13,19 @@ use std::sync::{Arc, Mutex};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty};
 
+#[cfg(windows)]
+use std::mem::size_of;
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+#[cfg(windows)]
+use windows_sys::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+};
+
 pub use portable_pty::PtySize;
 
 use crate::environment;
@@ -30,6 +43,65 @@ pub enum PtyError {
     Gone,
     #[error("write failed: {0}")]
     Write(#[from] std::io::Error),
+    #[error("could not contain child process: {0}")]
+    Job(String),
+}
+
+#[cfg(windows)]
+#[derive(Debug)]
+struct ProcessJob {
+    handle: OwnedHandle,
+}
+
+#[cfg(windows)]
+impl ProcessJob {
+    fn assign(process: RawHandle) -> Result<Self, PtyError> {
+        let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if job.is_null() {
+            return Err(PtyError::Job(std::io::Error::last_os_error().to_string()));
+        }
+
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        let configured = unsafe {
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        } != 0;
+        if !configured {
+            let error = std::io::Error::last_os_error();
+            unsafe {
+                CloseHandle(job);
+            }
+            return Err(PtyError::Job(error.to_string()));
+        }
+
+        let assigned = unsafe { AssignProcessToJobObject(job, process as HANDLE) } != 0;
+        if !assigned {
+            let error = std::io::Error::last_os_error();
+            unsafe {
+                CloseHandle(job);
+            }
+            return Err(PtyError::Job(error.to_string()));
+        }
+
+        Ok(Self {
+            handle: unsafe { OwnedHandle::from_raw_handle(job as RawHandle) },
+        })
+    }
+
+    fn terminate(&self) -> Result<(), PtyError> {
+        let terminated =
+            unsafe { TerminateJobObject(self.handle.as_raw_handle() as HANDLE, 1) } != 0;
+        if terminated {
+            Ok(())
+        } else {
+            Err(PtyError::Gone)
+        }
+    }
 }
 
 /// A live agent process attached to a pseudo-console.
@@ -38,6 +110,8 @@ pub struct PtySession {
     child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     running: Arc<AtomicBool>,
+    #[cfg(windows)]
+    job: ProcessJob,
 }
 
 /// Device Status Report — "where is the cursor?".
@@ -92,6 +166,21 @@ impl PtySession {
         // child's exit while any handle to the slave side is still open.
         drop(pair.slave);
 
+        #[cfg(windows)]
+        let job = {
+            let process = child.as_raw_handle().ok_or_else(|| {
+                PtyError::Job("portable-pty did not expose a process handle".into())
+            });
+            match process.and_then(ProcessJob::assign) {
+                Ok(job) => job,
+                Err(error) => {
+                    let mut child = child;
+                    let _ = child.kill();
+                    return Err(error);
+                }
+            }
+        };
+
         let mut reader = pair
             .master
             .try_clone_reader()
@@ -139,6 +228,8 @@ impl PtySession {
             child: Arc::new(Mutex::new(child)),
             writer,
             running,
+            #[cfg(windows)]
+            job,
         })
     }
 
@@ -178,7 +269,10 @@ impl PtySession {
     pub fn try_wait(&self) -> Result<Option<u32>, PtyError> {
         let mut c = self.child.lock().map_err(|_| PtyError::Gone)?;
         match c.try_wait() {
-            Ok(Some(status)) => Ok(Some(status.exit_code())),
+            Ok(Some(status)) => {
+                self.running.store(false, Ordering::SeqCst);
+                Ok(Some(status.exit_code()))
+            }
             Ok(None) => Ok(None),
             Err(_) => Err(PtyError::Gone),
         }
@@ -186,10 +280,23 @@ impl PtySession {
 
     /// Terminate the agent. Used when the user closes a session.
     pub fn kill(&self) -> Result<(), PtyError> {
-        let mut c = self.child.lock().map_err(|_| PtyError::Gone)?;
-        c.kill().map_err(|_| PtyError::Gone)?;
+        #[cfg(windows)]
+        self.job.terminate()?;
+        #[cfg(not(windows))]
+        {
+            let mut c = self.child.lock().map_err(|_| PtyError::Gone)?;
+            c.kill().map_err(|_| PtyError::Gone)?;
+        }
         self.running.store(false, Ordering::SeqCst);
         Ok(())
+    }
+}
+
+impl Drop for PtySession {
+    fn drop(&mut self) {
+        if self.is_running() {
+            let _ = self.kill();
+        }
     }
 }
 
@@ -315,6 +422,93 @@ mod tests {
         assert!(
             output.contains("PORT=42000"),
             "child output did not contain PORT: {output:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    fn process_is_running(pid: u32) -> bool {
+        use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            return false;
+        }
+        let mut status = 0u32;
+        let readable = unsafe { GetExitCodeProcess(handle, &mut status) } != 0;
+        unsafe {
+            CloseHandle(handle);
+        }
+        readable && status == STILL_ACTIVE as u32
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn kill_reaps_a_child_process_tree() {
+        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        let cmd = ResolvedCommand {
+            program: PathBuf::from("powershell.exe"),
+            args: vec![
+                "-NoLogo".into(),
+                "-NoProfile".into(),
+                "-NonInteractive".into(),
+                "-Command".into(),
+                "$child = Start-Process -FilePath ping.exe -ArgumentList @('127.0.0.1','-n','30') -PassThru -NoNewWindow; Write-Output ('GRANDCHILD:' + $child.Id); Wait-Process -Id $child.Id".into(),
+            ],
+            cwd: std::env::current_dir().expect("test cwd"),
+        };
+        let session = PtySession::spawn(&cmd, default_size(), move |chunk| {
+            let _ = tx.send(chunk.to_vec());
+        })
+        .expect("spawn process-tree test");
+        let parent_pid = session.pid().expect("parent pid");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut output = String::new();
+        let grandchild_pid = loop {
+            while let Ok(chunk) = rx.try_recv() {
+                output.push_str(&String::from_utf8_lossy(&chunk));
+            }
+            if let Some(pid) = output
+                .split("GRANDCHILD:")
+                .nth(1)
+                .and_then(|value| {
+                    value
+                        .split(|character: char| !character.is_ascii_digit())
+                        .next()
+                })
+                .filter(|value| !value.is_empty())
+                .and_then(|value| value.parse::<u32>().ok())
+            {
+                break pid;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "process tree did not report its descendant: {output:?}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert!(process_is_running(parent_pid), "parent exited before kill");
+        assert!(
+            process_is_running(grandchild_pid),
+            "grandchild exited before kill"
+        );
+
+        session.kill().expect("terminate process job");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline
+            && (process_is_running(parent_pid) || process_is_running(grandchild_pid))
+        {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(
+            !process_is_running(parent_pid),
+            "parent survived job termination"
+        );
+        assert!(
+            !process_is_running(grandchild_pid),
+            "grandchild survived job termination"
         );
     }
 

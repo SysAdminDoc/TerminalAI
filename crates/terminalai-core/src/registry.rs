@@ -145,6 +145,7 @@ struct Entry {
     grid: TerminalGrid,
     generation: u64,
     stop_requested: bool,
+    teardown_done: bool,
 }
 
 struct State {
@@ -246,6 +247,7 @@ impl SessionRegistry {
                     grid,
                     generation: 1,
                     stop_requested: false,
+                    teardown_done: true,
                 },
             );
         }
@@ -397,6 +399,7 @@ impl SessionRegistry {
                     grid: TerminalGrid::default(),
                     generation: 1,
                     stop_requested: false,
+                    teardown_done: true,
                 },
             );
             (id, queued)
@@ -799,19 +802,33 @@ impl SessionRegistry {
     }
 
     pub fn shutdown(&self) {
-        let ptys: Vec<_> = {
+        let sessions: Vec<_> = {
             let mut state = self.inner.state.lock().expect("registry poisoned");
             state
                 .entries
                 .values_mut()
                 .filter_map(|entry| {
                     entry.stop_requested = true;
-                    entry.pty.clone()
+                    let pty = entry.pty.clone()?;
+                    let teardown = if entry.teardown_done {
+                        None
+                    } else {
+                        entry.teardown_done = true;
+                        Some((
+                            entry.session.cwd.clone(),
+                            entry.spec.environment.clone(),
+                            entry.session.ports.clone(),
+                        ))
+                    };
+                    Some((entry.session.id.clone(), pty, teardown))
                 })
                 .collect()
         };
-        for pty in ptys {
+        for (id, pty, teardown) in sessions {
             let _ = pty.kill();
+            if let Some((cwd, spec, ports)) = teardown {
+                let _ = environment::run_teardown(&spec, &id.0, &cwd, &ports);
+            }
         }
     }
 
@@ -911,6 +928,7 @@ impl SessionRegistry {
                 {
                     entry.session.mark_spawned_at(pty.pid(), SystemTime::now());
                     entry.pty = Some(pty.clone());
+                    entry.teardown_done = false;
                     true
                 }
                 _ => false,
@@ -1038,18 +1056,25 @@ impl SessionRegistry {
                 }
             };
             let session = entry.session.clone();
-            let teardown = (
-                entry.session.cwd.clone(),
-                entry.spec.environment.clone(),
-                entry.session.ports.clone(),
-            );
+            let teardown = if entry.teardown_done {
+                None
+            } else {
+                entry.teardown_done = true;
+                Some((
+                    entry.session.cwd.clone(),
+                    entry.spec.environment.clone(),
+                    entry.session.ports.clone(),
+                ))
+            };
             let notification =
                 state
                     .notifications
                     .observe(&session, previous_status, previous_state_since, now);
             (restart, session, notification, teardown)
         };
-        let _ = environment::run_teardown(&teardown.1, &id.0, &teardown.0, &teardown.2);
+        if let Some((cwd, spec, ports)) = teardown {
+            let _ = environment::run_teardown(&spec, &id.0, &cwd, &ports);
+        }
         self.emit(RegistryEvent::SessionUpdated { session });
         self.emit_notification_change(notification);
         self.drain_queue();
@@ -1381,6 +1406,7 @@ mod tests {
                     grid: TerminalGrid::default(),
                     generation: 1,
                     stop_requested: false,
+                    teardown_done: true,
                 },
             );
 
@@ -1457,6 +1483,7 @@ mod tests {
                     grid: TerminalGrid::default(),
                     generation: 1,
                     stop_requested: false,
+                    teardown_done: true,
                 },
             );
 
@@ -1503,6 +1530,7 @@ mod tests {
                     grid: TerminalGrid::default(),
                     generation: 1,
                     stop_requested: false,
+                    teardown_done: true,
                 },
             );
 
@@ -1600,6 +1628,7 @@ mod tests {
                     grid: TerminalGrid::default(),
                     generation: 1,
                     stop_requested: false,
+                    teardown_done: true,
                 },
             );
 
@@ -1639,6 +1668,7 @@ mod tests {
                     grid: TerminalGrid::default(),
                     generation: 1,
                     stop_requested: false,
+                    teardown_done: true,
                 },
             );
         }
@@ -1689,6 +1719,7 @@ mod tests {
                     grid: TerminalGrid::default(),
                     generation: 1,
                     stop_requested: false,
+                    teardown_done: true,
                 },
             );
 
@@ -1750,6 +1781,7 @@ mod tests {
                     grid: TerminalGrid::default(),
                     generation: 1,
                     stop_requested: false,
+                    teardown_done: true,
                 },
             );
         let events = registry.subscribe();
@@ -1830,6 +1862,7 @@ mod tests {
                     grid: TerminalGrid::default(),
                     generation: 1,
                     stop_requested: false,
+                    teardown_done: true,
                 },
             );
         let events = registry.subscribe();
@@ -1864,6 +1897,49 @@ mod tests {
                 event: AgentEvent::AppServer(AppServerEvent::TokenUsageUpdated { .. })
             }
         )));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn shutdown_runs_teardown_for_active_sessions() {
+        let marker = std::env::temp_dir().join(format!(
+            "terminalai-teardown-{}-{}.txt",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_file(&marker);
+        let mut spec = spec_for(Agent::Claude, &std::env::current_dir().expect("test cwd"));
+        spec.extra_args = vec!["/c".into(), "ping -n 30 127.0.0.1 > nul".into()];
+        spec.environment.teardown = Some(format!(
+            "echo %TERMINALAI_SESSION_ID% %TERMINALAI_PORTS% > {}",
+            marker.display()
+        ));
+        let registry = SessionRegistry::new();
+        let id = registry
+            .launch(
+                spec,
+                AgentBinary {
+                    agent: Agent::Claude,
+                    path: PathBuf::from("cmd.exe"),
+                    origin: Origin::Path,
+                },
+            )
+            .expect("spawn teardown test process");
+
+        registry.shutdown();
+        let teardown = std::fs::read_to_string(&marker).expect("teardown marker");
+        assert!(
+            teardown.contains(&id.0),
+            "teardown omitted session id: {teardown:?}"
+        );
+        assert!(
+            teardown.contains("42000,42001,42002,42003"),
+            "teardown omitted port block: {teardown:?}"
+        );
+        let _ = std::fs::remove_file(marker);
     }
 
     #[cfg(windows)]

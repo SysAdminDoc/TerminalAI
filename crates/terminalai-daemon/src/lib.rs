@@ -218,6 +218,12 @@ pub struct DaemonServer {
     store_quarantine: Option<String>,
 }
 
+impl Drop for DaemonServer {
+    fn drop(&mut self) {
+        self.registry.shutdown();
+    }
+}
+
 impl DaemonServer {
     pub fn bind() -> Result<Self, IpcError> {
         let admission = AdmissionConfig::from_environment().map_err(IpcError::Configuration)?;

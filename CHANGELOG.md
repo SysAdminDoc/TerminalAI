@@ -44,6 +44,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   `npm --prefix web test`.
 - PTY output and replay now stay as raw bytes from the registry through the daemon and Tauri
   `Raw` channel, with 12 ms batching so split UTF-8 sequences reach xterm intact.
+- Windows PTY sessions now belong to kill-on-close job objects, so manual kills and session drops
+  reap descendants; daemon teardown runs each active session hook once and releases its port block.
 - R-16 adds lifecycle-aware attention notifications with stable dedup keys, repository grouping,
   automatic retraction on progress, and startup/long-tool grace suppression. The shell consumes
   raised notifications as deduplicated, click-to-focus in-app alerts.
