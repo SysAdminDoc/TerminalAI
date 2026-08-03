@@ -140,6 +140,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   laid out below it.
 - Closing the launcher, or pressing Enter in any launcher field, no longer spawns an agent —
   every dialog control is an explicit button and the form refuses submission outright.
+- The cost model can now express the rates transcripts actually carry: separate 5-minute and
+  1-hour cache-write tiers, the regional-inference premium and the priority-speed premium. The
+  previous four-field type could represent none of them, so the first spend figure the fleet
+  reported would have under-stated by up to half on a cache-heavy turn.
+- A commit-pinned LiteLLM price snapshot is vendored at
+  `crates/terminalai-core/pricing/model-prices.json` and embedded in the binary — never fetched at
+  runtime — with a hardcoded fallback and a version string the fleet header names in its tooltip.
+  Dated and region-prefixed model aliases resolve to their base model.
+- Transcript usage parsing no longer resolves nested `usage` objects alphabetically (the JSON map
+  is a `BTreeMap`, so a sibling key could win over `message`), and the deduplicated request-id set
+  is bounded instead of growing for the life of the daemon.
 - `branch` is now real: read from the session directory's Git HEAD at launch and refreshed from
   hook events, rate limited to one lookup per session per 30 seconds so a per-tool-call hook does
   not become a process per tool call. A directory outside a repository, a detached HEAD, or a Git

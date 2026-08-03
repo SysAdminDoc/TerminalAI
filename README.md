@@ -100,8 +100,15 @@ when the agent proceeds, and quiet during startup or the first seconds of a tool
 The daemon admits three live processes by default. Set `TERMINALAI_MAX_LIVE_SESSIONS` to change the
 cap and `TERMINALAI_DEFAULT_BUDGET_USD` to change the default Claude `--max-budget-usd` (or `none` to
 disable it). The fleet header shows live/queued counts. Spend renders an em dash until a session
-reports a cost: nothing derives cost from transcripts yet, and a computed-looking `$0.00` would be
-worse than saying so.
+reports a cost — nothing derives cost from transcripts yet, and a computed-looking `$0.00` would
+be worse than saying so — and its tooltip names the price table any figure was computed against.
+
+Prices come from a commit-pinned snapshot of LiteLLM's `model_prices_and_context_window.json`
+(MIT), vendored at `crates/terminalai-core/pricing/model-prices.json` and embedded in the binary.
+Nothing is fetched at runtime, so an offline machine prices identically to a connected one. The
+model expresses both cache-write tiers (5-minute and 1-hour, billed at 1.25x and 2x base input),
+the regional-inference premium and the priority-speed premium, because real transcript records on
+this machine carry all of them.
 
 The fleet header also shows counts for every session state. Compact rows keep the status glyph,
 session name, repository, agent, tool progress, restart count, dwell time and last output line on

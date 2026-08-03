@@ -184,13 +184,6 @@ researcher continues from R-88.
 
 ### P1
 
-- [ ] R-71 · P1 — Make the cost model arithmetically correct before it is shown
-  Why: the pricing type cannot express the rates the transcripts actually carry, so the first number the fleet reports will be confidently wrong — and a spend figure that under-reports is worse than none, because admission control is meant to act on it.
-  Evidence: `crates/terminalai-core/src/transcript.rs:12-27` — `TokenRates` has four fields and cannot express the 5-minute versus 1-hour cache-write split (1.25x / 2x), the `inference_geo: "us"` 1.1x multiplier, or the `speed: "fast"` Opus-5 rate; all three appear in `message.usage` in transcripts on this machine, alongside `service_tier`. No pricing data ships at all. Neither vendor publishes a machine-readable price table; LiteLLM's `model_prices_and_context_window.json` (MIT) is the only maintained one — verified live, 2,986 entries, already carrying `claude-opus-5` and `gpt-5.6-luna`.
-  Touches: `crates/terminalai-core/src/transcript.rs`, build script, fleet header
-  Acceptance: `TokenRates` models both cache-write tiers and the geo and speed multipliers; a price table is vendored at build time from a commit-pinned LiteLLM snapshot with a hardcoded fallback, never fetched at runtime; the UI states "prices as of <date>" and the pinned table version; a test prices a real transcript record carrying `inference_geo` and `speed` and asserts the multiplier is applied.
-  Complexity: M
-
 - [ ] R-72 · P1 — Adopt sessions TerminalAI did not spawn
   Why: Claude Code ships an official, headless enumeration of every running session on the machine, so the supervisor can show and reason about agents started from a terminal, an IDE or another tool instead of pretending they do not exist.
   Evidence: verified 2026-08-02 — `claude agents --json` returned 11 live sessions with `pid`, `cwd`, `sessionId`, `startedAt`, `kind` and `name`, backed by a per-PID registry at `~/.claude/sessions/<pid>.json` that additionally carries `procStart` (making identity PID-reuse-safe), `version` and `entrypoint`. `claude attach <id>` and `claude logs <id>` exist but are absent from `--help`. Codex's equivalent is `thread/list` with `sourceKinds` and `archived` filters.

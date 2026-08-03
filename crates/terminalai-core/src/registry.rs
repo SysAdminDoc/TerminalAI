@@ -98,7 +98,7 @@ impl Default for AdmissionConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AdmissionSnapshot {
     pub max_live_sessions: usize,
     pub live_sessions: usize,
@@ -109,6 +109,14 @@ pub struct AdmissionSnapshot {
     /// can recover authoritative state with Snapshot/Reattach.
     #[serde(default)]
     pub dropped_events: u64,
+    /// Which price table any reported cost was computed against. Shown beside
+    /// the figure so a stale table is visible rather than assumed current.
+    #[serde(default)]
+    pub pricing_version: String,
+    /// How many sessions actually reported a cost. Zero means the fleet spend is
+    /// unknown, not zero.
+    #[serde(default)]
+    pub sessions_reporting_cost: usize,
 }
 
 /// Events are deliberately coarse: a view can rebuild its rows from a session
@@ -351,6 +359,12 @@ impl SessionRegistry {
                 .filter_map(|entry| entry.session.cost_usd)
                 .sum(),
             dropped_events: self.inner.dropped_events.load(Ordering::Relaxed),
+            pricing_version: crate::transcript::PricingTable::vendored().version.clone(),
+            sessions_reporting_cost: state
+                .entries
+                .values()
+                .filter(|entry| entry.session.cost_usd.is_some())
+                .count(),
         }
     }
 

@@ -472,8 +472,14 @@ function renderSummary() {
   const reporting = state.sessions.filter((session) => session.cost_usd !== null && session.cost_usd !== undefined);
   const spend = reporting.reduce((total, session) => total + (Number(session.cost_usd) || 0), 0);
   const spendLabel = reporting.length ? `$${spend.toFixed(2)}` : "—";
+  // A price table has a date; a figure priced against an unnamed table cannot be
+  // checked. Say which one produced this number.
+  const pricingVersion = state.admission.pricing_version || "no price table";
+  const spendTitle = reporting.length
+    ? `Prices as of ${pricingVersion}; ${reporting.length} of ${state.sessions.length} sessions reporting`
+    : `No session has reported a cost yet. Prices as of ${pricingVersion}`;
   const maxLive = state.admission.max_live_sessions ?? 3;
-  $("fleet-summary").innerHTML = `<span class="summary-item"><b>${live}/${maxLive}</b> live</span><span class="summary-separator">/</span><span class="summary-item"><b>${queued}</b> queued</span><span class="summary-separator">/</span><span class="summary-item summary-attention"><b>${needsYou}</b> needs you</span><span class="summary-separator">/</span><span class="summary-item"><b>${working}</b> active</span><span class="summary-separator">/</span><span class="summary-item"><b>${spendLabel}</b> spent</span>`;
+  $("fleet-summary").innerHTML = `<span class="summary-item"><b>${live}/${maxLive}</b> live</span><span class="summary-separator">/</span><span class="summary-item"><b>${queued}</b> queued</span><span class="summary-separator">/</span><span class="summary-item summary-attention"><b>${needsYou}</b> needs you</span><span class="summary-separator">/</span><span class="summary-item"><b>${working}</b> active</span><span class="summary-separator">/</span><span class="summary-item" title="${escapeHtml(spendTitle)}"><b>${spendLabel}</b> spent</span>`;
   const droppedEvents = Number(state.admission.dropped_events) || 0;
   $("fleet-count").textContent = droppedEvents
     ? `${state.sessions.length} tracked · ${droppedEvents} event drops`

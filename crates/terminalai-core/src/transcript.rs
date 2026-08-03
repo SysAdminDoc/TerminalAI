@@ -5,27 +5,66 @@
 //! keeps pricing outside the parser so a caller can pin the table version it
 //! used for a report.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::sync::OnceLock;
 
 use serde_json::Value;
 
+/// Per-million-token rates for one model.
+///
+/// Four fields could not express what the transcripts on this machine actually
+/// carry, so the first number the fleet reported would have been confidently
+/// wrong — and a spend figure that under-reports is worse than none, because
+/// admission control is meant to act on it. Cache writes are billed at two
+/// different rates depending on TTL, and both a geography and a speed multiplier
+/// ride on the same record.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TokenRates {
     pub input_per_million: f64,
     pub output_per_million: f64,
     pub cache_read_per_million: f64,
-    pub cache_creation_per_million: f64,
+    /// 5-minute ephemeral cache write. 1.25x base input, per the published rates.
+    pub cache_write_5m_per_million: f64,
+    /// 1-hour ephemeral cache write. 2x base input.
+    pub cache_write_1h_per_million: f64,
 }
 
 impl TokenRates {
+    /// Build from a base input rate using the published cache-write multipliers.
+    /// Used for the hardcoded fallback and for any vendored entry that does not
+    /// publish an explicit 1-hour rate.
+    pub fn from_base(
+        input_per_million: f64,
+        output_per_million: f64,
+        cache_read_per_million: f64,
+    ) -> Self {
+        Self {
+            input_per_million,
+            output_per_million,
+            cache_read_per_million,
+            cache_write_5m_per_million: input_per_million * CACHE_WRITE_5M_MULTIPLIER,
+            cache_write_1h_per_million: input_per_million * CACHE_WRITE_1H_MULTIPLIER,
+        }
+    }
+
     fn cost(self, usage: &Usage) -> f64 {
-        (usage.input_tokens as f64 * self.input_per_million
+        let (write_5m, write_1h) = usage.cache_write_split();
+        let base = usage.input_tokens as f64 * self.input_per_million
             + usage.output_tokens as f64 * self.output_per_million
             + usage.cache_read_input_tokens as f64 * self.cache_read_per_million
-            + usage.cache_creation_input_tokens as f64 * self.cache_creation_per_million)
-            / 1_000_000.0
+            + write_5m as f64 * self.cache_write_5m_per_million
+            + write_1h as f64 * self.cache_write_1h_per_million;
+        base / 1_000_000.0 * usage.multiplier()
     }
 }
+
+/// Published cache-write premiums over the base input rate.
+pub const CACHE_WRITE_5M_MULTIPLIER: f64 = 1.25;
+pub const CACHE_WRITE_1H_MULTIPLIER: f64 = 2.0;
+/// Regional inference premium, charged when a request is pinned to a geography.
+pub const GEO_MULTIPLIER: f64 = 1.1;
+/// Priority-speed premium.
+pub const FAST_SPEED_MULTIPLIER: f64 = 1.5;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PricingTable {
@@ -49,11 +88,84 @@ impl PricingTable {
     }
 
     fn rates_for(&self, model: Option<&str>) -> TokenRates {
-        model
-            .and_then(|name| self.models.get(name).copied())
+        let Some(name) = model else {
+            return self.default;
+        };
+        if let Some(rates) = self.models.get(name) {
+            return *rates;
+        }
+        // Both vendors ship dated and region-prefixed aliases of the same model
+        // (`claude-opus-5-20260101`, `us.anthropic.claude-opus-5`). Fall back to
+        // the longest vendored name the requested model contains, so a new dated
+        // build prices correctly instead of dropping to the default.
+        self.models
+            .iter()
+            .filter(|(known, _)| name.contains(known.as_str()))
+            .max_by_key(|(known, _)| known.len())
+            .map(|(_, rates)| *rates)
             .unwrap_or(self.default)
     }
+
+    /// The vendored price table.
+    ///
+    /// Parsed once from a snapshot embedded in the binary — never fetched at
+    /// runtime, so a build is reproducible and an offline machine prices the same
+    /// as a connected one. A snapshot that fails to parse degrades to
+    /// [`PricingTable::fallback`] rather than to a panic or a zero.
+    pub fn vendored() -> &'static PricingTable {
+        static TABLE: OnceLock<PricingTable> = OnceLock::new();
+        TABLE.get_or_init(|| Self::parse_snapshot(VENDORED_PRICES).unwrap_or_else(Self::fallback))
+    }
+
+    /// Rates to use when the vendored snapshot is unusable. Deliberately the
+    /// most expensive model either CLI runs: under-reporting spend is the failure
+    /// that matters, because admission control acts on the number.
+    pub fn fallback() -> PricingTable {
+        PricingTable::new(
+            "fallback",
+            TokenRates::from_base(5.0, 25.0, 0.5),
+        )
+    }
+
+    fn parse_snapshot(snapshot: &str) -> Option<PricingTable> {
+        let value: Value = serde_json::from_str(snapshot).ok()?;
+        let version = value.get("source_committed")?.as_str()?;
+        let retrieved = value.get("retrieved")?.as_str()?;
+        let mut table = PricingTable::new(
+            format!("litellm {version} (vendored {retrieved})"),
+            Self::fallback().default,
+        );
+        for (model, entry) in value.get("models")?.as_object()? {
+            let per_million = |name: &str| {
+                entry
+                    .get(name)
+                    .and_then(Value::as_f64)
+                    .map(|per_token| per_token * 1_000_000.0)
+            };
+            let (Some(input), Some(output)) = (
+                per_million("input_cost_per_token"),
+                per_million("output_cost_per_token"),
+            ) else {
+                continue;
+            };
+            let read = per_million("cache_read_input_token_cost").unwrap_or(input * 0.1);
+            let mut rates = TokenRates::from_base(input, output, read);
+            if let Some(write) = per_million("cache_creation_input_token_cost") {
+                rates.cache_write_5m_per_million = write;
+            }
+            if let Some(write) = per_million("cache_creation_input_token_cost_above_1hr") {
+                rates.cache_write_1h_per_million = write;
+            }
+            table.models.insert(model.clone(), rates);
+        }
+        (!table.models.is_empty()).then_some(table)
+    }
 }
+
+/// A commit-pinned snapshot of LiteLLM's `model_prices_and_context_window.json`,
+/// trimmed to the models either CLI can run. Neither vendor publishes a
+/// machine-readable price table, and LiteLLM's is the only maintained one.
+const VENDORED_PRICES: &str = include_str!("../pricing/model-prices.json");
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct UsageTotals {
@@ -78,12 +190,50 @@ impl UsageTotals {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cache_read_input_tokens: u64,
+    /// Total cache writes. The per-TTL split below is authoritative when present;
+    /// this stays the total so the token counters remain comparable.
     pub cache_creation_input_tokens: u64,
+    /// `usage.cache_creation.ephemeral_5m_input_tokens`, when the record breaks
+    /// the write down by TTL.
+    pub cache_write_5m_tokens: Option<u64>,
+    /// `usage.cache_creation.ephemeral_1h_input_tokens`.
+    pub cache_write_1h_tokens: Option<u64>,
+    /// `usage.inference_geo` — a real region means the regional premium applies.
+    /// `"not_available"` and absence both mean it does not.
+    pub geo_pinned: bool,
+    /// `usage.speed == "fast"`.
+    pub fast_speed: bool,
+}
+
+impl Usage {
+    /// Split cache writes into the two billed tiers.
+    ///
+    /// When a record breaks the write down by TTL the split is used as given.
+    /// When it does not, the whole write is charged at the 5-minute rate — the
+    /// cheaper of the two, and the default TTL — rather than silently assuming
+    /// the premium tier.
+    fn cache_write_split(&self) -> (u64, u64) {
+        match (self.cache_write_5m_tokens, self.cache_write_1h_tokens) {
+            (None, None) => (self.cache_creation_input_tokens, 0),
+            (five, hour) => (five.unwrap_or(0), hour.unwrap_or(0)),
+        }
+    }
+
+    fn multiplier(&self) -> f64 {
+        let mut multiplier = 1.0;
+        if self.geo_pinned {
+            multiplier *= GEO_MULTIPLIER;
+        }
+        if self.fast_speed {
+            multiplier *= FAST_SPEED_MULTIPLIER;
+        }
+        multiplier
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -99,11 +249,18 @@ struct UsageRecord {
     usage: Usage,
 }
 
+/// How many request ids stay deduplicable. A transcript repeats a usage object
+/// across adjacent records, so the window only has to outlive that adjacency —
+/// an unbounded set would grow for the life of the daemon.
+pub const MAX_TRACKED_REQUEST_IDS: usize = 4096;
+
 /// Accumulates usage records while counting each request id at most once.
 #[derive(Debug, Clone)]
 pub struct TranscriptAccumulator {
     pricing: PricingTable,
     seen_request_ids: HashSet<String>,
+    /// Insertion order for `seen_request_ids`, so the oldest id can be evicted.
+    request_id_order: VecDeque<String>,
     totals: UsageTotals,
     cost_usd: f64,
 }
@@ -113,9 +270,15 @@ impl TranscriptAccumulator {
         Self {
             pricing,
             seen_request_ids: HashSet::new(),
+            request_id_order: VecDeque::new(),
             totals: UsageTotals::default(),
             cost_usd: 0.0,
         }
+    }
+
+    /// An accumulator priced from the vendored, commit-pinned table.
+    pub fn with_vendored_pricing() -> Self {
+        Self::new(PricingTable::vendored().clone())
     }
 
     pub fn pricing_version(&self) -> &str {
@@ -140,6 +303,12 @@ impl TranscriptAccumulator {
             if !self.seen_request_ids.insert(request_id.clone()) {
                 return Ok(false);
             }
+            self.request_id_order.push_back(request_id.clone());
+            while self.request_id_order.len() > MAX_TRACKED_REQUEST_IDS {
+                if let Some(evicted) = self.request_id_order.pop_front() {
+                    self.seen_request_ids.remove(&evicted);
+                }
+            }
         }
         self.totals.add(record.usage);
         self.cost_usd += self
@@ -162,6 +331,15 @@ fn find_usage(
             let model =
                 string_field(object, &["model"]).or_else(|| inherited_model.map(str::to_owned));
             if let Some(usage) = object.get("usage").and_then(Value::as_object) {
+                let cache_creation = usage.get("cache_creation").and_then(Value::as_object);
+                let tier = |names: &[&str]| {
+                    cache_creation.and_then(|split| {
+                        names.iter().find_map(|name| {
+                            split.get(*name).and_then(Value::as_u64)
+                        })
+                    })
+                };
+                let geo = usage.get("inference_geo").and_then(Value::as_str);
                 return Some(UsageRecord {
                     request_id,
                     model,
@@ -176,11 +354,45 @@ fn find_usage(
                             usage,
                             &["cache_creation_input_tokens", "cacheCreationInputTokens"],
                         ),
+                        cache_write_5m_tokens: tier(&[
+                            "ephemeral_5m_input_tokens",
+                            "ephemeral5mInputTokens",
+                        ]),
+                        cache_write_1h_tokens: tier(&[
+                            "ephemeral_1h_input_tokens",
+                            "ephemeral1hInputTokens",
+                        ]),
+                        // "not_available" is what an unpinned request reports, and
+                        // it must not be read as a region.
+                        geo_pinned: geo
+                            .map(|value| {
+                                !value.is_empty()
+                                    && !value.eq_ignore_ascii_case("not_available")
+                                    && !value.eq_ignore_ascii_case("none")
+                            })
+                            .unwrap_or(false),
+                        fast_speed: usage
+                            .get("speed")
+                            .and_then(Value::as_str)
+                            .map(|value| value.eq_ignore_ascii_case("fast"))
+                            .unwrap_or(false),
                     },
                 });
             }
-            object
-                .values()
+            // `serde_json::Map` is a `BTreeMap` here — no `preserve_order` feature
+            // — so a bare `.values()` scan resolves nested objects alphabetically
+            // rather than in document order, and would pick whichever `usage`
+            // happened to sort first. Look inside the known carriers first.
+            const CARRIERS: [&str; 6] = ["message", "response", "payload", "data", "event_msg", "info"];
+            CARRIERS
+                .iter()
+                .filter_map(|name| object.get(*name))
+                .chain(
+                    object
+                        .iter()
+                        .filter(|(name, _)| !CARRIERS.contains(&name.as_str()))
+                        .map(|(_, child)| child),
+                )
                 .find_map(|child| find_usage(child, request_id.as_deref(), model.as_deref()))
         }
         Value::Array(values) => values
@@ -220,7 +432,8 @@ mod tests {
                 input_per_million: 1.0,
                 output_per_million: 2.0,
                 cache_read_per_million: 0.1,
-                cache_creation_per_million: 0.2,
+                cache_write_5m_per_million: 0.2,
+                cache_write_1h_per_million: 0.4,
             },
         )
     }
@@ -256,6 +469,143 @@ mod tests {
             .unwrap());
         assert_eq!(accumulator.totals().requests, 2);
         assert_eq!(accumulator.totals().input_tokens, 7);
+    }
+
+    /// The exact shape of a record from `~/.claude/projects/<slug>/<uuid>.jsonl`
+    /// on this machine, 2026-08-03. Verbatim so a change in the upstream contract
+    /// shows up here rather than as a wrong number in the fleet header.
+    const REAL_RECORD: &str = r#"{"requestId":"req_011CdgDYoDhbMZCJPANQquKm","type":"assistant","gitBranch":"main","message":{"model":"claude-opus-5","usage":{"input_tokens":2,"cache_creation_input_tokens":1000000,"cache_read_input_tokens":25695,"output_tokens":171,"server_tool_use":{"web_search_requests":0},"service_tier":"standard","cache_creation":{"ephemeral_1h_input_tokens":1000000,"ephemeral_5m_input_tokens":0},"inference_geo":"not_available","speed":"standard"}}}"#;
+
+    #[test]
+    fn a_real_record_prices_its_cache_writes_at_the_one_hour_rate() {
+        let mut accumulator = TranscriptAccumulator::new(pricing());
+        assert!(accumulator.ingest_line(REAL_RECORD).unwrap());
+        // 1M tokens written at the 1-hour rate, not the 5-minute one. Charging
+        // the whole write at 0.2 would under-report by half.
+        let cost = accumulator.cost_usd();
+        let expected = (2.0 * 1.0 + 171.0 * 2.0 + 25695.0 * 0.1 + 1_000_000.0 * 0.4) / 1_000_000.0;
+        assert!(
+            (cost - expected).abs() < 1e-12,
+            "expected {expected}, got {cost}"
+        );
+    }
+
+    #[test]
+    fn geo_and_speed_multipliers_are_applied() {
+        let base = {
+            let mut accumulator = TranscriptAccumulator::new(pricing());
+            accumulator.ingest_line(REAL_RECORD).unwrap();
+            accumulator.cost_usd()
+        };
+
+        let pinned = REAL_RECORD.replace(r#""inference_geo":"not_available""#, r#""inference_geo":"us""#);
+        let mut accumulator = TranscriptAccumulator::new(pricing());
+        accumulator.ingest_line(&pinned).unwrap();
+        assert!(
+            (accumulator.cost_usd() - base * GEO_MULTIPLIER).abs() < 1e-12,
+            "a region-pinned request must carry the geo premium"
+        );
+
+        let fast = REAL_RECORD.replace(r#""speed":"standard""#, r#""speed":"fast""#);
+        let mut accumulator = TranscriptAccumulator::new(pricing());
+        accumulator.ingest_line(&fast).unwrap();
+        assert!(
+            (accumulator.cost_usd() - base * FAST_SPEED_MULTIPLIER).abs() < 1e-12,
+            "a fast request must carry the speed premium"
+        );
+
+        let both = pinned.replace(r#""speed":"standard""#, r#""speed":"fast""#);
+        let mut accumulator = TranscriptAccumulator::new(pricing());
+        accumulator.ingest_line(&both).unwrap();
+        assert!(
+            (accumulator.cost_usd() - base * GEO_MULTIPLIER * FAST_SPEED_MULTIPLIER).abs() < 1e-12,
+            "the two premiums compound"
+        );
+    }
+
+    #[test]
+    fn a_write_with_no_ttl_breakdown_uses_the_cheaper_tier() {
+        // Never assume the premium tier from missing data; the 5-minute TTL is
+        // the default and the cheaper of the two.
+        let mut accumulator = TranscriptAccumulator::new(pricing());
+        accumulator
+            .ingest_line(r#"{"usage":{"cache_creation_input_tokens":1000000}}"#)
+            .unwrap();
+        assert!((accumulator.cost_usd() - 0.2).abs() < 1e-12);
+    }
+
+    #[test]
+    fn the_vendored_table_prices_the_models_both_clis_run() {
+        let table = PricingTable::vendored();
+        assert!(
+            table.version.starts_with("litellm "),
+            "the fallback was used instead of the vendored snapshot: {}",
+            table.version
+        );
+        assert!(table.version.contains("vendored 2026-"));
+
+        for model in ["claude-opus-5", "claude-sonnet-5", "gpt-5.1-codex"] {
+            let rates = table.rates_for(Some(model));
+            assert!(rates.input_per_million > 0.0, "{model} has no input rate");
+            assert!(rates.output_per_million > rates.input_per_million, "{model}");
+            assert!(
+                rates.cache_write_1h_per_million >= rates.cache_write_5m_per_million,
+                "{model}: the 1-hour write must not be cheaper than the 5-minute one"
+            );
+        }
+
+        // Published Anthropic rates: $5/M in, $25/M out for Opus 5.
+        let opus = table.rates_for(Some("claude-opus-5"));
+        assert!((opus.input_per_million - 5.0).abs() < 1e-9);
+        assert!((opus.output_per_million - 25.0).abs() < 1e-9);
+        assert!((opus.cache_write_5m_per_million - 6.25).abs() < 1e-9);
+        assert!((opus.cache_write_1h_per_million - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_dated_or_region_prefixed_alias_resolves_to_its_base_model() {
+        let table = PricingTable::vendored();
+        let base = table.rates_for(Some("claude-opus-5"));
+        for alias in [
+            "claude-opus-5-20260101",
+            "us.anthropic.claude-opus-5",
+            "global.anthropic.claude-opus-5-v1",
+        ] {
+            assert_eq!(
+                table.rates_for(Some(alias)),
+                base,
+                "{alias} should price as claude-opus-5"
+            );
+        }
+    }
+
+    #[test]
+    fn the_request_id_window_is_bounded() {
+        let mut accumulator = TranscriptAccumulator::new(pricing());
+        for index in 0..(MAX_TRACKED_REQUEST_IDS + 10) {
+            accumulator
+                .ingest_line(&format!(
+                    r#"{{"requestId":"r{index}","usage":{{"input_tokens":1}}}}"#
+                ))
+                .unwrap();
+        }
+        assert_eq!(accumulator.seen_request_ids.len(), MAX_TRACKED_REQUEST_IDS);
+        assert_eq!(accumulator.request_id_order.len(), MAX_TRACKED_REQUEST_IDS);
+        // The most recent ids are still deduplicated.
+        assert!(!accumulator
+            .ingest_line(r#"{"requestId":"r4100","usage":{"input_tokens":1}}"#)
+            .unwrap());
+    }
+
+    #[test]
+    fn a_nested_usage_resolves_by_carrier_not_alphabetically() {
+        // `serde_json::Map` is a BTreeMap here, so "alpha" would win a plain
+        // values() scan over "message" despite being an unrelated sibling.
+        let line = r#"{"alpha":{"usage":{"input_tokens":1000000}},"message":{"model":"m","usage":{"output_tokens":1000000}}}"#;
+        let mut accumulator = TranscriptAccumulator::new(pricing());
+        accumulator.ingest_line(line).unwrap();
+        assert_eq!(accumulator.totals().output_tokens, 1_000_000);
+        assert_eq!(accumulator.totals().input_tokens, 0);
     }
 
     #[test]
