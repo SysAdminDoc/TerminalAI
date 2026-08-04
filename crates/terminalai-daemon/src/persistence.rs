@@ -28,23 +28,60 @@ pub(crate) fn install_panic_hook() {
     }));
 }
 
-#[derive(Clone)]
 pub(crate) struct StoreWriter {
-    sender: SyncSender<()>,
+    sender: Option<SyncSender<()>>,
+    path: PathBuf,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+impl Clone for StoreWriter {
+    fn clone(&self) -> Self {
+        Self {
+            sender: self.sender.as_ref().cloned(),
+            path: self.path.clone(),
+            // Only the owner joins the worker. Event bridges receive a
+            // sender-only clone so they can be stopped independently.
+            worker: None,
+        }
+    }
 }
 
 impl StoreWriter {
     pub(crate) fn spawn(path: PathBuf, registry: SessionRegistry) -> Self {
         let (sender, receiver) = mpsc::sync_channel(1);
-        let _ = thread::Builder::new()
+        let worker_path = path.clone();
+        let worker = thread::Builder::new()
             .name("terminalai-session-store".into())
-            .spawn(move || run_writer(&path, registry, receiver));
-        Self { sender }
+            .spawn(move || run_writer(&worker_path, registry, receiver))
+            .ok();
+        Self {
+            sender: Some(sender),
+            path,
+            worker,
+        }
     }
 
     pub(crate) fn update(&self) {
-        match self.sender.try_send(()) {
+        let Some(sender) = &self.sender else {
+            return;
+        };
+        match sender.try_send(()) {
             Ok(()) | Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {}
+        }
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for StoreWriter {
+    fn drop(&mut self) {
+        // Close the channel before joining. If the worker is in a debounce
+        // window it will finish that snapshot and then observe disconnect.
+        self.sender.take();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
         }
     }
 }

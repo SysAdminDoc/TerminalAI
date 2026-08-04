@@ -49,6 +49,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(windows)]
+use std::sync::Condvar;
 use std::thread;
 use std::time::Duration;
 
@@ -437,19 +439,43 @@ enum WireMessage {
     Event { event: RegistryEvent },
 }
 
+struct StoreBridge {
+    stop: Arc<AtomicBool>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+impl StoreBridge {
+    fn stop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+impl Drop for StoreBridge {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 pub struct DaemonServer {
     listener: LocalSocketListener,
     registry: SessionRegistry,
+    store_bridge: Option<StoreBridge>,
     store_writer: Option<StoreWriter>,
     store_quarantine: Option<String>,
     log_hub: Option<LogHub>,
     hook_ingress: http_hooks::HookIngress,
     shutdown: Arc<AtomicBool>,
+    teardown_complete: bool,
 }
 
 impl Drop for DaemonServer {
     fn drop(&mut self) {
-        self.registry.shutdown();
+        if !self.teardown_complete {
+            self.registry.shutdown();
+        }
     }
 }
 
@@ -531,11 +557,13 @@ impl DaemonServer {
         Ok(Self {
             listener,
             registry,
+            store_bridge: None,
             store_writer,
             store_quarantine,
             log_hub,
             hook_ingress,
             shutdown: Arc::new(AtomicBool::new(false)),
+            teardown_complete: false,
         })
     }
 
@@ -549,66 +577,94 @@ impl DaemonServer {
 
     /// Serve connections until a client requests shutdown or the console
     /// handler marks the process for teardown.
-    pub fn serve(self) -> Result<(), IpcError> {
+    pub fn serve(mut self) -> Result<(), IpcError> {
         if let Some(writer) = self.store_writer.clone() {
-            bridge_store(self.registry.clone(), writer);
+            self.store_bridge = Some(bridge_store(self.registry.clone(), writer));
         }
         spawn_transcript_poller(self.registry.clone(), self.shutdown.clone());
-        self.listener
-            .set_nonblocking(ListenerNonblockingMode::Accept)?;
-        let shutdown = self.shutdown.clone();
-        let hook_endpoint = self.hook_endpoint();
-        loop {
-            if shutdown.load(Ordering::Acquire) || console_shutdown_requested() {
-                break;
+        let result = (|| {
+            self.listener
+                .set_nonblocking(ListenerNonblockingMode::Accept)?;
+            let shutdown = self.shutdown.clone();
+            let hook_endpoint = self.hook_endpoint();
+            loop {
+                if shutdown.load(Ordering::Acquire) || console_shutdown_requested() {
+                    break;
+                }
+                let connection = match self.listener.incoming().next() {
+                    Some(Ok(stream)) => stream,
+                    Some(Err(error)) if error.kind() == io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(25));
+                        continue;
+                    }
+                    Some(Err(error)) => {
+                        if shutdown.load(Ordering::Acquire) || console_shutdown_requested() {
+                            break;
+                        }
+                        eprintln!("terminalai-daemon accept: {error}");
+                        continue;
+                    }
+                    None => break,
+                };
+                let registry = self.registry.clone();
+                let store_quarantine = self.store_quarantine.clone();
+                let log_hub = self.log_hub.clone();
+                let shutdown = shutdown.clone();
+                let hook_endpoint = hook_endpoint.clone();
+                thread::Builder::new()
+                    .name("terminalai-daemon-client".into())
+                    .spawn(move || {
+                        if let Err(error) =
+                            handle_connection(
+                                connection,
+                                registry,
+                                store_quarantine,
+                                log_hub,
+                                shutdown,
+                                hook_endpoint,
+                            )
+                        {
+                            eprintln!("terminalai-daemon client: {error}");
+                        }
+                    })
+                    // A transient spawn failure used to end serve() outright,
+                    // abandoning every live agent with no UI. One refused
+                    // client is not a reason to drop the fleet.
+                    .unwrap_or_else(|error| {
+                        eprintln!(
+                            "terminalai-daemon: could not start a client thread,                                  dropping this connection: {error}"
+                        );
+                        thread::spawn(|| {})
+                    });
             }
-            let connection = match self.listener.incoming().next() {
-                Some(Ok(stream)) => stream,
-                Some(Err(error)) if error.kind() == io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(25));
-                    continue;
-                }
-                Some(Err(error)) => {
-                    if shutdown.load(Ordering::Acquire) || console_shutdown_requested() {
-                        break;
-                    }
-                    eprintln!("terminalai-daemon accept: {error}");
-                    continue;
-                }
-                None => break,
-            };
-            let registry = self.registry.clone();
-            let store_quarantine = self.store_quarantine.clone();
-            let log_hub = self.log_hub.clone();
-            let shutdown = shutdown.clone();
-            let hook_endpoint = hook_endpoint.clone();
-            thread::Builder::new()
-                .name("terminalai-daemon-client".into())
-                .spawn(move || {
-                    if let Err(error) =
-                        handle_connection(
-                            connection,
-                            registry,
-                            store_quarantine,
-                            log_hub,
-                            shutdown,
-                            hook_endpoint,
-                        )
-                    {
-                        eprintln!("terminalai-daemon client: {error}");
-                    }
-                })
-                // A transient spawn failure used to end serve() outright,
-                // abandoning every live agent with no UI. One refused
-                // client is not a reason to drop the fleet.
-                .unwrap_or_else(|error| {
-                    eprintln!(
-                        "terminalai-daemon: could not start a client thread,                                  dropping this connection: {error}"
-                    );
-                    thread::spawn(|| {})
-                });
+            Ok::<(), IpcError>(())
+        })();
+        self.finish_shutdown();
+        result
+    }
+
+    fn finish_shutdown(&mut self) {
+        self.shutdown.store(true, Ordering::Release);
+        if let Some(bridge) = self.store_bridge.as_mut() {
+            bridge.stop();
         }
-        Ok(())
+        let store_path = self
+            .store_writer
+            .as_ref()
+            .map(|writer| writer.path().to_path_buf());
+        if let Some(writer) = self.store_writer.take() {
+            drop(writer);
+        }
+
+        // The asynchronous writer is stopped before teardown so an older
+        // snapshot cannot race the synchronous final write below.
+        self.registry.shutdown();
+        if let Some(path) = store_path {
+            if let Err(error) = self.registry.store_snapshot().write(&path) {
+                eprintln!("terminalai-daemon: could not persist final session store: {error}");
+            }
+        }
+        self.teardown_complete = true;
     }
 
     /// Test and embedding hook: handle one client and return when it closes.
@@ -629,20 +685,27 @@ impl DaemonServer {
     }
 }
 
-fn bridge_store(registry: SessionRegistry, writer: StoreWriter) {
+fn bridge_store(registry: SessionRegistry, writer: StoreWriter) -> StoreBridge {
     let events = registry.subscribe();
-    let _ = thread::Builder::new()
+    let stop = Arc::new(AtomicBool::new(false));
+    let worker_stop = stop.clone();
+    let worker = thread::Builder::new()
         .name("terminalai-session-store-events".into())
         .spawn(move || {
-            for event in events {
-                if matches!(
-                    event,
-                    RegistryEvent::SessionUpdated { .. } | RegistryEvent::SessionRemoved { .. }
-                ) {
-                    writer.update();
+            while !worker_stop.load(Ordering::Acquire) {
+                match events.recv_timeout(Duration::from_millis(25)) {
+                    Ok(RegistryEvent::SessionUpdated { .. } | RegistryEvent::SessionRemoved { .. }) => {
+                        writer.update();
+                    }
+                    Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 }
             }
         });
+    StoreBridge {
+        stop,
+        worker: worker.ok(),
+    }
 }
 
 pub fn run() -> Result<(), IpcError> {
@@ -652,13 +715,42 @@ pub fn run() -> Result<(), IpcError> {
 pub fn run_with_log_hub(log_hub: Option<LogHub>) -> Result<(), IpcError> {
     install_panic_hook();
     install_console_handler();
-    let server = DaemonServer::bind_with_log_hub(log_hub)?;
+    let server = match DaemonServer::bind_with_log_hub(log_hub) {
+        Ok(server) => server,
+        Err(error) => {
+            signal_console_teardown_complete();
+            return Err(error);
+        }
+    };
     tracing::info!(pipe = PIPE_NAME, "daemon control plane ready");
-    server.serve()
+    let result = server.serve();
+    signal_console_teardown_complete();
+    result
 }
 
 #[cfg(windows)]
 static CONSOLE_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+#[cfg(windows)]
+static CONSOLE_TEARDOWN_COMPLETE: OnceLock<(Mutex<bool>, Condvar)> = OnceLock::new();
+
+#[cfg(windows)]
+fn console_teardown_latch() -> &'static (Mutex<bool>, Condvar) {
+    CONSOLE_TEARDOWN_COMPLETE.get_or_init(|| (Mutex::new(false), Condvar::new()))
+}
+
+#[cfg(windows)]
+fn signal_console_teardown_complete() {
+    let (complete, wake) = console_teardown_latch();
+    let mut complete = complete
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *complete = true;
+    wake.notify_all();
+}
+
+#[cfg(not(windows))]
+fn signal_console_teardown_complete() {}
 
 #[cfg(windows)]
 fn install_console_handler() {
@@ -668,6 +760,10 @@ fn install_console_handler() {
     };
 
     CONSOLE_SHUTDOWN.store(false, Ordering::Release);
+    let (complete, _) = console_teardown_latch();
+    *complete
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = false;
     let installed = unsafe { SetConsoleCtrlHandler(Some(console_ctrl_handler), 1) };
     if installed == 0 {
         // The packaged daemon is normally launched without a console. That is
@@ -683,6 +779,17 @@ fn install_console_handler() {
             CTRL_C_EVENT | CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT | CTRL_SHUTDOWN_EVENT
         ) {
             CONSOLE_SHUTDOWN.store(true, Ordering::Release);
+            if matches!(ctrl_type, CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT | CTRL_SHUTDOWN_EVENT) {
+                let (complete, wake) = console_teardown_latch();
+                let mut complete = complete
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                while !*complete {
+                    complete = wake
+                        .wait(complete)
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                }
+            }
             1
         } else {
             0
@@ -1634,7 +1741,12 @@ fn spawn_transcript_poller(registry: SessionRegistry, shutdown: Arc<AtomicBool>)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use terminalai_core::AppServerEvent;
+    use terminalai_core::{
+        Agent, LaunchSpec, ResolvedCommand, Session, SessionId, SessionStoreSnapshot,
+        StoredSession, SESSION_STORE_MAGIC, SESSION_STORE_SCHEMA_VERSION,
+    };
 
     #[test]
     fn history_budget_reaches_before_the_memory_ring() {
@@ -1852,6 +1964,76 @@ mod tests {
             .join()
             .expect("server thread")
             .expect("serve after shutdown");
+    }
+
+    #[test]
+    fn shutdown_request_persists_the_final_registry_state_before_server_exits() {
+        let dir = std::env::temp_dir().join(format!(
+            "terminalai-final-store-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&dir).expect("final store directory");
+        let path = dir.join("sessions.json");
+        let cwd = std::env::current_dir().expect("cwd");
+        let spec = LaunchSpec {
+            agent: Agent::Claude,
+            cwd: cwd.clone(),
+            ..LaunchSpec::default()
+        };
+        let id = SessionId::new(1);
+        let registry = SessionRegistry::from_store(SessionStoreSnapshot {
+            magic: SESSION_STORE_MAGIC.to_owned(),
+            schema_version: SESSION_STORE_SCHEMA_VERSION,
+            sessions: vec![StoredSession {
+                session: Session::new(id.clone(), &spec),
+                spec: spec.clone(),
+                command: ResolvedCommand {
+                    program: "claude.exe".into(),
+                    args: Vec::new(),
+                    cwd,
+                },
+                scrollback: Vec::new(),
+                queue: Default::default(),
+            }],
+            archives: Vec::new(),
+            extra: Default::default(),
+        });
+        let writer = StoreWriter::spawn(path.clone(), registry.clone());
+        let name = format!(
+            "terminalai-final-store-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        );
+        let server = DaemonServer::bind_named_with_state(
+            &name,
+            registry,
+            Some(writer),
+            None,
+            None,
+        )
+        .expect("bind final store socket");
+        let server_thread = thread::spawn(move || server.serve());
+        let client = DaemonClient::connect_named(&name).expect("connect final store socket");
+        client.shutdown().expect("request daemon shutdown");
+        drop(client);
+        server_thread
+            .join()
+            .expect("server thread")
+            .expect("serve final store");
+
+        let written = SessionStoreSnapshot::read(&path)
+            .expect("read final session store")
+            .expect("final session store exists");
+        assert_eq!(written.sessions.len(), 1);
+        assert_eq!(written.sessions[0].session.id, id);
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

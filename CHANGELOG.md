@@ -89,6 +89,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Daemon shutdown now stops and joins the store bridge, persists one final
+  post-teardown snapshot synchronously, and waits for teardown during Windows
+  console close, logoff and shutdown events.
+
 - Explainer, queue, project, broadcast and rollup dialogs now inset their
   headings and content to the same horizontal boundary as the action footer.
 
