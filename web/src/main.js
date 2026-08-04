@@ -136,6 +136,8 @@ const state = {
   capabilities: {},
   capabilityRequest: 0,
   snapshotLoading: true,
+  snapshotQueue: Promise.resolve(),
+  snapshotEvents: [],
   historyLoading: false,
   broadcastSelection: [],
   templates: [],
@@ -1234,17 +1236,22 @@ function renderRow(session) {
   </article>`;
 }
 
-function updateSession(session) {
+function applySessionUpdate(session, announce = true) {
   const index = state.sessions.findIndex((item) => item.id === session.id);
   const previous = index === -1 ? null : state.sessions[index];
   if (index === -1) state.sessions.push(session);
   else state.sessions[index] = session;
-  if (previous) announceStatusChange(session, previous.status);
+  if (announce && previous) announceStatusChange(session, previous.status);
   renderRows();
   updateTerminalHeader();
 }
 
-function removeSession(id) {
+function updateSession(session) {
+  if (state.snapshotLoading) state.snapshotEvents.push({ kind: "session-updated", session });
+  applySessionUpdate(session);
+}
+
+function applySessionRemoval(id) {
   state.sessions = state.sessions.filter((session) => session.id !== id);
   for (const [key, entry] of state.attentionToasts) {
     if (entry.sessionId === id) retractAttentionToast(key);
@@ -1254,6 +1261,11 @@ function removeSession(id) {
     resetTerminal("Session exited");
   }
   renderRows();
+}
+
+function removeSession(id) {
+  if (state.snapshotLoading) state.snapshotEvents.push({ kind: "session-removed", id });
+  applySessionRemoval(id);
 }
 
 // The xterm element is appended after the placeholder inside an overflow-hidden host,
@@ -1462,19 +1474,36 @@ async function markReviewed(id, button) {
 }
 
 async function loadSnapshot() {
+  const snapshotPromise = state.snapshotQueue.then(() => loadSnapshotNow());
+  state.snapshotQueue = snapshotPromise.catch(() => {});
+  return snapshotPromise;
+}
+
+async function loadSnapshotNow() {
   state.snapshotLoading = true;
+  state.snapshotEvents = [];
   renderSnapshotLoading();
   try {
     const snapshot = await invoke("fleet_snapshot");
+    const pendingEvents = state.snapshotEvents;
+    state.snapshotEvents = [];
     state.sessions = snapshot.sessions ?? [];
     state.focused = snapshot.focused ?? null;
     state.admission = snapshot.admission ?? state.admission;
     const storeQuarantine = snapshot.store_quarantine ?? null;
     if (storeQuarantine !== state.storeQuarantine) state.storeQuarantineDismissed = false;
     state.storeQuarantine = storeQuarantine;
+    for (const event of pendingEvents) {
+      if (event.kind === "session-updated") applySessionUpdate(event.session, false);
+      if (event.kind === "session-removed") applySessionRemoval(event.id);
+    }
     renderStoreQuarantine();
     renderRows();
     updateTerminalHeader();
+    // Events arriving while the focused channel is reattached belong to this
+    // already-reconciled state and must be applied live, not buffered again.
+    state.snapshotLoading = false;
+    renderSnapshotLoading();
     if (state.focused) {
       state.terminal?.reset();
       await attachSessionOutput(state.focused);
