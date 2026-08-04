@@ -383,6 +383,7 @@ mod tests {
                 name: "archived".into(),
                 cwd: spec.cwd.clone(),
                 command: "codex.exe".into(),
+                archived_at: Some(SystemTime::now()),
             }],
             extra: Default::default(),
         });

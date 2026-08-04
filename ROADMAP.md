@@ -33,13 +33,6 @@ item above; where the two touch, the note says so.
 
 ### P2
 
-- [ ] P2 — Cap the archive vector; it grows forever inside a file rewritten every second
-  Why: every archived session is appended to an unbounded `Vec` that is serialized into each full store snapshot, so persistence cost rises monotonically for the life of the install on a hot path.
-  Evidence: `crates/terminalai-core/src/registry.rs:994` (`state.archives.push`) with no cap or truncation anywhere; `crates/terminalai-core/src/store.rs:26` includes `archives` in `StoreSnapshot`. `README.md` documents persistence after a 200 ms quiet period and at least once per second under sustained output.
-  Touches: `crates/terminalai-core/src/registry.rs`, `crates/terminalai-core/src/store.rs`, `crates/terminalai-daemon/src/persistence.rs`
-  Acceptance: archives are bounded by count and age with the limit stated in one constant; trimming is covered by a test that writes past the bound. Consider a sidecar file so archive growth cannot affect live-session write latency at all.
-  Complexity: S
-
 - [ ] P2 — Close the spawn-to-job race so a grandchild cannot escape containment
   Why: the job is assigned after the process exists, so anything the child spawns in that window is outside the kill-on-close guarantee the whole teardown story rests on.
   Evidence: `ProcessJob::assign()` (`crates/terminalai-core/src/process_tree.rs:32-57`) takes an already-created `RawHandle`; `portable-pty` performs the `CreateProcess`. The documented fix is `PROC_THREAD_ATTRIBUTE_JOB_LIST` via `UpdateProcThreadAttribute` at creation — learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute

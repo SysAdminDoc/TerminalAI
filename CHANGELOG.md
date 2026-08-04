@@ -3,6 +3,21 @@
 All notable changes to TerminalAI are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- The archive of finished sessions is bounded. Every archived row was appended to a list with no
+  cap, and that list is serialized into each full store snapshot — which is written after a 200 ms
+  quiet period and at least once per second under sustained output. Persistence cost therefore rose
+  monotonically for the life of an install, on the hot path. Archives are now bounded by count
+  (`MAX_ARCHIVES`, 200) and by age (`ARCHIVE_MAX_AGE`, 30 days), trimmed oldest-first where the list
+  grows and again when an oversized store is loaded. A record written before the bound existed
+  carries no timestamp, and an absent timestamp is *not* read as the epoch — it ages out through the
+  count bound instead, so upgrading does not delete the history it was meant to bound. The next
+  session id is still computed over every archive before trimming, so an id that has been issued is
+  never issued twice.
+
 ## [0.8.0] — 2026-08-04
 
 ### Added

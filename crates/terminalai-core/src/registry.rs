@@ -638,10 +638,17 @@ impl SessionRegistry {
         let registry = Self::with_domain_and_admission(domain, admission);
         let mut state = lock_state(&registry.inner);
         let extra = snapshot.extra;
-        let archives = snapshot.archives;
+        let mut archives = snapshot.archives;
+        // `next_id` is computed over every archive *before* trimming: an id that
+        // has been handed out must never be handed out again, even once the
+        // record naming it has aged out.
         for archive in &archives {
             state.next_id = state.next_id.max(next_sequence(&archive.id));
         }
+        // A store written before the bound existed, or by a build without it,
+        // is brought inside the limit on the way in rather than left oversized
+        // until the next archive happens to trim it.
+        crate::store::trim_archives(&mut archives, SystemTime::now());
         state.archives = archives;
         state.extra = extra;
         // Spend that already happened still counts against the window, so a
@@ -1341,9 +1348,13 @@ impl SessionRegistry {
             if state.focused.as_ref() == Some(id) {
                 state.focused = None;
             }
-            let archived = ArchivedSession::from_session(&entry.session, &entry.command);
+            let now = SystemTime::now();
+            let archived = ArchivedSession::from_session_at(&entry.session, &entry.command, now);
             state.archives.retain(|item| item.id != *id);
             state.archives.push(archived.clone());
+            // Bounded here, where the list grows, so the snapshot writer never
+            // has to serialize an archive list that outgrew its limit.
+            crate::store::trim_archives(&mut state.archives, now);
             let notifications = state.notifications.retract_session(id);
             (archived, notifications)
         };
@@ -4549,6 +4560,98 @@ mod tests {
         assert!(stored.sessions.is_empty());
         assert_eq!(stored.archives.len(), 1);
         assert_eq!(stored.archives[0].command, "claude.exe --resume native-1");
+        assert!(
+            stored.archives[0].archived_at.is_some(),
+            "an archive written now carries the stamp its age bound is measured against"
+        );
+    }
+
+    #[test]
+    fn a_full_archive_list_stays_at_its_bound_when_another_row_is_archived() {
+        // The store-level tests prove `trim_archives`; this one proves the live
+        // archive path actually calls it, which is the part that regresses.
+        let cwd = Path::new(".").to_path_buf();
+        let spec = spec_for(Agent::Claude, &cwd);
+        let now = SystemTime::now();
+        let snapshot = SessionStoreSnapshot {
+            archives: (0..crate::store::MAX_ARCHIVES as u64)
+                .map(|sequence| ArchivedSession {
+                    id: SessionId::new(sequence + 1),
+                    agent: Agent::Claude,
+                    name: format!("row-{sequence}"),
+                    cwd: cwd.clone(),
+                    command: "claude.exe".into(),
+                    archived_at: Some(now),
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let registry = SessionRegistry::from_store(snapshot);
+        let id = SessionId::new(9_000);
+        let session = Session::new(id.clone(), &spec);
+        {
+            let mut state = lock_state(&registry.inner);
+            state.entries.insert(
+                id.clone(),
+                Entry {
+                    session,
+                    command: ResolvedCommand {
+                        program: PathBuf::from("claude.exe"),
+                        args: Vec::new(),
+                        cwd: cwd.clone(),
+                    },
+                    spec,
+                    pty: None,
+                    scrollback: RingBuffer::default(),
+                    grid: TerminalGrid::default(),
+                    queue: crate::queue::PromptQueue::default(),
+                    generation: 1,
+                    stop_requested: false,
+                    branch_checked: None,
+                    teardown_done: true,
+                    span: tracing::Span::none(),
+                },
+            );
+        }
+        registry.archive(&id).expect("archive");
+
+        let stored = registry.store_snapshot();
+        assert_eq!(stored.archives.len(), crate::store::MAX_ARCHIVES);
+        assert_eq!(
+            stored.archives[crate::store::MAX_ARCHIVES - 1].id,
+            id,
+            "the row just archived is the one that was kept"
+        );
+        assert!(
+            !stored.archives.iter().any(|item| item.id == SessionId::new(1)),
+            "the oldest record is the one that went"
+        );
+    }
+
+    #[test]
+    fn an_oversized_store_is_brought_inside_the_bound_without_reusing_an_id() {
+        let cwd = Path::new(".").to_path_buf();
+        let now = SystemTime::now();
+        let count = crate::store::MAX_ARCHIVES as u64 + 25;
+        let snapshot = SessionStoreSnapshot {
+            archives: (0..count)
+                .map(|sequence| ArchivedSession {
+                    id: SessionId::new(sequence + 1),
+                    agent: Agent::Claude,
+                    name: format!("row-{sequence}"),
+                    cwd: cwd.clone(),
+                    command: "claude.exe".into(),
+                    archived_at: Some(now),
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let registry = SessionRegistry::from_store(snapshot);
+        let stored = registry.store_snapshot();
+        assert_eq!(stored.archives.len(), crate::store::MAX_ARCHIVES);
+        // The trimmed records took their ids with them, but the next id must
+        // still clear the highest one ever issued.
+        assert_eq!(lock_state(&registry.inner).next_id, count + 1);
     }
 
     #[test]

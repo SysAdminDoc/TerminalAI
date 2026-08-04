@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use crate::agent::Agent;
 use crate::atomic_file::write_atomic;
@@ -16,6 +17,23 @@ use crate::session::{Session, SessionId};
 
 pub const SESSION_STORE_MAGIC: &str = "TerminalAI.session-store";
 pub const SESSION_STORE_SCHEMA_VERSION: u32 = 2;
+
+/// How many archived sessions are kept.
+///
+/// The archive list is serialized into every full store snapshot, and the store
+/// is rewritten after a 200 ms quiet period and at least once per second under
+/// sustained output — so an unbounded list makes persistence cost rise for the
+/// life of the install, on the hot path. Bounded here rather than in a sidecar
+/// file: 200 records of id, name, folder and command is tens of kilobytes, which
+/// is small beside the session rows already in the same document.
+pub const MAX_ARCHIVES: usize = 200;
+
+/// How long an archived session is kept regardless of how few there are.
+///
+/// A count bound alone keeps a row from a machine's first week alive forever on
+/// a lightly-used install; an age bound alone lets a busy day grow without
+/// limit. Both apply.
+pub const ARCHIVE_MAX_AGE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SessionStoreSnapshot {
@@ -69,17 +87,48 @@ pub struct ArchivedSession {
     pub name: String,
     pub cwd: PathBuf,
     pub command: String,
+    /// When the row was archived. Optional because stores written before the
+    /// bound existed have no stamp, and an absent stamp must not read as
+    /// "archived at the epoch" — that would delete every pre-upgrade record on
+    /// first load. Unstamped records age out through the count bound instead.
+    #[serde(default)]
+    pub archived_at: Option<SystemTime>,
 }
 
 impl ArchivedSession {
     pub fn from_session(session: &Session, command: &ResolvedCommand) -> Self {
+        Self::from_session_at(session, command, SystemTime::now())
+    }
+
+    pub fn from_session_at(session: &Session, command: &ResolvedCommand, at: SystemTime) -> Self {
         Self {
             id: session.id.clone(),
             agent: session.agent,
             name: session.name.clone(),
             cwd: session.cwd.clone(),
             command: command.preview(),
+            archived_at: Some(at),
         }
+    }
+}
+
+/// Drop archived sessions past either bound, oldest first.
+///
+/// The list is append-ordered, so the front is the oldest and draining from it
+/// is what the count bound wants. A stamp in the future (the clock moved back)
+/// keeps the record rather than deleting it: losing history to a clock change is
+/// worse than carrying one record too long.
+pub fn trim_archives(archives: &mut Vec<ArchivedSession>, now: SystemTime) {
+    archives.retain(|archive| match archive.archived_at {
+        Some(at) => now
+            .duration_since(at)
+            .map(|age| age <= ARCHIVE_MAX_AGE)
+            .unwrap_or(true),
+        None => true,
+    });
+    let excess = archives.len().saturating_sub(MAX_ARCHIVES);
+    if excess > 0 {
+        archives.drain(..excess);
     }
 }
 
@@ -421,5 +470,70 @@ mod tests {
         assert_eq!(archive.cwd, cwd);
         assert_eq!(archive.command, "claude.exe --model opus");
         assert_eq!(archive.name, session.name);
+    }
+
+    fn archive_at(sequence: u64, at: Option<SystemTime>) -> ArchivedSession {
+        ArchivedSession {
+            id: SessionId::new(sequence),
+            agent: Agent::Claude,
+            name: format!("row-{sequence}"),
+            cwd: PathBuf::from("."),
+            command: "claude.exe".into(),
+            archived_at: at,
+        }
+    }
+
+    #[test]
+    fn the_count_bound_drops_the_oldest_records_first() {
+        let now = SystemTime::now();
+        let mut archives: Vec<_> = (0..MAX_ARCHIVES as u64 + 40)
+            .map(|sequence| archive_at(sequence, Some(now)))
+            .collect();
+        trim_archives(&mut archives, now);
+        assert_eq!(archives.len(), MAX_ARCHIVES);
+        // The 40 that went is the front of the list, not the back: the newest
+        // archive is the one an operator is most likely to want back.
+        assert_eq!(archives[0].id, SessionId::new(40));
+        assert_eq!(
+            archives[MAX_ARCHIVES - 1].id,
+            SessionId::new(MAX_ARCHIVES as u64 + 39)
+        );
+    }
+
+    #[test]
+    fn the_age_bound_applies_below_the_count_bound() {
+        let now = SystemTime::now();
+        let stale = now - (ARCHIVE_MAX_AGE + Duration::from_secs(60));
+        let mut archives = vec![
+            archive_at(1, Some(stale)),
+            archive_at(2, Some(now - Duration::from_secs(60))),
+        ];
+        trim_archives(&mut archives, now);
+        assert_eq!(archives.len(), 1, "a month-old archive is not kept");
+        assert_eq!(archives[0].id, SessionId::new(2));
+    }
+
+    #[test]
+    fn an_unstamped_record_is_kept_until_the_count_bound_reaches_it() {
+        // A store written before the stamp existed must not read as archived at
+        // the epoch, or upgrading would delete the whole history at once.
+        let now = SystemTime::now();
+        let mut archives = vec![archive_at(1, None)];
+        trim_archives(&mut archives, now);
+        assert_eq!(archives.len(), 1);
+
+        let mut many: Vec<_> = (0..MAX_ARCHIVES as u64 + 1)
+            .map(|sequence| archive_at(sequence, None))
+            .collect();
+        trim_archives(&mut many, now);
+        assert_eq!(many.len(), MAX_ARCHIVES);
+    }
+
+    #[test]
+    fn a_clock_that_moved_backwards_does_not_delete_history() {
+        let now = SystemTime::now();
+        let mut archives = vec![archive_at(1, Some(now + Duration::from_secs(3600)))];
+        trim_archives(&mut archives, now);
+        assert_eq!(archives.len(), 1);
     }
 }
