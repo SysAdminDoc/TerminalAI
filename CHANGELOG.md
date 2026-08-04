@@ -91,6 +91,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- The web shell now applies Fluent placeholders, routes update and action feedback through the
+  catalog, and checks that every non-dynamic catalog message and localization attribute has a
+  renderer reference.
+
 - The launcher now names its dialog for assistive technology and keeps empty-folder
   validation beside the field with focus, aria-invalid and a correctly rendered Windows path placeholder.
 - Template and lease relative-path validation now rejects every non-normal path component,

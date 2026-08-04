@@ -289,7 +289,7 @@ async function checkForUpdates() {
   const button = $("update-check-button");
   if (button.disabled) return;
   button.disabled = true;
-  button.querySelector("span").textContent = "Checking…";
+  button.querySelector("span").textContent = t("update-checking");
   try {
     const current = state.appVersion ?? await invoke("app_version").catch(() => FALLBACK_APP_VERSION);
     state.appVersion = current;
@@ -299,23 +299,23 @@ async function checkForUpdates() {
       },
     });
     if (response.status === 404) {
-      showToast(`TerminalAI v${current} is the newest published build; no update was installed.`, "success");
+      showToast(t("update-newest", { version: current }), "success");
       return;
     }
-    if (!response.ok) throw new Error(`GitHub returned HTTP ${response.status}`);
+    if (!response.ok) throw new Error(t("update-http-error", { status: response.status }));
     const release = await response.json();
     const latest = String(release.tag_name ?? "").replace(/^v/i, "");
-    if (!versionTuple(latest)) throw new Error("the latest release had no semantic version");
+    if (!versionTuple(latest)) throw new Error(t("update-invalid-release"));
     if (isNewerVersion(latest, current)) {
-      showToast(`TerminalAI v${latest} is available (installed v${current}). Download it from GitHub; nothing was installed automatically.`, "success");
+      showToast(t("update-available", { latest, current }), "success");
     } else {
-      showToast(`TerminalAI v${current} is up to date; no update was installed.`, "success");
+      showToast(t("update-up-to-date", { version: current }), "success");
     }
   } catch (error) {
-    showToast(`Update check failed: ${error}`);
+    showToast(t("update-failed", { error: String(error) }));
   } finally {
     button.disabled = false;
-    button.querySelector("span").textContent = "Check updates";
+    button.querySelector("span").textContent = t("button-check-updates");
   }
 }
 
@@ -331,7 +331,7 @@ function diagnosticSource(value) {
 
 function diagnosticTime(value) {
   const time = systemTimeMs(value);
-  return Number.isFinite(time) ? new Date(time).toISOString().replace(".000Z", "Z").replace("T", " ") : "unknown time";
+  return Number.isFinite(time) ? new Date(time).toISOString().replace(".000Z", "Z").replace("T", " ") : t("unknown-time");
 }
 
 function renderDiagnostics() {
@@ -404,7 +404,7 @@ function formatReason(reason, legacyDetail = null) {
 
 function logTime(value) {
   const time = systemTimeMs(value);
-  return Number.isFinite(time) ? new Date(time).toISOString().replace(".000Z", "Z").replace("T", " ") : "unknown time";
+  return Number.isFinite(time) ? new Date(time).toISOString().replace(".000Z", "Z").replace("T", " ") : t("unknown-time");
 }
 
 function renderLogs() {
@@ -530,7 +530,7 @@ async function loadPreflight(show = false) {
     state.preflightReason = null;
     if (!show && preflightChecksNeedAttention(report)) state.preflightMode = true;
   } catch (error) {
-    state.preflightReason = `Preflight could not run: ${error}`;
+    state.preflightReason = t("preflight-run-error", { error: String(error) });
     state.preflightMode = true;
   } finally {
     state.preflightLoading = false;
@@ -545,7 +545,7 @@ async function handlePreflightAction(action, id, button) {
   try {
     if (action === "fix") {
       await invoke("preflight_fix", { kind: id });
-      showToast(`${id} preflight fix applied`, "success");
+      showToast(t("preflight-fix-applied", { id }), "success");
     }
     await loadPreflight(true);
     if (id === "daemon" || action === "recheck") {
@@ -557,7 +557,7 @@ async function handlePreflightAction(action, id, button) {
       }
     }
   } catch (error) {
-    state.preflightReason = `Could not ${action} ${id}: ${error}`;
+    state.preflightReason = t("preflight-action-error", { action, id, error: String(error) });
     renderPreflight();
     showToast(state.preflightReason);
   } finally {
@@ -592,7 +592,7 @@ function renderReview() {
   const pending = entries.filter((entry) => !entry.reviewed).length;
   const conflicts = entries.filter((entry) => (entry.conflicts?.length ?? 0) > 0 || reviewNumber(entry.conflict_markers) > 0).length;
   const timedOut = entries.filter((entry) => entry.timed_out === true).length;
-  $("review-summary").textContent = `${countMessage("count-session", entries.length)} · ${countMessage("count-pending", pending)} · ${countMessage("count-conflict", conflicts)}${timedOut ? ` · ${countMessage("count-timed-out", timedOut)}` : ""}`;
+  $("review-summary").textContent = `${t("sessions-count", { count: entries.length })} · ${countMessage("count-pending", pending)} · ${countMessage("count-conflict", conflicts)}${timedOut ? ` · ${countMessage("count-timed-out", timedOut)}` : ""}`;
   $("review-empty").classList.toggle("view-hidden", entries.length > 0);
   $("review-list").innerHTML = entries.map(renderReviewEntry).join("");
 }
@@ -914,7 +914,7 @@ function renderRows() {
   list.classList.toggle("fleet-list-hidden", state.sessions.length === 0);
   list.classList.toggle("fleet-list-wide", state.wideMode);
   $("wide-toggle").setAttribute("aria-pressed", String(state.wideMode));
-  $("wide-toggle").textContent = state.wideMode ? "Compact" : "Wide";
+  $("wide-toggle").textContent = state.wideMode ? t("button-compact") : t("button-wide");
   $("wide-toggle").classList.toggle("wide-toggle-active", state.wideMode);
   const rovingId = sessions.find((session) => session.id === state.focused)?.id ?? sessions[0]?.id ?? null;
   reconcileKeyedRows(
@@ -1000,7 +1000,7 @@ function renderOrderNotice(changedCount) {
   const visible = changedCount > 0 && !state.reviewMode;
   notice.classList.toggle("view-hidden", !visible);
   if (!visible) return;
-  $("fleet-order-message").textContent = `${changedCount} session${changedCount === 1 ? "" : "s"} changed priority`;
+  $("fleet-order-message").textContent = countMessage("count-changed-priority", changedCount);
 }
 
 function applyFleetOrder() {
@@ -1279,7 +1279,11 @@ function updateTerminalHeader() {
   const label = lifecycleLabel(session);
   $("terminal-name").textContent = session.name;
   $("terminal-path").textContent = session.cwd;
-  $("terminal-status").textContent = `${label} · ${dwell(session.status_since)} · ${session.agent === "codex" ? "Codex" : "Claude Code"}`;
+  $("terminal-status").textContent = t("terminal-status-detail", {
+    status: label,
+    dwell: dwell(session.status_since),
+    agent: session.agent === "codex" ? "Codex" : "Claude Code",
+  });
   $("terminal-pulse").className = `terminal-pulse pulse-${meta.tone}`;
   if (state.diagnosticsMode) renderDiagnostics();
 }
@@ -1321,14 +1325,14 @@ function renderExternal() {
       const label = session.name || folderLabel(session.cwd) || `pid ${session.pid}`;
       const where = session.entrypoint ? `${session.kind ?? "session"} · ${session.entrypoint}` : (session.kind ?? "session");
       const alsoHere = supervised.has(String(session.cwd ?? "").toLowerCase())
-        ? '<span class="external-overlap" title="TerminalAI also supervises a session in this folder">same folder</span>'
+        ? '<span class="external-overlap" title="' + escapeHtml(t("external-same-folder")) + '">' + escapeHtml(t("external-same-folder-short")) + "</span>"
         : "";
       const externalAriaLabel = `${label}, ${metaLabel(meta)}, ${countMessage("count-external", 1)}`;
       return `<article class="external-row" role="listitem" aria-label="${escapeHtml(externalAriaLabel)}">
         <span class="status-glyph tone-${escapeHtml(meta.tone)}" aria-hidden="true">◦</span>
         <div class="external-identity"><div class="external-name">${escapeHtml(label)}</div><div class="external-meta"><span title="${escapeHtml(String(session.cwd ?? ""))}">${escapeHtml(folderLabel(session.cwd))}</span><span>${escapeHtml(where)}</span>${session.version ? `<span>v${escapeHtml(session.version)}</span>` : ""}</div></div>
         <span class="external-state">${escapeHtml(metaLabel(meta))}</span>
-        <span class="external-pid" title="Process id">${escapeHtml(String(session.pid))}</span>
+        <span class="external-pid" title="${escapeHtml(t("external-process-id"))}">${escapeHtml(String(session.pid))}</span>
         ${alsoHere}
       </article>`;
     })
@@ -1342,7 +1346,7 @@ async function loadExternal() {
   } catch (error) {
     // Never render "nothing running" from a failed lookup.
     state.external = [];
-    state.externalError = `Could not read external sessions: ${error}`;
+    state.externalError = t("external-load-error", { error: String(error) });
   }
   renderExternal();
 }
@@ -1448,10 +1452,10 @@ async function markReviewed(id, button) {
     const entry = state.reviews.find((review) => review.session_id === id);
     if (entry) entry.reviewed = true;
     renderReview();
-    showToast("Session marked reviewed", "success");
+    showToast(t("review-marked"), "success");
   } catch (error) {
     if (button) button.disabled = false;
-    showToast("Could not mark session reviewed: " + error);
+    showToast(t("review-mark-error", { error: String(error) }));
   }
 }
 
@@ -1503,7 +1507,7 @@ async function focusSession(id) {
     state.focused = previousFocused;
     renderRows();
     updateTerminalHeader();
-    showToast(`Could not focus session: ${error}`);
+    showToast(t("focus-session-error", { error: String(error) }));
   }
 }
 
@@ -1636,7 +1640,7 @@ async function sendBroadcast() {
       renderBroadcast();
     }
   } catch (error) {
-    showToast(`Could not broadcast: ${error}`);
+    showToast(t("broadcast-error", { error: String(error) }));
   }
 }
 
@@ -2207,7 +2211,7 @@ async function loadOlderOutput() {
     for (const chunk of chunks) writeTerminalBytes(chunk, id, generation);
     showToast(t("history-loaded", { bytes: Math.round(total / 1024) }), "success");
   } catch (error) {
-    showToast(`Could not load older output: ${error}`);
+    showToast(t("history-load-error", { error: String(error) }));
   } finally {
     state.historyLoading = false;
   }
@@ -2240,19 +2244,19 @@ async function rowAction(action, id, row = null) {
       await invoke("write_session", { id, data: bracketedPaste });
       await invoke("mark_read", { id });
       input.value = "";
-      showToast("Reply sent", "success");
+      showToast(t("reply-sent"), "success");
     }
     if (action === "kill") {
       await invoke("kill_session", { id });
-      showToast("Stop signal sent", "success");
+      showToast(t("stop-signal-sent"), "success");
     }
     if (action === "revive") {
       await invoke("revive_session", { id });
-      showToast("Native session resume started", "success");
+      showToast(t("resume-started"), "success");
     }
     if (action === "archive") {
       await invoke("archive_session", { id });
-      showToast("Stopped session archived", "success");
+      showToast(t("archive-stopped"), "success");
     }
   } catch (error) {
     showToast(String(error));
@@ -2430,18 +2434,18 @@ function schedulePreview() {
 async function updatePreview() {
   const spec = readSpec();
   if (!spec.cwd) {
-    $("preview-output").textContent = "Choose a project folder to preview the exact command vector.";
-    $("preview-state").textContent = "Waiting for a valid folder";
+    $("preview-output").textContent = t("preview-folder");
+    $("preview-state").textContent = t("preview-waiting");
     return;
   }
-  $("preview-state").textContent = "Resolving native binary…";
+  $("preview-state").textContent = t("preview-resolving");
   try {
     const command = await invoke("preview_launch", invokeArgs(spec));
     $("preview-output").textContent = command;
-    $("preview-state").textContent = "Exact argv preview";
+    $("preview-state").textContent = t("preview-exact");
   } catch (error) {
     $("preview-output").textContent = String(error);
-    $("preview-state").textContent = "Launch refused";
+    $("preview-state").textContent = t("preview-refused");
   }
 }
 
@@ -2486,7 +2490,7 @@ async function loadPresets() {
     if (state.presets.some((preset) => preset.name === selected)) $("preset-select").value = selected;
     $("delete-preset-button").disabled = !$("preset-select").value;
   } catch (error) {
-    showToast(`Could not load presets: ${error}`);
+    showToast(t("presets-load-error", { error: String(error) }));
   }
 }
 
@@ -2673,7 +2677,7 @@ async function registerProjectRoot() {
 async function saveCurrentPreset() {
   const name = $("preset-name-input").value.trim();
   if (!name) {
-    showToast("Enter a preset name first");
+    showToast(t("preset-name-required"));
     $("preset-name-input").focus();
     return;
   }
@@ -2683,7 +2687,7 @@ async function saveCurrentPreset() {
     });
     await loadPresets();
     $("preset-name-input").value = "";
-    showToast(`Preset “${name}” saved`, "success");
+    showToast(t("preset-saved", { name }), "success");
   } catch (error) {
     showToast(String(error));
   }
@@ -2787,7 +2791,7 @@ function observeTerminalSize() {
 async function openSessionLink(uri) {
   try {
     const opened = await invoke("open_external_url", { url: uri });
-    showToast(`Opened ${new URL(opened).host || opened}`, "success");
+  showToast(t("link-opened", { host: new URL(opened).host || opened }), "success");
   } catch (error) {
     showToast(String(error));
   }
@@ -3135,7 +3139,7 @@ function bindEvents() {
     try {
       state.lastSentSize = null;
       fitTerminal();
-      showToast(`Terminal refitted to ${state.terminal.cols} × ${state.terminal.rows}`, "success");
+      showToast(t("terminal-refitted", { cols: state.terminal.cols, rows: state.terminal.rows }), "success");
     } catch (error) {
       showToast(String(error));
     }
@@ -3159,7 +3163,7 @@ async function start() {
       if (id) void focusSession(id);
     });
   } catch (error) {
-    showToast(`Event stream unavailable: ${error}`);
+    showToast(t("event-stream-unavailable", { error: String(error) }));
   }
   await loadPreflight();
   await Promise.all([loadSnapshot(), loadPresets(), loadExternal()]);

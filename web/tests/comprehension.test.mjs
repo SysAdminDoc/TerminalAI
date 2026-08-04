@@ -51,7 +51,7 @@ test("first-run guidance points at the first thing to do", () => {
   // The empty state says the fleet is empty; it must also say what to do, and
   // registering a root is the step that makes everything else easy.
   assert.match(html, /id="empty-state"/);
-  for (const key of ["empty-first-launch", "empty-first-root", "empty-first-explainer"]) {
+  for (const key of ["empty-launch-first", "empty-first-root", "empty-first-explainer"]) {
     assert.ok(new RegExp(`^${key} = `, "m").test(ftl), `${key} missing`);
   }
 });

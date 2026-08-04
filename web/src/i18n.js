@@ -65,5 +65,7 @@ export function localizeDom(root = document) {
   for (const element of root.querySelectorAll("[data-i18n-title]")) {
     element.title = t(element.dataset.i18nTitle);
   }
+  for (const element of root.querySelectorAll("[data-i18n-placeholder]")) {
+    element.placeholder = t(element.dataset.i18nPlaceholder);
+  }
 }
-

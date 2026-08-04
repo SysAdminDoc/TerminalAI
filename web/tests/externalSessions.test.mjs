@@ -40,7 +40,7 @@ test("external rows carry no actionable control", () => {
 test("a failed lookup never renders as an empty machine", () => {
   // The dominant failure mode in this field is reporting idle from the absence
   // of a signal. An unreadable registry must say so.
-  assert.match(main, /state\.externalError = `Could not read external sessions/);
+  assert.match(main, /state\.externalError = t\("external-load-error"/);
   assert.match(main, /if \(state\.externalError\) \{/);
 });
 
