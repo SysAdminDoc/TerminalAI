@@ -23,7 +23,7 @@ use tauri::{Emitter, Manager, State};
 use terminalai_core::agent::Agent;
 use terminalai_core::launch::LaunchSpec;
 use terminalai_core::{
-    parse_hook, AdmissionSnapshot, AgentCapabilities, HookTransport, LogEntry, RegistryEvent,
+    parse_hook_in, AdmissionSnapshot, AgentCapabilities, HookTransport, LogEntry, RegistryEvent,
     ReviewItem, Session, SessionId, SessionStatus, MAX_LOG_ENTRIES,
 };
 use terminalai_daemon::{
@@ -2022,7 +2022,7 @@ fn run_hook_cli(args: &[String]) -> i32 {
         eprintln!("ignoring hook input read failure: {error}");
         return 0;
     }
-    let event = match parse_hook(agent, &input) {
+    let event = match parse_hook_in(agent, &input, std::env::current_dir().ok()) {
         Ok(event) => event,
         Err(error) => {
             eprintln!("ignoring malformed hook input: {error}");

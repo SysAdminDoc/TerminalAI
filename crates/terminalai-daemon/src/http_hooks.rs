@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use terminalai_core::agent::Agent;
-use terminalai_core::{parse_hook, HookSignal, SessionRegistry};
+use terminalai_core::{parse_hook_in, HookSignal, SessionRegistry};
 
 const MAX_HEADER_BYTES: usize = 64 * 1024;
 const MAX_BODY_BYTES: usize = 1024 * 1024;
@@ -237,7 +237,7 @@ fn handle_connection(
         Ok(payload) => payload,
         Err(_) => return write_response(&mut stream, 400, "hook body is not UTF-8"),
     };
-    let event = match parse_hook(agent, payload) {
+    let event = match parse_hook_in(agent, payload, None) {
         Ok(event) => event,
         Err(error) => return write_response(&mut stream, 400, &error.to_string()),
     };
@@ -507,6 +507,13 @@ mod tests {
             ),
         );
         assert!(rejected.starts_with("HTTP/1.1 403 Forbidden"), "{rejected}");
+    }
+
+    #[test]
+    fn an_http_hook_without_a_cwd_does_not_adopt_the_daemon_s_directory() {
+        let event = parse_hook_in(Agent::Claude, r#"{"hook_event_name":"SessionStart"}"#, None)
+            .expect("hook payload");
+        assert_eq!(event.cwd, None);
     }
 
     #[test]

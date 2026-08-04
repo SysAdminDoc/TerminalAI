@@ -298,7 +298,24 @@ fn parse_tool_progress(raw: &RawHook) -> Option<ToolProgress> {
 /// agent-neutral event model. Unknown event names are retained instead of
 /// rejected so an upstream addition remains visible to the daemon and its
 /// diagnostics stream.
+///
+/// Parse a hook without guessing which process's working directory should
+/// identify it. Callers that own the hook transport may provide their own
+/// fallback through [`parse_hook_in`].
 pub fn parse_hook(agent: Agent, input: &str) -> Result<HookEvent, HookParseError> {
+    parse_hook_in(agent, input, None)
+}
+
+/// Parse a hook with a caller-owned working-directory fallback.
+///
+/// The CLI adapter runs in the agent's directory and can safely pass that
+/// directory here. HTTP hooks run inside the daemon, so they must pass `None`:
+/// the daemon's working directory is not evidence about the hook's session.
+pub fn parse_hook_in(
+    agent: Agent,
+    input: &str,
+    fallback_cwd: Option<PathBuf>,
+) -> Result<HookEvent, HookParseError> {
     let raw: RawHook = serde_json::from_str(input)?;
     let progress = parse_tool_progress(&raw);
     let rate_limit = parse_rate_limit(&raw);
@@ -321,7 +338,7 @@ pub fn parse_hook(agent: Agent, input: &str) -> Result<HookEvent, HookParseError
         session_id: raw
             .session_id
             .filter(|session_id| is_valid_resume_id(session_id)),
-        cwd: raw.cwd.or_else(|| std::env::current_dir().ok()),
+        cwd: raw.cwd.or(fallback_cwd),
         signal,
         progress,
     })

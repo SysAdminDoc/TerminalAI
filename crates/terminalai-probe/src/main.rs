@@ -21,7 +21,7 @@ use serde::Serialize;
 use terminalai_core::agent::{self, Agent};
 use terminalai_core::launch::{Effort, LaunchSpec, Permission, ResolvedCommand, Sandbox};
 use terminalai_core::pty::{self, PtySession};
-use terminalai_core::{parse_hook, HookTransport, SessionId};
+use terminalai_core::{parse_hook_in, HookTransport, SessionId};
 use terminalai_daemon::{DaemonClient, HookEndpoint, Request, Response};
 
 const USAGE: &str = "\
@@ -692,7 +692,7 @@ fn cmd_hook(args: &[String]) -> i32 {
         eprintln!("could not read hook input: {error}");
         return 0;
     }
-    let event = match parse_hook(agent, &input) {
+    let event = match parse_hook_in(agent, &input, std::env::current_dir().ok()) {
         Ok(event) => event,
         Err(error) => {
             eprintln!("ignoring malformed hook input: {error}");
@@ -1732,7 +1732,7 @@ fn drain(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use terminalai_core::{HookNotification, HookSignal};
+    use terminalai_core::{parse_hook, HookNotification, HookSignal};
 
     #[test]
     fn parses_claude_notification_payload() {

@@ -71,7 +71,9 @@ pub use hook_config::{
     status_at as hook_status_at, status_at_with_transport as hook_status_at_with_transport,
     HookChange, HookConfigError, HookStatus, HookTransport, MANAGED_MARKER,
 };
-pub use hooks::{parse_hook, HookEvent, HookNotification, HookParseError, HookSignal};
+pub use hooks::{
+    parse_hook, parse_hook_in, HookEvent, HookNotification, HookParseError, HookSignal,
+};
 pub use launch::{Effort, LaunchError, LaunchSpec, Permission, ResolvedCommand, Resume, Sandbox};
 pub use notification::{
     AttentionNotification, NotificationCenter, NotificationChange, NotificationEvent,

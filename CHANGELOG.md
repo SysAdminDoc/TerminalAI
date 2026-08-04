@@ -109,6 +109,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Refreshes now serialize snapshot requests and replay session events received
   while the snapshot was in flight, so a refresh cannot briefly roll attention
   or removal state back to an older view.
+- Hook parsing now takes a caller-owned working-directory fallback: CLI hooks
+  keep their agent directory, while HTTP hooks leave `cwd` absent instead of
+  inheriting the daemon's directory.
 
 - Persistent attention states suppressed during startup or long-tool grace are now rechecked and
   raised when the grace period ends, even without another status transition.
