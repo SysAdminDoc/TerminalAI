@@ -89,6 +89,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Transcript tailing now advances past oversized and invalid-UTF-8 JSONL records instead of
+  retrying the same offset forever. The bounded byte reader preserves partial-line behavior while
+  skipping records the JSON parser cannot safely consume.
 - Release `terminalai.exe` now uses the Windows GUI subsystem, so Explorer and Start-Menu launches
   do not allocate a companion console. The installer gate reads the installed PE header and fails
   unless it reports subsystem 2.

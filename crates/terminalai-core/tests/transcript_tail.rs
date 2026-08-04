@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use terminalai_core::agent::Agent;
 use std::time::{Duration, SystemTime};
 
-use terminalai_core::tail::{claude_project_slug, newest_transcript, TranscriptTail};
+use terminalai_core::tail::{claude_project_slug, newest_transcript, TranscriptTail, MAX_LINE_BYTES};
 
 struct Scratch(PathBuf);
 
@@ -376,6 +376,63 @@ fn malformed_records_do_not_stop_the_ones_after_them() {
     let update = tail.poll(&home.0, cwd, SystemTime::UNIX_EPOCH);
     assert_eq!(update.last_message.as_deref(), Some("Survived"));
     assert_eq!(update.totals.requests, 1);
+}
+
+#[test]
+fn an_oversized_line_is_skipped_rather_than_wedging_the_tail() {
+    let home = scratch("oversized");
+    let cwd = Path::new(r"C:\repos\shop");
+    let file = home
+        .0
+        .join(".claude")
+        .join("projects")
+        .join(claude_project_slug(cwd))
+        .join("s.jsonl");
+    std::fs::create_dir_all(file.parent().expect("parent")).expect("dirs");
+    let mut output = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&file)
+        .expect("open");
+    output
+        .write_all(&vec![b'x'; MAX_LINE_BYTES + 1])
+        .expect("oversized line");
+    writeln!(output).expect("oversized newline");
+    writeln!(output, "{}", claude_record("after", "After oversized", 7, 7)).expect("record");
+    output.flush().expect("flush");
+
+    let mut tail = TranscriptTail::new(Agent::Claude);
+    let _ = tail.poll(&home.0, cwd, SystemTime::UNIX_EPOCH);
+    let update = tail.poll(&home.0, cwd, SystemTime::UNIX_EPOCH);
+    assert_eq!(update.last_message.as_deref(), Some("After oversized"));
+    assert_eq!(update.totals.input_tokens, 7);
+}
+
+#[test]
+fn an_invalid_utf8_line_is_skipped_rather_than_wedging_the_tail() {
+    let home = scratch("invalid-utf8");
+    let cwd = Path::new(r"C:\repos\shop");
+    let file = home
+        .0
+        .join(".claude")
+        .join("projects")
+        .join(claude_project_slug(cwd))
+        .join("s.jsonl");
+    std::fs::create_dir_all(file.parent().expect("parent")).expect("dirs");
+    let mut output = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&file)
+        .expect("open");
+    output.write_all(b"{\xff}\n").expect("invalid record");
+    writeln!(output, "{}", claude_record("after", "After invalid UTF-8", 9, 9)).expect("record");
+    output.flush().expect("flush");
+
+    let mut tail = TranscriptTail::new(Agent::Claude);
+    let _ = tail.poll(&home.0, cwd, SystemTime::UNIX_EPOCH);
+    let update = tail.poll(&home.0, cwd, SystemTime::UNIX_EPOCH);
+    assert_eq!(update.last_message.as_deref(), Some("After invalid UTF-8"));
+    assert_eq!(update.totals.input_tokens, 9);
 }
 
 #[test]

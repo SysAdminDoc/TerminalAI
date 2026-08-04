@@ -48,6 +48,67 @@ pub struct TranscriptUpdate {
     pub changed: bool,
 }
 
+enum BoundedLine {
+    Eof,
+    Partial {
+        bytes_read: usize,
+        oversized: bool,
+    },
+    Complete {
+        bytes: Vec<u8>,
+        bytes_read: usize,
+        oversized: bool,
+    },
+}
+
+/// Consume one physical line without handing an unbounded record to the
+/// parser. Bytes are retained only while the line is within the cap, so an
+/// oversized or invalid-UTF-8 record can still be skipped without wedging the
+/// file offset or allocating the entire pasted payload.
+fn read_bounded_line(
+    reader: &mut BufReader<std::fs::File>,
+    max_bytes: usize,
+) -> std::io::Result<BoundedLine> {
+    let mut bytes = Vec::with_capacity(max_bytes.min(8192));
+    let mut bytes_read = 0usize;
+    let mut oversized = false;
+
+    loop {
+        let chunk = reader.fill_buf()?;
+        if chunk.is_empty() {
+            return if bytes_read == 0 {
+                Ok(BoundedLine::Eof)
+            } else {
+                Ok(BoundedLine::Partial {
+                    bytes_read,
+                    oversized,
+                })
+            };
+        }
+
+        let newline = chunk.iter().position(|byte| *byte == b'\n');
+        let consumed = newline.map_or(chunk.len(), |index| index + 1);
+        if !oversized {
+            if bytes_read.saturating_add(consumed) <= max_bytes {
+                bytes.extend_from_slice(&chunk[..consumed]);
+            } else {
+                oversized = true;
+                bytes.clear();
+            }
+        }
+        reader.consume(consumed);
+        bytes_read = bytes_read.saturating_add(consumed);
+
+        if newline.is_some() {
+            return Ok(BoundedLine::Complete {
+                bytes,
+                bytes_read,
+                oversized,
+            });
+        }
+    }
+}
+
 /// Follows one session's transcript.
 #[derive(Debug)]
 pub struct TranscriptTail {
@@ -131,31 +192,47 @@ impl TranscriptTail {
 
         let budget_end = self.offset.saturating_add(MAX_POLL_BYTES);
         let mut changed = false;
-        let mut line = String::new();
-        loop {
-            line.clear();
-            let mut limited = std::io::Read::take(&mut reader, MAX_LINE_BYTES as u64 + 1);
-            let read = match limited.read_line(&mut line) {
-                Ok(0) => break,
-                Ok(read) => read,
-                // Invalid UTF-8 mid-file. Skip the rest of this poll rather than
-                // abandoning the file: the next append is usually well-formed.
-                Err(_) => break,
-            };
-            // A line without a terminator is still being written. Leave the
-            // offset before it so the next poll sees the whole record.
-            if !line.ends_with('\n') {
-                break;
-            }
-            self.offset = self.offset.saturating_add(read as u64);
-            if read > MAX_LINE_BYTES {
-                continue;
-            }
-            if self.absorb(&line) {
-                changed = true;
-            }
-            if self.offset >= budget_end {
-                break;
+        while let Ok(line) = read_bounded_line(&mut reader, MAX_LINE_BYTES) {
+            match line {
+                BoundedLine::Eof => break,
+                BoundedLine::Partial {
+                    bytes_read,
+                    oversized,
+                } => {
+                    // A short unterminated line is still being written. Keep
+                    // the offset before it so the next poll sees the record
+                    // whole. An oversized partial line cannot be safely
+                    // parsed, so consume the bytes already seen and move on.
+                    if oversized {
+                        self.offset = self.offset.saturating_add(bytes_read as u64);
+                    }
+                    break;
+                }
+                BoundedLine::Complete {
+                    bytes,
+                    bytes_read,
+                    oversized,
+                } => {
+                    self.offset = self.offset.saturating_add(bytes_read as u64);
+                    if oversized {
+                        if self.offset >= budget_end {
+                            break;
+                        }
+                        continue;
+                    }
+                    let Ok(line) = std::str::from_utf8(&bytes) else {
+                        if self.offset >= budget_end {
+                            break;
+                        }
+                        continue;
+                    };
+                    if self.absorb(line) {
+                        changed = true;
+                    }
+                    if self.offset >= budget_end {
+                        break;
+                    }
+                }
             }
         }
         self.snapshot(changed)
