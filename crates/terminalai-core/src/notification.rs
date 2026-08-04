@@ -16,7 +16,31 @@ use crate::session::{Session, SessionId, SessionStatus};
 pub const STARTUP_GRACE_PERIOD: Duration = Duration::from_secs(5);
 /// Ignore attention signals immediately after a tool begins. Long-running
 /// tools often emit intermediate prompts before their real completion state.
+///
+/// Deliberately shorter than [`AGENT_AUTO_RESOLVE_DEADLINE`] but not by much,
+/// because the states this applies to — a permission request — do not expire on
+/// their own: nobody answers them but the operator, so the only cost of waiting
+/// is lateness, and the benefit is not raising a notification for a prompt the
+/// tool itself was about to withdraw.
 pub const LONG_TOOL_GRACE_PERIOD: Duration = Duration::from_secs(30);
+
+/// How long an agent waits for an answer before proceeding without one.
+///
+/// Claude Code's `AskUserQuestion` continues after sixty seconds
+/// (anthropics/claude-code#73125). This is the budget the operator actually
+/// has, and every grace period below is measured against it rather than chosen
+/// on its own.
+pub const AGENT_AUTO_RESOLVE_DEADLINE: Duration = Duration::from_secs(60);
+
+/// The grace applied to a question the agent will answer for itself.
+///
+/// The long-tool grace spent thirty of the operator's sixty seconds — they were
+/// told at the halfway point, and if they missed it the agent proceeded on its
+/// own. Five seconds still filters the intermediate prompts a tool emits as it
+/// starts, and leaves fifty-five of the sixty to answer in. The asymmetry is the
+/// point: a late notification about a question costs the answer entirely, while
+/// an early one about a permission prompt costs only noise.
+pub const QUESTION_GRACE_PERIOD: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AttentionNotification {
@@ -110,12 +134,13 @@ impl NotificationCenter {
         }
 
         let mut changes = self.retract_session(&session.id);
-        if let Some(reason) = suppression_reason(previous_status, previous_state_since, now) {
+        if let Some(reason) = suppression_reason(status, previous_status, previous_state_since, now)
+        {
             self.pending.insert(
                 session.id.clone(),
                 PendingNotification {
                     notification: notification.clone(),
-                    due: suppression_deadline(reason, now),
+                    due: suppression_deadline(reason, status, now),
                 },
             );
             changes.push(NotificationChange::Suppressed {
@@ -249,7 +274,29 @@ fn status_key(status: SessionStatus) -> &'static str {
     }
 }
 
+/// Whether the agent will proceed on its own if nobody answers.
+///
+/// A question does; a permission request does not. That difference is what
+/// decides how much of the operator's budget the fleet is allowed to spend
+/// before telling them.
+pub fn expires_without_an_answer(status: SessionStatus) -> bool {
+    matches!(
+        status,
+        SessionStatus::AwaitingInput | SessionStatus::NeedsYou
+    )
+}
+
+/// How long a transition into `status` may be held back.
+fn tool_grace_for(status: SessionStatus) -> Duration {
+    if expires_without_an_answer(status) {
+        QUESTION_GRACE_PERIOD
+    } else {
+        LONG_TOOL_GRACE_PERIOD
+    }
+}
+
 fn suppression_reason(
+    status: SessionStatus,
     previous_status: SessionStatus,
     previous_state_since: SystemTime,
     now: SystemTime,
@@ -257,17 +304,21 @@ fn suppression_reason(
     let elapsed = now.duration_since(previous_state_since).unwrap_or_default();
     if previous_status == SessionStatus::Starting && elapsed < STARTUP_GRACE_PERIOD {
         Some(SuppressionReason::Startup)
-    } else if previous_status == SessionStatus::Working && elapsed < LONG_TOOL_GRACE_PERIOD {
+    } else if previous_status == SessionStatus::Working && elapsed < tool_grace_for(status) {
         Some(SuppressionReason::LongTool)
     } else {
         None
     }
 }
 
-fn suppression_deadline(reason: SuppressionReason, now: SystemTime) -> SystemTime {
+fn suppression_deadline(
+    reason: SuppressionReason,
+    status: SessionStatus,
+    now: SystemTime,
+) -> SystemTime {
     let grace = match reason {
         SuppressionReason::Startup => STARTUP_GRACE_PERIOD,
-        SuppressionReason::LongTool => LONG_TOOL_GRACE_PERIOD,
+        SuppressionReason::LongTool => tool_grace_for(status),
     };
     now.checked_add(grace).unwrap_or(now)
 }
@@ -473,5 +524,51 @@ mod tests {
             serde_json::from_str::<NotificationEvent>(&json),
             Ok(NotificationEvent::Retracted { .. })
         ));
+    }
+
+    /// The operator gets sixty seconds to answer a question before the agent
+    /// answers it for them. Spending thirty of those on a grace period told them
+    /// at the halfway point.
+    #[test]
+    fn a_question_is_reported_well_inside_the_agents_own_deadline() {
+        assert!(
+            QUESTION_GRACE_PERIOD * 4 < AGENT_AUTO_RESOLVE_DEADLINE,
+            "the grace period spends most of the answering budget"
+        );
+
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        // Ten seconds into a tool: past a question's grace, inside a permission
+        // request's. The two must not be suppressed alike.
+        let began = now - Duration::from_secs(10);
+
+        for (status, suppressed) in [
+            (SessionStatus::AwaitingInput, false),
+            (SessionStatus::NeedsYou, false),
+            (SessionStatus::NeedsApproval, true),
+        ] {
+            let mut center = NotificationCenter::default();
+            let mut row = session("repo", status);
+            row.state_since = now;
+            let changes = center.observe(&row, SessionStatus::Working, began, now);
+            let held = matches!(
+                changes.first(),
+                Some(NotificationChange::Suppressed { .. })
+            );
+            assert_eq!(
+                held, suppressed,
+                "{status:?} was {} ten seconds into a tool",
+                if held { "held back" } else { "raised" }
+            );
+        }
+    }
+
+    #[test]
+    fn only_the_states_the_agent_can_answer_for_itself_are_shortened() {
+        assert!(expires_without_an_answer(SessionStatus::AwaitingInput));
+        assert!(expires_without_an_answer(SessionStatus::NeedsYou));
+        // Nobody but the operator answers a permission request, so there is no
+        // deadline to race and no reason to trade away the de-noising.
+        assert!(!expires_without_an_answer(SessionStatus::NeedsApproval));
+        assert!(!expires_without_an_answer(SessionStatus::Working));
     }
 }

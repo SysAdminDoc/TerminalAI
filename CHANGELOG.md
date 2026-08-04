@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- A row waiting on a question shows how long is left before the agent answers it for itself. Claude
+  Code's `AskUserQuestion` proceeds without an answer after sixty seconds, and the notification
+  grace period spent thirty of them — so the operator was told at the halfway point and the agent
+  decided on its own if they missed it. Question-like states now wait five seconds rather than
+  thirty, which still filters the intermediate prompts a tool emits as it starts while leaving
+  fifty-five seconds to reply, and the deadline is named in one constant the grace periods are
+  measured against. Permission requests keep the longer grace deliberately: nobody but the operator
+  answers one, so there is no deadline to race and no reason to trade away the de-noising.
+
 - "Elsewhere on this machine" rows show what the agent said about itself. The panel already ran the
   command that returns Claude Code's own status vocabulary and then collapsed the answer to process
   liveness, so a row read "Running" while the agent had reported it was blocked on a permission

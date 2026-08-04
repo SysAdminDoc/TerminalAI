@@ -85,3 +85,25 @@ test("no message key is defined twice", () => {
   const duplicates = keys.filter((key) => !seen.add(key));
   assert.deepEqual(duplicates, [], "duplicate message keys");
 });
+
+test("a question the agent will answer for itself shows how long is left", () => {
+  // The grace period used to spend thirty of the operator's sixty seconds, and
+  // nothing on the row said the clock was running at all.
+  assert.match(main, /const AGENT_AUTO_RESOLVE_SECONDS = 60;/);
+  assert.match(main, /function answerSecondsRemaining\(/);
+  assert.match(main, /function answerCountdownLabel\(/);
+  assert.match(main, /class="row-answer-deadline"/);
+
+  // Only the states the agent resolves on its own count down. A permission
+  // request waits indefinitely, so a countdown there would be a fiction.
+  const start = main.indexOf("function expiresWithoutAnAnswer(");
+  const body = main.slice(start, main.indexOf("\n}", start));
+  assert.match(body, /"awaiting-input", "needs-you"/);
+  assert.doesNotMatch(body, /needs-approval/);
+
+  const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
+  for (const key of ["answer-deadline", "answer-deadline-passed", "answer-deadline-explained"]) {
+    assert.ok(new RegExp(`^${key} =`, "m").test(ftl), `${key} missing from terminalai.ftl`);
+  }
+  assert.match(ftl, /^answer-deadline = .*\{ \$seconds \}/m);
+});
