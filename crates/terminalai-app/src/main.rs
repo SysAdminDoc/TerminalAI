@@ -8,7 +8,7 @@ mod work;
 use terminalai_core::work_queue::{EntryState, WorkQueue};
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Mutex};
@@ -1366,6 +1366,19 @@ fn connect_or_start_daemon() -> Result<DaemonClient, String> {
     ))
 }
 
+fn cleanup_http_hooks_at(home: &Path, executable: &Path) -> Result<(), String> {
+    let path = terminalai_core::hook_config_path(Agent::Claude, home, None);
+    terminalai_core::downgrade_claude_http_hooks_at(&path, executable)
+        .map(|_| ())
+        .map_err(|error| format!("clean up Claude HTTP hooks: {error}"))
+}
+
+fn cleanup_http_hooks() -> Result<(), String> {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    cleanup_http_hooks_at(&home, &executable)
+}
+
 fn install_daemon_client(
     app: &tauri::AppHandle,
     state: &State<'_, AppState>,
@@ -1741,7 +1754,7 @@ fn run_app() -> Result<(), String> {
     {
         builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     }
-    builder
+    let app_result = builder
         .invoke_handler(tauri::generate_handler![
             app_version,
             fleet_snapshot,
@@ -1850,7 +1863,13 @@ fn run_app() -> Result<(), String> {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+    let cleanup_result = cleanup_http_hooks();
+    match (app_result, cleanup_result) {
+        (Err(error), _) => Err(error),
+        (Ok(()), Ok(())) => Ok(()),
+        (Ok(()), Err(error)) => Err(error),
+    }
 }
 
 fn is_hook_invocation(args: &[String]) -> bool {
@@ -1976,5 +1995,35 @@ mod tests {
         assert!(is_hook_invocation(&["hook".into(), "claude".into()]));
         assert!(!is_hook_invocation(&["--help".into()]));
         assert!(!is_hook_invocation(&[]));
+    }
+
+    #[test]
+    fn an_http_hook_handler_is_removed_when_its_endpoint_dies() {
+        let home = std::env::temp_dir().join(format!(
+            "terminalai-app-hooks-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let path = home.join(".claude/settings.json");
+        std::fs::create_dir_all(path.parent().expect("settings parent")).expect("home");
+        let transport = HookTransport::Http {
+            url: "http://127.0.0.1:43123/hooks/claude".into(),
+            host: "127.0.0.1:43123".into(),
+            bearer_token: "shutdown-token".into(),
+        };
+        terminalai_core::install_hooks_at_with_transport(Agent::Claude, &path, &transport)
+            .expect("install HTTP hook");
+
+        cleanup_http_hooks_at(&home, Path::new("terminalai.exe")).expect("shutdown cleanup");
+
+        let cleaned = std::fs::read_to_string(&path).expect("read cleaned settings");
+        assert!(!cleaned.contains("127.0.0.1"));
+        assert!(!cleaned.contains("Bearer shutdown-token"));
+        assert!(!cleaned.contains("\"type\": \"http\""));
+        assert!(cleaned.contains(terminalai_core::MANAGED_MARKER));
+        let _ = std::fs::remove_dir_all(home);
     }
 }

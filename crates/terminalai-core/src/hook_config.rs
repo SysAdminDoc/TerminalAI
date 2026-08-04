@@ -199,6 +199,43 @@ pub fn remove_at(
     })
 }
 
+/// Replace a managed Claude HTTP hook with the command transport on shutdown.
+///
+/// The HTTP listener and its bearer token are daemon-lifetime state. Keeping
+/// either in a global Claude settings file after the listener is gone leaves a
+/// dead endpoint and a stale secret in every later Claude run. The command
+/// transport has no secret and is fail-open when the daemon is unavailable, so
+/// it is the safe durable fallback.
+pub fn downgrade_claude_http_at(
+    path: &Path,
+    executable: &Path,
+) -> Result<HookChange, HookConfigError> {
+    let Some(before) = read_optional(path)? else {
+        return Ok(HookChange {
+            path: path.to_path_buf(),
+            changed: false,
+        });
+    };
+    let root: JsonValue = serde_json::from_str(&before)?;
+    if !contains_managed_claude_http(&root) {
+        return Ok(HookChange {
+            path: path.to_path_buf(),
+            changed: false,
+        });
+    }
+    let after = install_claude_text(
+        Some(&before),
+        &HookTransport::Command {
+            executable: executable.to_path_buf(),
+        },
+    )?;
+    let changed = write_if_changed(path, Some(&before), &after)?;
+    Ok(HookChange {
+        path: path.to_path_buf(),
+        changed,
+    })
+}
+
 pub fn status_at(
     agent: Agent,
     path: &Path,
@@ -582,6 +619,31 @@ fn is_managed_claude_handler(handler: &JsonValue, agent: Agent) -> bool {
 
 fn is_terminalai_http_url(value: &str) -> bool {
     value.starts_with("http://127.0.0.1:") && value.contains("/hooks/")
+}
+
+fn contains_managed_claude_http(root: &JsonValue) -> bool {
+    let has_handler = root
+        .get("hooks")
+        .and_then(JsonValue::as_object)
+        .into_iter()
+        .flat_map(|hooks| hooks.values())
+        .filter_map(JsonValue::as_array)
+        .flat_map(|groups| groups.iter())
+        .filter_map(|group| group.get("hooks"))
+        .filter_map(JsonValue::as_array)
+        .flat_map(|handlers| handlers.iter())
+        .any(|handler| {
+            handler.get("type").and_then(JsonValue::as_str) == Some("http")
+                && is_managed_claude_handler(handler, Agent::Claude)
+        });
+    has_handler || root
+        .get("allowedHttpHookUrls")
+        .and_then(JsonValue::as_array)
+        .is_some_and(|urls| {
+            urls.iter()
+                .filter_map(JsonValue::as_str)
+                .any(is_terminalai_http_url)
+        })
 }
 
 fn matches_http_transport(handler: &JsonValue, transport: &HookTransport) -> bool {

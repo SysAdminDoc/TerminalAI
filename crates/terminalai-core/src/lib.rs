@@ -66,6 +66,7 @@ pub use grid::{TerminalGrid, TerminalGridSnapshot, DEFAULT_GRID_COLS, DEFAULT_GR
 pub use hook_config::{
     command_for as hook_command, config_path as hook_config_path, install_at as install_hooks_at,
     install_at_with_transport as install_hooks_at_with_transport,
+    downgrade_claude_http_at as downgrade_claude_http_hooks_at,
     preview as hook_config_preview, remove_at as remove_hooks_at,
     status_at as hook_status_at, status_at_with_transport as hook_status_at_with_transport,
     HookChange, HookConfigError, HookStatus, HookTransport, MANAGED_MARKER,

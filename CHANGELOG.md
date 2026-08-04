@@ -89,6 +89,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Claude HTTP hooks now downgrade to the existing command transport when the app shuts down, so
+  the dead daemon URL, loopback allowlist entry, and bearer token do not persist in global settings.
+  The shutdown-path regression preserves the managed fail-open hook without retaining the secret.
 - “Load older output” now requests the in-memory ring plus a bounded older window, and the daemon
   frame/history budgets carry that full replay. A >1 MiB registry regression proves the returned
   history contains bytes the ring has already dropped.
