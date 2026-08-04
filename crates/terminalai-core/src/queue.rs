@@ -46,6 +46,8 @@ pub enum PauseReason {
     AwaitingInput,
     /// The session is no longer running.
     NotRunning,
+    /// The focused terminal has unsubmitted operator input.
+    FocusedAndEdited,
     /// The operator paused it.
     Operator,
 }
@@ -195,6 +197,23 @@ impl PromptQueue {
         self.paused = Some(reason);
     }
 
+    /// Hold automatic delivery while the operator is composing in the focused
+    /// pane. This is a transient guard, so it never overrides a stronger
+    /// attention or operator pause already visible to the user.
+    pub fn hold_for_focus_edit(&mut self) {
+        if self.paused.is_none() {
+            self.paused = Some(PauseReason::FocusedAndEdited);
+        }
+    }
+
+    /// Release only the transient focused-input hold. Other pause reasons are
+    /// independent and must remain in force.
+    pub fn clear_focus_edit(&mut self) {
+        if self.paused == Some(PauseReason::FocusedAndEdited) {
+            self.paused = None;
+        }
+    }
+
     /// Resume after the operator has dealt with whatever paused it.
     ///
     /// Clears the in-flight hold as well: if the queue paused while a prompt
@@ -333,6 +352,32 @@ mod tests {
         queue.pause(PauseReason::Operator);
         queue.resume();
         assert_eq!(queue.observe(SessionStatus::Idle), QueueAction::Send("b".into()));
+    }
+
+    #[test]
+    fn focused_editing_holds_a_prompt_until_the_guard_is_cleared() {
+        let mut queue = queue(&["next"]);
+        queue.hold_for_focus_edit();
+        assert_eq!(queue.paused(), Some(PauseReason::FocusedAndEdited));
+        assert_eq!(queue.observe(SessionStatus::Idle), QueueAction::Idle);
+        assert_eq!(queue.len(), 1);
+
+        queue.clear_focus_edit();
+        assert_eq!(queue.paused(), None);
+        assert_eq!(
+            queue.observe(SessionStatus::Idle),
+            QueueAction::Send("next".into())
+        );
+    }
+
+    #[test]
+    fn focused_editing_does_not_override_a_stronger_pause() {
+        let mut queue = queue(&["next"]);
+        queue.pause(PauseReason::Operator);
+        queue.hold_for_focus_edit();
+        assert_eq!(queue.paused(), Some(PauseReason::Operator));
+        queue.clear_focus_edit();
+        assert_eq!(queue.paused(), Some(PauseReason::Operator));
     }
 
     #[test]

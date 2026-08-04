@@ -6,7 +6,7 @@
 //! shell. This makes closing or reloading a view harmless to live agents.
 
 use std::cmp::Ordering as CmpOrdering;
-use std::collections::{BTreeMap, BinaryHeap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
@@ -212,6 +212,9 @@ struct Entry {
 struct State {
     next_id: u64,
     focused: Option<SessionId>,
+    /// Session ids whose focused terminal has received input that has not yet
+    /// been explicitly submitted or superseded by agent activity.
+    operator_edited: BTreeSet<SessionId>,
     entries: BTreeMap<SessionId, Entry>,
     archives: Vec<ArchivedSession>,
     extra: BTreeMap<String, serde_json::Value>,
@@ -300,6 +303,8 @@ pub enum BroadcastRefusal {
     NotRunning,
     /// Waiting on a permission decision, where prompt text is not an answer.
     NeedsApproval,
+    /// The operator is composing in the focused pane.
+    FocusedAndEdited,
     /// The write itself failed.
     WriteFailed(String),
 }
@@ -312,6 +317,10 @@ impl std::fmt::Display for BroadcastRefusal {
             Self::NeedsApproval => {
                 write!(formatter, "waiting for a permission decision; answer it directly")
             }
+            Self::FocusedAndEdited => write!(
+                formatter,
+                "focused and edited; defocus it or send explicitly"
+            ),
             Self::WriteFailed(detail) => write!(formatter, "write failed: {detail}"),
         }
     }
@@ -383,6 +392,7 @@ impl SessionRegistry {
             state: Mutex::new(State {
                 next_id: 1,
                 focused: None,
+                operator_edited: BTreeSet::new(),
                 entries: BTreeMap::new(),
                 archives: Vec::new(),
                 extra: BTreeMap::new(),
@@ -697,6 +707,48 @@ impl SessionRegistry {
         pty.write(bytes).map_err(RegistryError::from)
     }
 
+    /// Write bytes originating in the focused terminal. A raw terminal stream
+    /// has no separate "editing" event, so a line ending is the explicit-send
+    /// boundary and every other keystroke keeps automatic delivery held.
+    /// Programmatic queue and broadcast writes use [`Self::write`] and never
+    /// clear this guard accidentally.
+    pub fn write_user_input(
+        &self,
+        id: &SessionId,
+        bytes: &[u8],
+    ) -> Result<(), RegistryError> {
+        let pty = self.pty(id)?;
+        let explicit_send = bytes.iter().any(|byte| matches!(byte, b'\r' | b'\n'));
+        let changed = {
+            let mut state = lock_state(&self.inner);
+            let focused = state.focused.as_ref() == Some(id);
+            let should_hold = focused && !explicit_send;
+            let was_edited = state.operator_edited.contains(id);
+            if should_hold {
+                state.operator_edited.insert(id.clone());
+            } else {
+                state.operator_edited.remove(id);
+            }
+            let entry = state
+                .entries
+                .get_mut(id)
+                .ok_or_else(|| RegistryError::Missing(id.clone()))?;
+            let before_pause = entry.queue.paused();
+            if should_hold {
+                entry.queue.hold_for_focus_edit();
+            } else {
+                entry.queue.clear_focus_edit();
+            }
+            entry.session.queued_prompts = entry.queue.len();
+            entry.session.queue_paused = entry.queue.paused();
+            was_edited != should_hold || before_pause != entry.queue.paused()
+        };
+        if changed {
+            self.emit_session(id);
+        }
+        pty.write(bytes).map_err(RegistryError::from)
+    }
+
     /// Add a prompt to a session's queue.
     ///
     /// Fires immediately when the session is already idle, which is what makes
@@ -801,9 +853,18 @@ impl SessionRegistry {
     fn pump_queue(&self, id: &SessionId) {
         let send = {
             let mut state = lock_state(&self.inner);
+            let focused_and_edited =
+                state.focused.as_ref() == Some(id) && state.operator_edited.contains(id);
             let Some(entry) = state.entries.get_mut(id) else {
                 return;
             };
+            if focused_and_edited {
+                entry.queue.hold_for_focus_edit();
+            } else {
+                entry.queue.clear_focus_edit();
+            }
+            entry.session.queued_prompts = entry.queue.len();
+            entry.session.queue_paused = entry.queue.paused();
             // A session with no queue is the common case; do nothing and touch
             // nothing, so this can be called freely on every status change.
             if entry.queue.is_empty() && entry.queue.paused().is_none() {
@@ -883,6 +944,9 @@ impl SessionRegistry {
             // something — just not what the operator meant, and possibly
             // "yes". These are answered one at a time, deliberately.
             SessionStatus::NeedsApproval => Some(BroadcastRefusal::NeedsApproval),
+            _ if state.focused.as_ref() == Some(id) && state.operator_edited.contains(id) => {
+                Some(BroadcastRefusal::FocusedAndEdited)
+            }
             _ if entry.pty.is_none() => Some(BroadcastRefusal::NotRunning),
             _ => None,
         }
@@ -998,6 +1062,7 @@ impl SessionRegistry {
                 return Err(RegistryError::StillRunning(id.clone()));
             }
             let entry = state.entries.remove(id).expect("entry checked above");
+            state.operator_edited.remove(id);
             state.queue.retain(|queued| queued != id);
             if state.focused.as_ref() == Some(id) {
                 state.focused = None;
@@ -1386,7 +1451,21 @@ impl SessionRegistry {
                     }
                 }
             }
+            // A non-idle provider signal means the prior composition has been
+            // taken up by the agent. Clear the transient guard before the queue
+            // reacts to this same status event; an idle row remains guarded so
+            // terminal-local echo cannot masquerade as agent output.
+            let clear_operator_edit = entry.session.status != SessionStatus::Idle;
+            if clear_operator_edit {
+                entry.queue.clear_focus_edit();
+                entry.session.queued_prompts = entry.queue.len();
+                entry.session.queue_paused = entry.queue.paused();
+            }
             let session = entry.session.clone();
+            let _ = entry;
+            if clear_operator_edit {
+                state.operator_edited.remove(&id);
+            }
             let notifications = state.notifications.observe(
                 &session,
                 previous_status,
@@ -1456,10 +1535,23 @@ impl SessionRegistry {
         if let Some(id) = &id {
             self.require(id)?;
         }
-        let (renderer_to_detach, priorities) = {
+        let (renderer_to_detach, priorities, previous_to_resume) = {
             let mut state = lock_state(&self.inner);
             let previous = state.focused.clone();
             state.focused = id.clone();
+            let previous_to_resume = if previous.as_ref() != id.as_ref() {
+                if let Some(previous_id) = previous.as_ref() {
+                    state.operator_edited.remove(previous_id);
+                    if let Some(entry) = state.entries.get_mut(previous_id) {
+                        entry.queue.clear_focus_edit();
+                        entry.session.queued_prompts = entry.queue.len();
+                        entry.session.queue_paused = entry.queue.paused();
+                    }
+                }
+                previous.clone()
+            } else {
+                None
+            };
             let renderer_to_detach = if previous.as_ref() != id.as_ref() {
                 previous.as_ref().and_then(|previous| {
                     state
@@ -1494,7 +1586,7 @@ impl SessionRegistry {
                     Some((pty, background))
                 })
                 .collect::<Vec<_>>();
-            (renderer_to_detach, priorities)
+            (renderer_to_detach, priorities, previous_to_resume)
         };
         if let Some(pty) = renderer_to_detach {
             pty.set_renderer_attached(false);
@@ -1507,6 +1599,10 @@ impl SessionRegistry {
                     "could not update process priority after focus change"
                 );
             }
+        }
+        if let Some(previous) = previous_to_resume {
+            self.emit_session(&previous);
+            self.pump_queue(&previous);
         }
         if let Some(id) = id {
             self.emit_session(&id);
@@ -2392,6 +2488,7 @@ impl SessionRegistry {
             if state.focused.as_ref() == Some(id) {
                 state.focused = None;
             }
+            state.operator_edited.remove(id);
             let removed = state.entries.remove(id).is_some();
             let notifications = if removed {
                 state.notifications.retract_session(id)
@@ -2825,6 +2922,12 @@ fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u
     let (send_output, session, notifications) = {
         let mut state = lock_state(inner);
         let focused = state.focused.as_ref() == Some(id);
+        let clear_operator_edit = state.entries.get(id).is_some_and(|entry| {
+            entry.generation == generation && entry.session.status != SessionStatus::Idle
+        });
+        if clear_operator_edit {
+            state.operator_edited.remove(id);
+        }
         let Some(entry) = state.entries.get_mut(id) else {
             return;
         };
@@ -2846,6 +2949,14 @@ fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u
             entry
                 .session
                 .set_status_from(SessionStatus::Idle, StatusSource::PtyOutput);
+        }
+        // PTY output also contains terminal-local echo. Only output observed
+        // while the provider is in a non-idle state is strong enough evidence
+        // to clear the operator-input guard.
+        if clear_operator_edit {
+            entry.queue.clear_focus_edit();
+            entry.session.queued_prompts = entry.queue.len();
+            entry.session.queue_paused = entry.queue.paused();
         }
         let session = entry.session.clone();
         let notifications = if previous_status != session.status {
@@ -4658,6 +4769,93 @@ mod tests {
     }
 
     #[test]
+    fn focused_partial_input_holds_a_queue_until_the_pane_is_defocused() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        writable_session(&registry, &id, SessionStatus::Idle, writes.clone());
+        registry.focus(Some(id.clone())).expect("focus");
+        registry
+            .write_user_input(&id, b"partial")
+            .expect("typed input");
+        registry.enqueue_prompt(&id, "queued next").expect("enqueue");
+
+        let session = registry.snapshot().into_iter().next().expect("session");
+        assert_eq!(session.queue_paused, Some(crate::queue::PauseReason::FocusedAndEdited));
+        assert_eq!(session.queued_prompts, 1);
+        assert_eq!(writes.lock().expect("writes").len(), 1, "queue fired into the edit");
+
+        registry.focus(None).expect("defocus");
+        let writes = writes.lock().expect("writes").clone();
+        assert_eq!(writes.len(), 2, "defocus did not release the queue: {writes:?}");
+        assert!(writes[1].contains("queued next"), "{writes:?}");
+        assert_eq!(registry.snapshot()[0].queue_paused, None);
+    }
+
+    #[test]
+    fn an_explicit_send_releases_the_focused_edit_guard() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        writable_session(&registry, &id, SessionStatus::Idle, writes.clone());
+        registry.focus(Some(id.clone())).expect("focus");
+        registry.write_user_input(&id, b"partial").expect("typed input");
+        registry.enqueue_prompt(&id, "after explicit send").expect("enqueue");
+
+        registry.write_user_input(&id, b"\r").expect("explicit send");
+        assert_eq!(registry.snapshot()[0].queue_paused, None);
+        apply_test_hook(&registry, HookEvent {
+            agent: Agent::Claude,
+            session_id: None,
+            cwd: Some(Path::new(".").to_path_buf()),
+            signal: HookSignal::Stop,
+            progress: None,
+        });
+        let writes = writes.lock().expect("writes").clone();
+        assert!(writes.iter().any(|write| write.contains("after explicit send")), "{writes:?}");
+    }
+
+    #[test]
+    fn terminal_echo_does_not_clear_the_guard_but_agent_activity_does() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        writable_session(&registry, &id, SessionStatus::Idle, writes);
+        registry.focus(Some(id.clone())).expect("focus");
+        registry.write_user_input(&id, b"partial").expect("typed input");
+        registry.enqueue_prompt(&id, "after output").expect("enqueue");
+
+        feed(&registry, &id, b"local terminal echo");
+        assert_eq!(registry.snapshot()[0].queue_paused, Some(crate::queue::PauseReason::FocusedAndEdited));
+
+        apply_test_hook(&registry, HookEvent {
+            agent: Agent::Claude,
+            session_id: None,
+            cwd: Some(Path::new(".").to_path_buf()),
+            signal: HookSignal::UserPromptSubmit,
+            progress: None,
+        });
+        assert_eq!(registry.snapshot()[0].queue_paused, None);
+    }
+
+    #[test]
+    fn a_focused_edit_is_a_distinct_broadcast_refusal() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        writable_session(&registry, &id, SessionStatus::Working, writes);
+        registry.focus(Some(id.clone())).expect("focus");
+        registry.write_user_input(&id, b"partial").expect("typed input");
+
+        let results = registry.broadcast(std::slice::from_ref(&id), b"broadcast");
+        assert_eq!(results[0].refusal, Some(BroadcastRefusal::FocusedAndEdited));
+
+        registry.write_user_input(&id, b"\r").expect("explicit send");
+        let results = registry.broadcast(&[id], b"broadcast");
+        assert!(results[0].delivered(), "{results:?}");
+    }
+
+    #[test]
     fn broadcasting_to_nothing_is_an_empty_report_rather_than_an_error() {
         let registry = SessionRegistry::new();
         assert!(registry.broadcast(&[], b"hi").is_empty());
@@ -4671,11 +4869,12 @@ mod tests {
             BroadcastRefusal::Missing.to_string(),
             BroadcastRefusal::NotRunning.to_string(),
             BroadcastRefusal::NeedsApproval.to_string(),
+            BroadcastRefusal::FocusedAndEdited.to_string(),
             BroadcastRefusal::WriteFailed("pipe closed".into()).to_string(),
         ];
         let unique: std::collections::BTreeSet<_> = refusals.iter().collect();
-        assert_eq!(unique.len(), 4, "{refusals:?}");
-        assert!(refusals[3].contains("pipe closed"));
+        assert_eq!(unique.len(), 5, "{refusals:?}");
+        assert!(refusals[4].contains("pipe closed"));
     }
 
     /// A domain whose sessions record what was written to them.

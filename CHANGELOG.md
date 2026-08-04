@@ -52,6 +52,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   come back paused, because a restored session is not running. `≡` on each row opens it, and
   `terminalai-probe queue <id> [add <text>|pause|resume]` drives it from the command line.
 
+- Queued and broadcast prompts now hold when the focused terminal has unsubmitted keyboard input.
+  The row and queue name the state "focused and edited"; defocusing or explicitly submitting the
+  input releases the transient hold, while broadcasts report the refusal separately from delivered
+  sessions.
+
 - A Projects view showing which known projects still have roadmap work: open items, how long ago
   the roadmap was touched, and the next unchecked item, sorted by most work first. Two states are
   kept distinct from zero throughout, because both would otherwise sort beside a finished project

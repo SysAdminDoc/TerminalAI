@@ -23,6 +23,14 @@ test("a session merely asking a question is a target", () => {
   assert.equal(isEligible(session({ status: "awaiting-input" })), true);
 });
 
+test("a focused pane with unsubmitted input is never a broadcast target", () => {
+  assert.equal(
+    ineligibleReason(session({ queue_paused: "focused_and_edited" })),
+    "broadcast-skip-focused-edited",
+  );
+  assert.equal(isEligible(session({ queue_paused: "focused_and_edited" })), false);
+});
+
 test("sessions with no process behind them are not targets", () => {
   for (const status of ["exited", "queued"]) {
     assert.equal(ineligibleReason(session({ status })), "broadcast-skip-not-running", status);
@@ -39,13 +47,15 @@ test("the eligibility rule matches the daemon's, status for status", () => {
     "utf8",
   );
   const rule = registry.slice(registry.indexOf("fn broadcast_eligibility"));
-  assert.match(rule.slice(0, 900), /SessionStatus::NeedsApproval => Some\(BroadcastRefusal::NeedsApproval\)/);
-  assert.match(rule.slice(0, 900), /entry\.pty\.is_none\(\) => Some\(BroadcastRefusal::NotRunning\)/);
+  assert.match(rule.slice(0, 1200), /SessionStatus::NeedsApproval => Some\(BroadcastRefusal::NeedsApproval\)/);
+  assert.match(rule, /operator_edited[\s\S]*BroadcastRefusal::FocusedAndEdited/);
+  assert.match(rule.slice(0, 1200), /entry\.pty\.is_none\(\) => Some\(BroadcastRefusal::NotRunning\)/);
 });
 
 test("every reason a session is skipped has a string to render", () => {
   const reasons = [
     ineligibleReason(session({ status: "needs-approval" })),
+    ineligibleReason(session({ queue_paused: "focused_and_edited" })),
     ineligibleReason(session({ status: "exited" })),
   ];
   for (const reason of reasons) {

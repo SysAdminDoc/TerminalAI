@@ -213,6 +213,7 @@ queue-paused-detail = Paused — { $reason }
 queue-pause-needs_approval = the run ended waiting for a permission decision
 queue-pause-awaiting_input = the run ended asking a question
 queue-pause-not_running = the session is not running
+queue-pause-focused_and_edited = focused and edited — defocus it or send explicitly
 queue-pause-operator = you paused it
 queue-empty = Nothing queued yet
 queue-add = Add a prompt
@@ -303,6 +304,7 @@ broadcast-eligible = { $count } { $count ->
    *[other] sessions can receive it
   }
 broadcast-skip-approval = waiting for a permission decision — answer it directly
+broadcast-skip-focused-edited = focused and edited — defocus it or send explicitly
 broadcast-skip-not-running = not running
 broadcast-sent = Sent to { $delivered } of { $total }
 broadcast-refused = { $count } skipped

@@ -32,9 +32,17 @@ test("an attention state pauses the queue instead of answering it", () => {
 test("every pause reason has a plain-language string", () => {
   // The button says "paused"; the reason is what tells the operator whether
   // the agent is waiting on them or the queue is.
-  for (const reason of ["needs_approval", "awaiting_input", "not_running", "operator"]) {
+  for (const reason of ["needs_approval", "awaiting_input", "not_running", "focused_and_edited", "operator"]) {
     assert.ok(new RegExp(`^queue-pause-${reason} = `, "m").test(ftl), `${reason} has no string`);
   }
+});
+
+test("focused keyboard input holds the queue with a visible reason", () => {
+  assert.match(queue, /FocusedAndEdited/);
+  assert.match(queue, /hold_for_focus_edit\(\)/);
+  assert.match(queue, /clear_focus_edit\(\)/);
+  assert.match(main, /queue-pause-\$\{paused\}/);
+  assert.match(ftl, /^queue-pause-focused_and_edited = focused and edited/m);
 });
 
 test("the row shows how many prompts are waiting", () => {

@@ -384,6 +384,8 @@ fn launch_session(
 #[tauri::command]
 fn write_session(id: SessionId, data: String, state: State<'_, AppState>) -> Result<(), String> {
     let client = daemon_client(&state)?;
+    // Keep the raw terminal stream intact: the daemon uses its line-ending
+    // boundary to distinguish composition from an explicit send.
     require_ok(daemon_response(&client, Request::Write { id, data })?)
 }
 

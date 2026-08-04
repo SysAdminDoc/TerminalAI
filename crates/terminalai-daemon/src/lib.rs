@@ -256,6 +256,9 @@ pub enum Request {
         spec: Box<LaunchSpec>,
         configured_path: Option<PathBuf>,
     },
+    /// Raw bytes from the user-facing terminal. The registry derives the
+    /// focused-pane edit guard from this stream; queue and broadcast writes do
+    /// not come through this request.
     Write {
         id: SessionId,
         data: String,
@@ -1232,7 +1235,7 @@ fn dispatch_with_endpoint(
                     ),
                 }
             } else {
-                match registry.write(&id, data.as_bytes()) {
+                match registry.write_user_input(&id, data.as_bytes()) {
                     Ok(()) => Response::Ok,
                     Err(error) => Response::Error {
                         message: error.to_string(),

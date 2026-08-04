@@ -6,10 +6,11 @@
  * that offers a session the daemon will refuse teaches the operator to ignore
  * the refusals.
  *
- * The rule: a session receives a broadcast only if a process is behind it and
- * it is not waiting on a permission decision. A permission prompt is a specific
- * question with a small set of valid answers, and typing a paragraph of prompt
- * text at it answers something — just not what the operator meant.
+ * The rule: a session receives a broadcast only if a process is behind it, it
+ * is not waiting on a permission decision, and its focused pane is not holding
+ * unsubmitted keyboard input. A permission prompt is a specific question with
+ * a small set of valid answers, and typing a paragraph of prompt text at it
+ * answers something — just not what the operator meant.
  */
 
 /** Statuses with no live process behind them. */
@@ -24,6 +25,7 @@ const NOT_RUNNING = new Set(["exited", "queued"]);
 export function ineligibleReason(session) {
   if (!session) return "broadcast-skip-not-running";
   if (session.status === "needs-approval") return "broadcast-skip-approval";
+  if (session.queue_paused === "focused_and_edited") return "broadcast-skip-focused-edited";
   if (NOT_RUNNING.has(session.status)) return "broadcast-skip-not-running";
   return null;
 }
