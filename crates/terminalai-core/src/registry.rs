@@ -27,7 +27,8 @@ use crate::pty::PtySize;
 use crate::review::{collect_reviews, ReviewItem};
 use crate::scrollback::ScrollbackSpool;
 use crate::session::{
-    fleet_order, RateLimit, RestartDecision, Session, SessionId, SessionPhase, SessionStatus,
+    fleet_order, fresh_hook_token, RateLimit, RestartDecision, Session, SessionId, SessionPhase,
+    SessionStatus,
 };
 use crate::store::{ArchivedSession, SessionStoreSnapshot, StoredSession};
 
@@ -448,6 +449,9 @@ impl SessionRegistry {
                 mut queue,
             } = stored;
             let id = session.id.clone();
+            if session.hook_token.is_empty() {
+                session.hook_token = fresh_hook_token();
+            }
             if session.ports.is_empty() && spec.environment.port_count > 0 {
                 session.ports = spec
                     .environment
@@ -1144,6 +1148,15 @@ impl SessionRegistry {
     /// hooks from agents launched outside TerminalAI must not fabricate rows or
     /// delete state.
     pub fn apply_hook(&self, event: HookEvent) -> bool {
+        self.apply_hook_with_token(event, None)
+    }
+
+    /// Apply a hook whose per-session secret was carried by the hook adapter.
+    ///
+    /// The daemon-wide HTTP bearer token only proves that a caller reached the
+    /// listener. This second token is the session identity: it is minted when
+    /// the row is created and placed only in that agent process's environment.
+    pub fn apply_hook_with_token(&self, event: HookEvent, hook_token: Option<&str>) -> bool {
         if let HookSignal::Unknown { event: hook_name } = &event.signal {
             tracing::warn!(
                 agent = ?event.agent,
@@ -1152,7 +1165,7 @@ impl SessionRegistry {
                 "unknown agent hook event observed"
             );
         }
-        self.apply_hook_from(event, StatusSource::Hook)
+        self.apply_hook_from(event, StatusSource::Hook, hook_token)
     }
 
     /// Re-read the session's branch when it is worth re-reading.
@@ -1192,7 +1205,12 @@ impl SessionRegistry {
         Some(branch)
     }
 
-    fn apply_hook_from(&self, mut event: HookEvent, source: StatusSource) -> bool {
+    fn apply_hook_from(
+        &self,
+        mut event: HookEvent,
+        source: StatusSource,
+        hook_token: Option<&str>,
+    ) -> bool {
         // The pipe transport accepts an already-normalized event and therefore
         // bypasses `parse_hook`; enforce the same boundary for both transports.
         if event
@@ -1213,6 +1231,11 @@ impl SessionRegistry {
                         .iter()
                         .find(|(_, entry)| {
                             entry.session.agent == event.agent
+                                && (source == StatusSource::AppServer
+                                    || (hook_token.is_some()
+                                        && !entry.session.hook_token.is_empty()
+                                        && hook_token
+                                            == Some(entry.session.hook_token.as_str())))
                                 && Some(session_id) == entry.session.resume_id.as_deref()
                         })
                         .map(|(id, _)| id.clone())
@@ -1221,11 +1244,16 @@ impl SessionRegistry {
                     state
                         .entries
                         .iter()
-                        .rev()
                         .find(|(_, entry)| {
                             entry.session.agent == event.agent
-                                && event.cwd.as_ref() == Some(&entry.session.cwd)
-                                && entry.session.resume_id.is_none()
+                                && (source == StatusSource::AppServer
+                                    || (hook_token.is_some()
+                                        && !entry.session.hook_token.is_empty()
+                                        && hook_token
+                                            == Some(entry.session.hook_token.as_str())))
+                                && event.cwd.as_ref().is_none_or(|cwd| cwd == &entry.session.cwd)
+                                && (entry.session.resume_id.is_none()
+                                    || event.session_id.is_none())
                                 && entry.session.status.is_live()
                         })
                         .map(|(id, _)| id.clone())
@@ -1243,8 +1271,12 @@ impl SessionRegistry {
             };
             let previous_status = entry.session.status;
             let previous_state_since = entry.session.state_since;
-            if let Some(resume_id) = event.session_id {
-                entry.session.resume_id = Some(resume_id);
+            if entry.session.resume_id.is_none()
+                && matches!(event.signal, HookSignal::SessionStart)
+            {
+                if let Some(resume_id) = event.session_id.clone() {
+                    entry.session.resume_id = Some(resume_id);
+                }
             }
             if let Some(branch) = branch {
                 entry.session.branch = branch;
@@ -1401,6 +1433,7 @@ impl SessionRegistry {
                 progress: None,
             },
             StatusSource::AppServer,
+            None,
         )
     }
 
@@ -1741,13 +1774,14 @@ impl SessionRegistry {
         // its own checkout must have one by the time the lease copies config
         // into it and the agent is told where to run.
         self.provision_worktree(id)?;
-        let (cwd, environment_spec, ports) = self.runtime_environment(id)?;
+        let (cwd, environment_spec, ports, hook_token) = self.runtime_environment(id)?;
         let command = &ResolvedCommand {
             cwd: cwd.clone(),
             ..command.clone()
         };
         tracing::debug!("preparing session environment");
         let mut environment = environment::variables(&id.0, &ports);
+        environment.push(("TERMINALAI_HOOK_TOKEN".into(), hook_token));
 
         // The repository's own lease, applied before the raw setup hook so the
         // hook sees the copied config, the compose project name and the session
@@ -2219,7 +2253,7 @@ impl SessionRegistry {
     fn runtime_environment(
         &self,
         id: &SessionId,
-    ) -> Result<(std::path::PathBuf, EnvironmentSpec, Vec<u16>), RegistryError> {
+    ) -> Result<(std::path::PathBuf, EnvironmentSpec, Vec<u16>, String), RegistryError> {
         let state = lock_state(&self.inner);
         let entry = state
             .entries
@@ -2229,6 +2263,7 @@ impl SessionRegistry {
             entry.session.cwd.clone(),
             entry.spec.environment.clone(),
             entry.session.ports.clone(),
+            entry.session.hook_token.clone(),
         ))
     }
 
@@ -3571,7 +3606,7 @@ mod tests {
             },
         );
 
-        assert!(registry.apply_hook(HookEvent {
+        assert!(apply_test_hook(&registry, HookEvent {
             agent: Agent::Claude,
             session_id: Some("--dangerously-skip-permissions".into()),
             cwd: Some(cwd.clone()),
@@ -3584,14 +3619,14 @@ mod tests {
             "a flag-like hook id must not become a resume id"
         );
 
-        assert!(registry.apply_hook(HookEvent {
+        assert!(apply_test_hook(&registry, HookEvent {
             agent: Agent::Claude,
             session_id: Some("native-1".into()),
             cwd: Some(cwd.clone()),
             signal: HookSignal::SessionStart,
             progress: None,
         }));
-        assert!(registry.apply_hook(HookEvent {
+        assert!(apply_test_hook(&registry, HookEvent {
             agent: Agent::Claude,
             session_id: Some("native-1".into()),
             cwd: Some(cwd.clone()),
@@ -3605,7 +3640,7 @@ mod tests {
         assert_eq!(session.status, SessionStatus::NeedsApproval);
         assert!(session.unread);
 
-        assert!(registry.apply_hook(HookEvent {
+        assert!(apply_test_hook(&registry, HookEvent {
             agent: Agent::Claude,
             session_id: Some("native-1".into()),
             cwd: Some(cwd),
@@ -3656,7 +3691,7 @@ mod tests {
             progress: None,
         };
 
-        assert!(registry.apply_hook(attention.clone()));
+        assert!(apply_test_hook(&registry, attention.clone()));
         let first: Vec<_> = events.try_iter().collect();
         assert!(first.iter().any(|event| matches!(
             event,
@@ -3665,12 +3700,12 @@ mod tests {
             } if notification.dedup_key.contains("session=s0001")
         )));
 
-        assert!(registry.apply_hook(attention));
+        assert!(apply_test_hook(&registry, attention));
         assert!(!events
             .try_iter()
             .any(|event| matches!(event, RegistryEvent::Notification { .. })));
 
-        assert!(registry.apply_hook(HookEvent {
+        assert!(apply_test_hook(&registry, HookEvent {
             agent: Agent::Claude,
             session_id: Some("native-1".into()),
             cwd: Some(cwd),
@@ -3686,9 +3721,64 @@ mod tests {
     }
 
     #[test]
+    fn a_hook_cannot_bind_to_a_session_it_did_not_come_from() {
+        let registry = SessionRegistry::new();
+        let first = SessionId::new(1);
+        let second = SessionId::new(2);
+        insert_session(&registry, &first, SessionStatus::Starting);
+        insert_session(&registry, &second, SessionStatus::Starting);
+        let first_token = {
+            let state = lock_state(&registry.inner);
+            state
+                .entries
+                .get(&first)
+                .map(|entry| entry.session.hook_token.clone())
+                .expect("first hook token")
+        };
+        let cwd = Path::new(".").to_path_buf();
+
+        assert!(registry.apply_hook_with_token(
+            HookEvent {
+                agent: Agent::Claude,
+                session_id: Some("native-first".into()),
+                cwd: Some(cwd.clone()),
+                signal: HookSignal::SessionStart,
+                progress: None,
+            },
+            Some(&first_token),
+        ));
+        assert!(!registry.apply_hook_with_token(
+            HookEvent {
+                agent: Agent::Claude,
+                session_id: Some("native-second".into()),
+                cwd: Some(cwd),
+                signal: HookSignal::SessionStart,
+                progress: None,
+            },
+            Some(&first_token),
+        ));
+
+        let sessions = registry.snapshot();
+        assert_eq!(
+            sessions
+                .iter()
+                .find(|session| session.id == first)
+                .and_then(|session| session.resume_id.as_deref()),
+            Some("native-first")
+        );
+        assert_eq!(
+            sessions
+                .iter()
+                .find(|session| session.id == second)
+                .and_then(|session| session.resume_id.as_deref()),
+            None
+        );
+    }
+
+    #[test]
     fn hooks_from_other_sessions_are_ignored() {
         let registry = SessionRegistry::new();
-        assert!(!registry.apply_hook(HookEvent {
+        assert!(!apply_test_hook(&registry, HookEvent {
             agent: Agent::Codex,
             session_id: Some("missing".into()),
             cwd: Some(PathBuf::from(".")),
@@ -4039,6 +4129,30 @@ mod tests {
         );
     }
 
+    /// Unit tests model the adapter boundary by retrieving the private token
+    /// for the only matching row, then sending it through the same authenticated
+    /// registry entry point as the daemon.
+    fn apply_test_hook(registry: &SessionRegistry, event: HookEvent) -> bool {
+        let token = {
+            let state = lock_state(&registry.inner);
+            state
+                .entries
+                .values()
+                .rfind(|entry| {
+                    entry.session.agent == event.agent
+                        && event
+                            .cwd
+                            .as_ref()
+                            .is_none_or(|cwd| cwd == &entry.session.cwd)
+                        && (event.session_id.as_deref().is_none()
+                            || entry.session.resume_id.as_deref() == event.session_id.as_deref()
+                            || entry.session.resume_id.is_none())
+                })
+                .map(|entry| entry.session.hook_token.clone())
+        };
+        registry.apply_hook_with_token(event, token.as_deref())
+    }
+
     fn rate_limit_event(resets_in_seconds: u64) -> HookEvent {
         HookEvent {
             agent: Agent::Claude,
@@ -4069,7 +4183,7 @@ mod tests {
         insert_session(&registry, &SessionId::new(2), SessionStatus::Working);
         assert_eq!(registry.admission_snapshot().live_sessions, 2);
 
-        assert!(registry.apply_hook(rate_limit_event(1800)));
+        assert!(apply_test_hook(&registry, rate_limit_event(1800)));
 
         let snapshot = registry.admission_snapshot();
         assert_eq!(
@@ -4094,14 +4208,14 @@ mod tests {
     fn the_header_reports_the_earliest_reset_across_the_fleet() {
         let registry = SessionRegistry::with_admission(AdmissionConfig::new(4, None));
         insert_session(&registry, &SessionId::new(1), SessionStatus::Working);
-        assert!(registry.apply_hook(rate_limit_event(7200)));
+        assert!(apply_test_hook(&registry, rate_limit_event(7200)));
         let far = registry
             .admission_snapshot()
             .earliest_rate_limit_reset
             .expect("a reset was reported");
 
         insert_session(&registry, &SessionId::new(2), SessionStatus::Working);
-        assert!(registry.apply_hook(rate_limit_event(60)));
+        assert!(apply_test_hook(&registry, rate_limit_event(60)));
 
         let snapshot = registry.admission_snapshot();
         assert_eq!(snapshot.rate_limited_sessions, 2);
@@ -4129,7 +4243,7 @@ mod tests {
                 notification: crate::hooks::HookNotification::IdlePrompt,
             },
         ] {
-            registry.apply_hook(HookEvent {
+            apply_test_hook(&registry, HookEvent {
                 agent: Agent::Claude,
                 session_id: None,
                 cwd: Some(Path::new(".").to_path_buf()),
@@ -4150,11 +4264,11 @@ mod tests {
         let registry = SessionRegistry::with_admission(AdmissionConfig::new(2, None));
         insert_session(&registry, &SessionId::new(1), SessionStatus::Working);
         // A window that has already elapsed by the time the next event lands.
-        assert!(registry.apply_hook(rate_limit_event(0)));
+        assert!(apply_test_hook(&registry, rate_limit_event(0)));
         assert_eq!(registry.snapshot()[0].status, SessionStatus::RateLimited);
 
         std::thread::sleep(Duration::from_millis(20));
-        registry.apply_hook(HookEvent {
+        apply_test_hook(&registry, HookEvent {
             agent: Agent::Claude,
             session_id: None,
             cwd: Some(Path::new(".").to_path_buf()),
@@ -4171,12 +4285,12 @@ mod tests {
     fn a_quota_report_with_room_left_clears_the_limit() {
         let registry = SessionRegistry::with_admission(AdmissionConfig::new(2, None));
         insert_session(&registry, &SessionId::new(1), SessionStatus::Working);
-        assert!(registry.apply_hook(rate_limit_event(9_000)));
+        assert!(apply_test_hook(&registry, rate_limit_event(9_000)));
         assert_eq!(registry.snapshot()[0].status, SessionStatus::RateLimited);
 
         // Positive evidence, not silence: the provider answered with a window
         // that still has room.
-        registry.apply_hook(HookEvent {
+        apply_test_hook(&registry, HookEvent {
             agent: Agent::Claude,
             session_id: None,
             cwd: Some(Path::new(".").to_path_buf()),
@@ -4479,7 +4593,7 @@ mod tests {
         assert_eq!(registry.snapshot()[0].queued_prompts, 1);
 
         // The same signal the fleet row is drawn from.
-        registry.apply_hook(HookEvent {
+        apply_test_hook(&registry, HookEvent {
             agent: Agent::Claude,
             session_id: None,
             cwd: Some(Path::new(".").to_path_buf()),

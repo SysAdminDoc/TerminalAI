@@ -201,6 +201,11 @@ pub struct Session {
     pub agent: Agent,
     /// User-supplied, else derived from the folder name.
     pub name: String,
+    /// Secret carried only in this session's agent environment. It is not part
+    /// of the row or store wire shape: hook authentication must never become a
+    /// UI-readable session field.
+    #[serde(skip)]
+    pub(crate) hook_token: String,
     pub cwd: PathBuf,
     /// Git branch associated with the session, when the launch/runtime layer
     /// can identify one without guessing.
@@ -303,6 +308,7 @@ impl Session {
             id,
             agent: spec.agent,
             name,
+            hook_token: fresh_hook_token(),
             cwd: spec.cwd.clone(),
             branch: None,
             ports,
@@ -553,6 +559,18 @@ impl Session {
     pub fn set_last_line(&mut self, line: &str) {
         self.last_line = trim_for_row(line, 160);
     }
+}
+
+/// Mint a per-session hook secret. Failure fails closed at hook delivery: an
+/// empty token is never accepted by the registry, while the session can still
+/// be supervised and the operator can see the provider's output.
+pub(crate) fn fresh_hook_token() -> String {
+    let mut bytes = [0u8; 32];
+    if let Err(error) = getrandom::fill(&mut bytes) {
+        tracing::error!(%error, "could not generate per-session hook token");
+        return String::new();
+    }
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn restart_backoff(attempt: u32) -> Duration {

@@ -1033,19 +1033,15 @@ fn install_preflight_hooks() -> Result<(), String> {
 }
 
 fn hook_transport(
-    agent: Agent,
+    _agent: Agent,
     executable: &std::path::Path,
-    endpoint: Option<&HookEndpoint>,
+    _endpoint: Option<&HookEndpoint>,
 ) -> HookTransport {
-    if agent == Agent::Claude {
-        if let Some(endpoint) = endpoint {
-            return HookTransport::Http {
-                url: endpoint.url_for(agent),
-                host: endpoint.host.clone(),
-                bearer_token: endpoint.bearer_token.clone(),
-            };
-        }
-    }
+    // Claude's HTTP settings are global, while hook authentication is
+    // intentionally per session. The managed command inherits the token from
+    // the supervised agent environment, so two sessions in one repository
+    // cannot address each other's rows. The daemon HTTP endpoint remains
+    // available for explicit callers that can provide both secrets.
     HookTransport::Command {
         executable: executable.to_path_buf(),
     }
@@ -1915,7 +1911,11 @@ fn run_hook_cli(args: &[String]) -> i32 {
             return 0;
         }
     };
-    match client.call_with_timeout(Request::Hook { event }, timeout) {
+    let hook_token = std::env::var("TERMINALAI_HOOK_TOKEN").ok();
+    match client.call_with_timeout(
+        Request::Hook { event, hook_token },
+        timeout,
+    ) {
         Ok(Response::Hook { .. }) | Ok(Response::Ok) => {}
         Ok(other) => eprintln!("ignoring unexpected hook response: {other:?}"),
         Err(error) => eprintln!("ignoring hook delivery failure: {error}"),
@@ -1987,7 +1987,7 @@ mod tests {
 
     #[test]
     fn protocol_version_is_pinned_for_the_shell() {
-        assert_eq!(PROTOCOL_VERSION, 2);
+        assert_eq!(PROTOCOL_VERSION, 3);
     }
 
     #[test]

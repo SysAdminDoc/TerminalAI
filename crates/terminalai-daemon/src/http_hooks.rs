@@ -1,10 +1,13 @@
 //! Authenticated loopback ingestion for Claude Code HTTP hooks.
 //!
 //! The listener binds only to IPv4 loopback, uses an ephemeral port and keeps
-//! a fresh bearer token for the daemon lifetime. It deliberately implements a
-//! small, bounded HTTP/1.1 reader instead of pulling a web framework into the
-//! daemon's release path: hooks are single POSTs with JSON bodies, and every
-//! other request shape is rejected before it can reach the session registry.
+//! a fresh bearer token for the daemon lifetime. A second, per-session token is
+//! required before a hook can mutate a row; HTTP callers supply it in
+//! `X-TerminalAI-Session-Token`, while the managed command adapter carries it
+//! through the local control pipe. It deliberately implements a small, bounded
+//! HTTP/1.1 reader instead of pulling a web framework into the daemon's release
+//! path: hooks are single POSTs with JSON bodies, and every other request shape
+//! is rejected before it can reach the session registry.
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
@@ -35,8 +38,9 @@ pub struct HookEndpoint {
     pub base_url: String,
     /// Exact `Host` value accepted by the listener.
     pub host: String,
-    /// A daemon-lifetime bearer secret. It is returned only over the named
-    /// control pipe, whose DACL is the local authorization boundary.
+    /// A daemon-lifetime transport secret. It is returned only over the named
+    /// control pipe, whose DACL is the local authorization boundary; it is not
+    /// sufficient to identify a supervised session.
     pub bearer_token: String,
 }
 
@@ -248,7 +252,11 @@ fn handle_connection(
     if Instant::now() >= deadline {
         return write_response(&mut stream, 408, "hook request deadline exceeded");
     }
-    let _matched = registry.apply_hook(event);
+    let session_token = request
+        .headers
+        .get("x-terminalai-session-token")
+        .map(String::as_str);
+    let _matched = registry.apply_hook_with_token(event, session_token);
     write_response(&mut stream, 202, "accepted")
 }
 

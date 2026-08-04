@@ -708,7 +708,11 @@ fn cmd_hook(args: &[String]) -> i32 {
             return 0;
         }
     };
-    match client.call_with_timeout(Request::Hook { event }, timeout) {
+    let hook_token = std::env::var("TERMINALAI_HOOK_TOKEN").ok();
+    match client.call_with_timeout(
+        Request::Hook { event, hook_token },
+        timeout,
+    ) {
         Ok(Response::Hook { .. }) | Ok(Response::Ok) => {}
         Ok(other) => eprintln!("ignoring unexpected hook response: {other:?}"),
         Err(error) => eprintln!("ignoring hook delivery failure: {error}"),

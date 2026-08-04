@@ -89,6 +89,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Hook delivery is now bound to a random per-session secret carried only in the
+  supervised agent environment. Managed Claude hooks use the command adapter to
+  carry it, explicit HTTP callers must supply it in addition to the daemon bearer,
+  cwd is no longer an identity fallback, and an event cannot overwrite a bound
+  native resume id. The control protocol advances to v3 for the authenticated
+  hook request shape.
 - The loopback HTTP hook listener now uses four bounded workers and a bounded connection queue,
   catches worker panics, and enforces a five-second request deadline alongside per-read timeouts.
   A stalled-client regression proves a second authenticated hook still receives a 202 response.

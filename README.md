@@ -356,11 +356,13 @@ dwell labels. Status diagnostics cross the daemon boundary as reason kinds plus 
 translated prose never becomes a wire-format dependency.
 
 Hook installation covers the lifecycle events that change a fleet row, including prompt submission,
-tool failures, permission decisions, subagents, compaction and session end. Claude uses an ephemeral
-loopback HTTP endpoint with a daemon-generated bearer token when the daemon is reachable; the exact
-Host value is allowlisted and requests carrying an Origin header are rejected. Codex keeps its
-command-hook path, and Claude falls back to the same command adapter when HTTP configuration is not
-available. Unknown hook event names are retained in the diagnostics stream.
+tool failures, permission decisions, subagents, compaction and session end. Managed Claude and
+Codex hooks use the command adapter, and each supervised session carries a random hook secret only
+in its own agent environment; the daemon refuses cwd-based identity and resume-id rebinding.
+The daemon also exposes an ephemeral loopback HTTP endpoint for explicit callers: its bearer token,
+exact Host allowlist and Origin rejection are only the transport gate, and a caller must provide
+the matching per-session header before a row can change. Unknown hook event names are retained in
+the diagnostics stream.
 
 The launcher discovers model and reasoning-effort options from the resolved binaries instead of
 shipping a stale allowlist. Codex is queried through `model/list` and `codex features list`; Claude

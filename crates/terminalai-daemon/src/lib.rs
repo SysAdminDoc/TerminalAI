@@ -69,7 +69,7 @@ use terminalai_core::{
 
 use persistence::StoreWriter;
 
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 /// Stable control-plane name. Protocol compatibility is negotiated in the
 /// first frame, so changing the socket name would strand an older daemon that
 /// still owns live sessions before the newer client can report the skew.
@@ -233,6 +233,10 @@ pub enum Request {
     HookEndpoint,
     Hook {
         event: HookEvent,
+        /// Secret minted for the supervised session and supplied by its hook
+        /// adapter. The daemon-wide HTTP bearer is a separate transport gate.
+        #[serde(default)]
+        hook_token: Option<String>,
     },
     AgentEvent {
         event: AgentEvent,
@@ -1072,8 +1076,8 @@ fn dispatch_with_endpoint(
                 message: "HTTP hook endpoint is unavailable".into(),
             },
         },
-        Request::Hook { event } => Response::Hook {
-            matched: registry.apply_hook(event),
+        Request::Hook { event, hook_token } => Response::Hook {
+            matched: registry.apply_hook_with_token(event, hook_token.as_deref()),
         },
         Request::AgentEvent { event } => Response::AgentEvent {
             matched: registry.apply_agent_event(event),

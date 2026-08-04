@@ -21,6 +21,7 @@ vte.workspace = true
 unicode-width.workspace = true
 dirs.workspace = true
 which.workspace = true
+getrandom.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
