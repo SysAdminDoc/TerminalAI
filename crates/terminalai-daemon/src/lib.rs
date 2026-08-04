@@ -447,7 +447,10 @@ pub enum Response {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum WireMessage {
     Request { id: u64, request: Request },
-    Response { id: u64, response: Response },
+    // Boxed: a `Response` carrying an `AdmissionSnapshot` dwarfs a `Request`,
+    // and every slot in the bounded outgoing queue is sized for the largest
+    // variant. `Box` is transparent to serde, so the wire format is unchanged.
+    Response { id: u64, response: Box<Response> },
     Event { event: RegistryEvent },
 }
 
@@ -1019,7 +1022,10 @@ fn send_response(
     response: Response,
 ) -> Result<(), IpcError> {
     outgoing
-        .send(WireMessage::Response { id, response })
+        .send(WireMessage::Response {
+            id,
+            response: Box::new(response),
+        })
         .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "client disconnected").into())
 }
 
@@ -1608,6 +1614,7 @@ fn spawn_reader(
                 };
                 match message {
                     WireMessage::Response { id, response } => {
+                        let response = *response;
                         if let Ok(mut waiting) = pending.lock() {
                             if let Some(sender) = waiting.remove(&id) {
                                 let _ = sender.send(response);
@@ -1740,6 +1747,10 @@ fn spawn_transcript_poller(registry: SessionRegistry, shutdown: Arc<AtomicBool>)
         .spawn(move || {
             while !shutdown.load(Ordering::Acquire) {
                 registry.poll_transcripts(&home);
+                // Same wakeup rather than a second timer: memory does not move
+                // fast enough to justify one, and the fleet already pays for
+                // this one.
+                registry.sample_memory();
                 thread::sleep(TRANSCRIPT_POLL_INTERVAL);
             }
         });

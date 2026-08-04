@@ -18,6 +18,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   restarting the daemon is not a way to clear the ceiling. The header states the ceiling, how much
   of it is used, and — because only Claude takes `--max-budget-usd` — which agents a per-session
   budget actually binds, rather than implying a hard stop that half the fleet does not have.
+- Memory-aware admission, and job objects that limit rather than only contain. The job has always
+  reaped a session's process tree, but `KILL_ON_JOB_CLOSE` alone let one leaking agent take the
+  machine down with every other session still nominally healthy. Sessions are now created inside a
+  job carrying an optional per-session memory cap (`TERMINALAI_SESSION_MEMORY_CAP_MB`) and process
+  count (`TERMINALAI_MAX_PROCESSES_PER_SESSION`), and `TERMINALAI_MEMORY_BUDGET_MB` gates admission
+  on projected fleet commit. Each live session's private commit is sampled on the transcript poll —
+  `PrivateUsage`, not working set, because Windows trims a working set under pressure so a leaking
+  agent can show a *falling* one while its commit climbs — and shown on the wide row. A session that
+  has not been sampled is projected at its agent's measured typical size rather than at zero, since
+  admitting on "we have not looked yet" is how a machine gets oversubscribed. Admission requires
+  headroom for one more session rather than blocking once the total is already over, because the
+  latter admits exactly the session that puts it there; an empty fleet always gets one session, so a
+  budget too small for any agent surfaces as a stuck row instead of a silently halted fleet. A
+  session at its cap is reported as memory-limited rather than left to look like an ordinary crash.
+
 ### Changed
 
 - The workspace's direct `windows-sys` dependency moved from 0.59 to 0.61, which is the prerequisite

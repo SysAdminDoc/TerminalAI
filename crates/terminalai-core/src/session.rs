@@ -342,6 +342,16 @@ pub struct Session {
     pub status_since: SystemTime,
     /// Accumulated spend, when the agent reports it.
     pub cost_usd: Option<f64>,
+    /// Private commit sampled from the session's process, in bytes. `None` means
+    /// it has not been sampled or could not be read — never that it is using
+    /// nothing.
+    #[serde(default)]
+    pub memory_bytes: Option<u64>,
+    /// The session's private commit reached the per-session job cap, so its
+    /// allocations are being refused. Reported rather than left to look like an
+    /// ordinary crash.
+    #[serde(default)]
+    pub memory_limited: bool,
     /// Token totals read from the transcript, alongside the cost they priced.
     ///
     /// Carried as well as the dollar figure because they are different
@@ -419,6 +429,8 @@ impl Session {
             started_at: now,
             status_since: now,
             cost_usd: None,
+            memory_bytes: None,
+            memory_limited: false,
             tokens: None,
             last_message: None,
             rate_limit: None,

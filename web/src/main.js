@@ -710,6 +710,17 @@ function sortedSessions() {
   });
 }
 
+/// A session's private commit, or an em dash when it has not been sampled.
+///
+/// Never zero from an absent reading: a session using nothing and a session we
+/// could not measure are different facts, and the row has to keep saying which.
+function memory(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value <= 0) return "—";
+  if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  return `${Math.round(value / (1024 * 1024))} MB`;
+}
+
 function renderSummary() {
   // Matches the daemon's admission count, which excludes rate-limited sessions:
   // they hold no slot, so counting them as live would contradict the queue.
@@ -1238,6 +1249,10 @@ function updateFleetRow(row, session, position = 1, setSize = 1, rovingId = stat
   wideMeta.querySelector("[data-row-model]").textContent = model;
   wideMeta.querySelector("[data-row-effort]").textContent = effort;
   wideMeta.querySelector("[data-row-cost]").textContent = cost(session.cost_usd);
+  const memoryCell = wideMeta.querySelector("[data-row-memory]");
+  memoryCell.textContent = memory(session.memory_bytes);
+  memoryCell.classList.toggle("row-memory-limited", Boolean(session.memory_limited));
+  memoryCell.title = session.memory_limited ? t("memory-limited-explained") : t("memory-explained");
 
   // A question the agent will answer for itself has a deadline. Saying how much
   // of it is left is the difference between "answer this" and "answer this in
@@ -1351,7 +1366,7 @@ function renderRow(session) {
     <div class="row-metrics"><span class="agent-badge agent-${escapeHtml(session.agent)}" title="${session.agent === "codex" ? "Codex" : "Claude Code"}" aria-label="${session.agent === "codex" ? "Codex" : "Claude Code"}">${agentLabel}</span><span class="row-progress" title="${escapeHtml(t("action-tool-progress"))}"><small>PROG</small><b>${escapeHtml(progress)}</b></span><span class="row-restarts" title="${escapeHtml(t("action-restart-count"))}">↻ ${restartCount}</span></div>
     <div class="row-dwell"><span title="${escapeHtml(t("dwell-explained"))}">${dwell(session.status_since)}</span><span class="row-answer-deadline" title="${escapeHtml(t("answer-deadline-explained"))}"${countdownLabel ? "" : " hidden"}>${escapeHtml(countdownLabel)}</span><small class="row-last-line" title="${escapeHtml(lastLine)}">${escapeHtml(lastLine)}</small></div>
     <div class="row-actions"><button type="button" data-action="pin" class="row-action ${session.pinned ? "row-action-active" : ""}" title="${escapeHtml(pinLabel)}" aria-label="${escapeHtml(pinLabel)} ${escapeHtml(session.name)}">${session.pinned ? "◆" : "◇"}</button><button type="button" data-action="focus" class="row-action" title="${escapeHtml(t("action-focus-terminal"))}" aria-label="${escapeHtml(t("action-focus-session", { name: session.name }))}">↗</button><button type="button" data-action="revive" class="row-action" title="${escapeHtml(t("action-revive", { name: session.name }))}" aria-label="${escapeHtml(t("action-revive", { name: session.name }))}"${reviveHidden}>↻</button><button type="button" data-action="archive" class="row-action" title="${escapeHtml(t("action-archive-stopped"))}" aria-label="${escapeHtml(t("action-archive", { name: session.name }))}"${archiveHidden}>▣</button><button type="button" data-action="queue" class="row-action row-action-queue" title="${escapeHtml(t("action-queue", { name: session.name }))}" aria-label="${escapeHtml(t("action-queue", { name: session.name }))}">${escapeHtml(queueGlyph(session))}</button><button type="button" data-action="kill" class="row-action row-action-danger" title="${escapeHtml(stopLabel)}" aria-label="${escapeHtml(stopLabel)}"${stopHidden}>×</button></div>
-    <div class="row-wide-meta"${wideHidden}><span><small>MODEL</small><b data-row-model>${escapeHtml(model)}</b></span><span><small>EFFORT</small><b data-row-effort>${escapeHtml(effort)}</b></span><span><small>COST</small><b data-row-cost>${escapeHtml(cost(session.cost_usd))}</b></span></div>
+    <div class="row-wide-meta"${wideHidden}><span><small>MODEL</small><b data-row-model>${escapeHtml(model)}</b></span><span><small>EFFORT</small><b data-row-effort>${escapeHtml(effort)}</b></span><span><small>COST</small><b data-row-cost>${escapeHtml(cost(session.cost_usd))}</b></span><span><small>MEM</small><b data-row-memory${session.memory_limited ? ' class="row-memory-limited"' : ""} title="${escapeHtml(session.memory_limited ? t("memory-limited-explained") : t("memory-explained"))}">${escapeHtml(memory(session.memory_bytes))}</b></span></div>
     <div class="row-reply"${replyHidden}><input data-reply type="text" maxlength="500" placeholder="${escapeHtml(t("action-reply", { name: session.name }))}" aria-label="${escapeHtml(t("action-reply", { name: session.name }))}" /><button type="button" data-action="reply" class="row-reply-send" title="${escapeHtml(t("button-send-reply"))}" aria-label="${escapeHtml(t("action-send-reply", { name: session.name }))}">↵</button></div>
   </article>`;
 }

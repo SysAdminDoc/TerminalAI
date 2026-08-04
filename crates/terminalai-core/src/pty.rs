@@ -159,6 +159,28 @@ impl PtySession {
         cmd: &ResolvedCommand,
         size: PtySize,
         extra_environment: &[(String, String)],
+        on_output: F,
+    ) -> Result<Self, PtyError>
+    where
+        F: FnMut(&[u8]) + Send + 'static,
+    {
+        Self::spawn_with_limits(
+            cmd,
+            size,
+            extra_environment,
+            crate::process_tree::JobLimits::default(),
+            on_output,
+        )
+    }
+
+    /// Spawn inside a job carrying explicit resource limits. Containment has
+    /// always been the job's purpose; these are what stop one session taking
+    /// the machine down with it.
+    pub fn spawn_with_limits<F>(
+        cmd: &ResolvedCommand,
+        size: PtySize,
+        extra_environment: &[(String, String)],
+        limits: crate::process_tree::JobLimits,
         mut on_output: F,
     ) -> Result<Self, PtyError>
     where
@@ -185,6 +207,8 @@ impl PtySession {
         // Dropping the slave is required on Windows: ConPTY will not report the
         // child's exit while any handle to the slave side is still open.
         drop(pair.slave);
+        #[cfg(not(windows))]
+        let _ = limits;
 
         #[cfg(windows)]
         let exit_signal = child.as_raw_handle().and_then(duplicate_process_handle);
@@ -194,7 +218,9 @@ impl PtySession {
             let process = child.as_raw_handle().ok_or_else(|| {
                 PtyError::Job("portable-pty did not expose a process handle".into())
             });
-            match process.and_then(|process| ProcessJob::assign(process).map_err(PtyError::Job)) {
+            match process.and_then(|process| {
+                ProcessJob::assign_with_limits(process, limits).map_err(PtyError::Job)
+            }) {
                 Ok(job) => job,
                 Err(error) => {
                     let mut child = child;

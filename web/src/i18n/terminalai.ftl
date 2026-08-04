@@ -353,6 +353,8 @@ spend-window-hours = { $hours ->
 }
 spend-ceiling-blocking = The ceiling is reached, so nothing new is starting; running sessions are untouched.
 spend-no-ceiling = No fleet spend ceiling is set.
+memory-explained = Private commit for this session's process tree
+memory-limited-explained = This session reached its memory cap; its allocations are being refused
 spend-enforced-agents = A per-session budget is enforced for: { $agents }. Other agents are admission-refused only.
 spend-enforced-none = No agent enforces a per-session budget; the ceiling refuses new sessions only.
 announcement-one = { $name } needs you: { $status }.

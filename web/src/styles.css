@@ -285,3 +285,5 @@ button { cursor: pointer; }
   .field input, .field select, .field textarea, .preset-save input, .log-event, .diagnostics-current, .preflight-row, .preview-card, .toast, .review-entry, .review-diff pre { color: var(--text); background: var(--mantle); }
   .row-reply input { background: var(--mantle); }
 }
+
+.row-memory-limited { color: var(--red); }

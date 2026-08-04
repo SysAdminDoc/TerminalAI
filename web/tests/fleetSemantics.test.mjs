@@ -6,6 +6,7 @@ import { JSDOM } from "jsdom";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 
 test("fleet container and rows use single-select listbox semantics", () => {
   assert.match(html, /id="fleet-list"[^>]*role="listbox"/);
@@ -116,4 +117,17 @@ test("a stalled session is marked, explained, and sorted above healthy working r
   assert.match(main, /status-stalled-detail", \{ minutes: STALL_THRESHOLD_MINUTES \}/);
   assert.match(ftl, /^status-stalled = /m);
   assert.match(ftl, /^status-stalled-detail = .*\{ \$minutes \}/m);
+});
+
+test("a session's memory is shown, and an unsampled one is not shown as zero", () => {
+  // A session using nothing and a session we could not measure are different
+  // facts; rendering the second as 0 MB would report a healthy number from the
+  // absence of a signal.
+  assert.match(main, /function memory\(bytes\)/);
+  assert.match(main, /if \(!Number\.isFinite\(value\) \|\| value <= 0\) return "—";/);
+  assert.match(main, /data-row-memory/);
+  assert.match(main, /memoryCell\.classList\.toggle\("row-memory-limited"/);
+  for (const key of ["memory-explained", "memory-limited-explained"]) {
+    assert.ok(new RegExp(`^${key} = `, "m").test(ftl), `${key} has no string`);
+  }
 });

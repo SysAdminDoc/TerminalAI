@@ -70,6 +70,31 @@ pub struct AdmissionConfig {
     pub spend_ceiling_usd: Option<f64>,
     /// How far back the ceiling looks.
     pub spend_window: Duration,
+    /// Private commit the whole fleet may hold before nothing new starts.
+    /// Admission projects an unsampled session at its agent's measured typical
+    /// size rather than at zero, because admitting on "we have not looked yet"
+    /// is how a machine gets oversubscribed.
+    pub memory_budget_bytes: Option<u64>,
+    /// Per-session job memory cap. Exceeding it fails allocations inside the
+    /// agent; it does not terminate the session.
+    pub session_memory_cap_bytes: Option<u64>,
+    /// How many processes one session's job may hold at once.
+    pub max_processes_per_session: Option<u32>,
+}
+
+/// What one unsampled session is assumed to need.
+///
+/// Measured on the development machine and recorded in `CLAUDE.md`: Claude Code
+/// around 509 MB, Codex around 322 MB. Used only until the session reports its
+/// own figure, so a wrong guess corrects itself within a sampling interval.
+pub const ASSUMED_SESSION_BYTES_CLAUDE: u64 = 509 * 1024 * 1024;
+pub const ASSUMED_SESSION_BYTES_CODEX: u64 = 322 * 1024 * 1024;
+
+pub fn assumed_session_bytes(agent: crate::agent::Agent) -> u64 {
+    match agent {
+        crate::agent::Agent::Claude => ASSUMED_SESSION_BYTES_CLAUDE,
+        crate::agent::Agent::Codex => ASSUMED_SESSION_BYTES_CODEX,
+    }
 }
 
 impl AdmissionConfig {
@@ -80,6 +105,32 @@ impl AdmissionConfig {
                 .filter(|value| value.is_finite() && *value >= 0.0),
             spend_ceiling_usd: None,
             spend_window: crate::spend::DEFAULT_SPEND_WINDOW,
+            memory_budget_bytes: None,
+            session_memory_cap_bytes: None,
+            max_processes_per_session: None,
+        }
+    }
+
+    /// Set the memory limits. Zero and non-finite figures disable rather than
+    /// admitting nothing, for the same reason the spend ceiling does: a
+    /// misconfigured limit must not halt the fleet.
+    pub fn with_memory_limits(
+        mut self,
+        budget_bytes: Option<u64>,
+        session_cap_bytes: Option<u64>,
+        max_processes: Option<u32>,
+    ) -> Self {
+        self.memory_budget_bytes = budget_bytes.filter(|bytes| *bytes > 0);
+        self.session_memory_cap_bytes = session_cap_bytes.filter(|bytes| *bytes > 0);
+        self.max_processes_per_session = max_processes.filter(|count| *count > 0);
+        self
+    }
+
+    /// The job limits one session's process tree is created with.
+    pub fn job_limits(&self) -> crate::process_tree::JobLimits {
+        crate::process_tree::JobLimits {
+            memory_bytes: self.session_memory_cap_bytes,
+            active_processes: self.max_processes_per_session,
         }
     }
 
@@ -156,7 +207,36 @@ impl AdmissionConfig {
         if config.spend_ceiling_usd != spend_ceiling_usd {
             return Err("TERMINALAI_SPEND_CEILING_USD must be finite and non-negative".into());
         }
+        let memory_budget_bytes = megabytes_from_env("TERMINALAI_MEMORY_BUDGET_MB")?;
+        let session_memory_cap_bytes = megabytes_from_env("TERMINALAI_SESSION_MEMORY_CAP_MB")?;
+        let max_processes_per_session = std::env::var("TERMINALAI_MAX_PROCESSES_PER_SESSION")
+            .ok()
+            .map(|value| {
+                value.parse::<u32>().map_err(|_| {
+                    "TERMINALAI_MAX_PROCESSES_PER_SESSION must be a positive integer".to_string()
+                })
+            })
+            .transpose()?;
+        let config = config.with_memory_limits(
+            memory_budget_bytes,
+            session_memory_cap_bytes,
+            max_processes_per_session,
+        );
         Ok(config)
+    }
+}
+
+/// Megabytes from an environment variable, as bytes. `none`/`off` disables.
+fn megabytes_from_env(name: &str) -> Result<Option<u64>, String> {
+    match std::env::var(name) {
+        Ok(value) if value.eq_ignore_ascii_case("none") || value.eq_ignore_ascii_case("off") => {
+            Ok(None)
+        }
+        Ok(value) => value
+            .parse::<u64>()
+            .map(|megabytes| Some(megabytes.saturating_mul(1024 * 1024)))
+            .map_err(|_| format!("{name} must be a non-negative integer of megabytes or 'none'")),
+        Err(_) => Ok(None),
     }
 }
 
@@ -172,6 +252,9 @@ pub enum AdmissionBlock {
     SlotsFull,
     /// Fleet spend inside the window has reached the ceiling.
     SpendCeiling,
+    /// Admitting another session would put projected private commit over the
+    /// memory budget.
+    MemoryBudget,
 }
 
 impl Default for AdmissionConfig {
@@ -212,6 +295,19 @@ pub struct AdmissionSnapshot {
     /// Why nothing new is starting, when something is stopping it.
     #[serde(default)]
     pub admission_block: Option<AdmissionBlock>,
+    /// Private commit the fleet may hold, if a budget is configured.
+    #[serde(default)]
+    pub memory_budget_bytes: Option<u64>,
+    /// What the fleet is expected to hold, counting unsampled sessions at their
+    /// agent's measured typical size.
+    #[serde(default)]
+    pub projected_memory_bytes: u64,
+    /// The per-session job cap, if one is configured.
+    #[serde(default)]
+    pub session_memory_cap_bytes: Option<u64>,
+    /// Sessions whose allocations the job is currently refusing.
+    #[serde(default)]
+    pub memory_limited_sessions: usize,
     /// Agents whose own launcher can enforce a per-session budget. Codex has no
     /// documented equivalent, so its sessions are admission-refused only and
     /// the header has to say so rather than implying a hard stop.
@@ -234,7 +330,11 @@ pub struct AdmissionSnapshot {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 #[allow(clippy::large_enum_variant)]
 pub enum RegistryEvent {
-    SessionUpdated { session: Session },
+    // Boxed: `Session` is by far the largest payload here and every slot in a
+    // bounded subscriber queue is sized for the biggest variant. The extra
+    // allocation is nothing beside the JSON serialization each event already
+    // pays to cross the pipe.
+    SessionUpdated { session: Box<Session> },
     Notification { event: NotificationEvent },
     AgentEvent { event: AgentEvent },
     Log { entry: LogEntry },
@@ -619,6 +719,14 @@ impl SessionRegistry {
             spend_ceiling_usd: state.admission.spend_ceiling_usd,
             spend_window_hours: state.admission.spend_window.as_secs_f64() / 3600.0,
             admission_block: admission_block(&state),
+            memory_budget_bytes: state.admission.memory_budget_bytes,
+            projected_memory_bytes: projected_memory_bytes(&state),
+            session_memory_cap_bytes: state.admission.session_memory_cap_bytes,
+            memory_limited_sessions: state
+                .entries
+                .values()
+                .filter(|entry| entry.session.memory_limited)
+                .count(),
             // Claude takes `--max-budget-usd`; Codex documents no equivalent, so
             // saying "budget" without naming which agent it binds would claim an
             // enforcement that does not exist for half the fleet.
@@ -1224,7 +1332,9 @@ impl SessionRegistry {
                         now,
                     );
                     drop(state);
-                    self.emit(RegistryEvent::SessionUpdated { session });
+                    self.emit(RegistryEvent::SessionUpdated {
+                session: Box::new(session),
+            });
                     self.emit_notification_changes(notifications);
                     self.drain_queue();
                     return Ok(());
@@ -1246,7 +1356,9 @@ impl SessionRegistry {
                     );
                     state.queue.retain(|queued| queued != id);
                     drop(state);
-                    self.emit(RegistryEvent::SessionUpdated { session });
+                    self.emit(RegistryEvent::SessionUpdated {
+                session: Box::new(session),
+            });
                     self.emit_notification_changes(notifications);
                     self.drain_queue();
                     return Ok(());
@@ -1267,7 +1379,9 @@ impl SessionRegistry {
                         now,
                     );
                     drop(state);
-                    self.emit(RegistryEvent::SessionUpdated { session });
+                    self.emit(RegistryEvent::SessionUpdated {
+                session: Box::new(session),
+            });
                     self.emit_notification_changes(notifications);
                     self.drain_queue();
                     return Ok(());
@@ -1281,7 +1395,9 @@ impl SessionRegistry {
             let generation = entry.generation;
             let session = entry.session.clone();
             drop(state);
-            self.emit(RegistryEvent::SessionUpdated { session });
+            self.emit(RegistryEvent::SessionUpdated {
+                session: Box::new(session),
+            });
             (pty, generation)
         };
 
@@ -1643,7 +1759,9 @@ impl SessionRegistry {
             (session, notifications)
         };
         let id = session.id.clone();
-        self.emit(RegistryEvent::SessionUpdated { session });
+        self.emit(RegistryEvent::SessionUpdated {
+                session: Box::new(session),
+            });
         self.emit_notification_changes(notifications);
         // The queue advances on exactly this signal — the reported status the
         // fleet row is drawn from — rather than on a timer.
@@ -2025,10 +2143,14 @@ impl SessionRegistry {
         let weak = Arc::downgrade(&self.inner);
         let callback_id = id.clone();
         let span = self.span_for(id);
+        // Read once, here: the job is created with its limits, and a limit
+        // applied after the process exists has a window it does not cover.
+        let limits = lock_state(&self.inner).admission.job_limits();
         Ok(self.inner.domain.spawn(
             command,
             crate::pty::default_size(),
             environment,
+            limits,
             Box::new(move |chunk| {
                 let _entered = span.enter();
                 if let Some(inner) = weak.upgrade() {
@@ -2044,7 +2166,9 @@ impl SessionRegistry {
             state.entries.get(id).map(|entry| entry.session.clone())
         };
         if let Some(session) = session {
-            self.emit(RegistryEvent::SessionUpdated { session });
+            self.emit(RegistryEvent::SessionUpdated {
+                session: Box::new(session),
+            });
         }
     }
 
@@ -2086,7 +2210,9 @@ impl SessionRegistry {
         };
         // Emitted outside the state lock, like every other session update.
         for session in stalled {
-            self.emit(RegistryEvent::SessionUpdated { session });
+            self.emit(RegistryEvent::SessionUpdated {
+                session: Box::new(session),
+            });
         }
         self.emit_notification_changes(changes);
     }
@@ -2259,7 +2385,9 @@ impl SessionRegistry {
                     .observe(&session, previous_status, previous_state_since, now);
             (session, notifications)
         };
-        self.emit(RegistryEvent::SessionUpdated { session });
+        self.emit(RegistryEvent::SessionUpdated {
+                session: Box::new(session),
+            });
         self.emit_notification_changes(notifications);
         self.drain_queue();
     }
@@ -2423,7 +2551,9 @@ impl SessionRegistry {
             entry.command.cwd = entry.session.cwd.clone();
             entry.session.clone()
         };
-        self.emit(RegistryEvent::SessionUpdated { session });
+        self.emit(RegistryEvent::SessionUpdated {
+                session: Box::new(session),
+            });
         Ok(())
     }
 
@@ -2497,6 +2627,60 @@ impl SessionRegistry {
     /// the agent wrote, not to how large the transcript has grown.
     ///
     /// Returns how many rows changed.
+    /// Sample each live session's private commit.
+    ///
+    /// Runs on the same cadence as transcript polling rather than on its own
+    /// timer: one wakeup that already exists is cheaper than a second one, and
+    /// memory does not move fast enough to need a tighter loop.
+    pub fn sample_memory(&self) -> usize {
+        let cap = {
+            let state = lock_state(&self.inner);
+            state.admission.session_memory_cap_bytes
+        };
+        let sampled: Vec<(SessionId, Option<u64>)> = {
+            let state = lock_state(&self.inner);
+            state
+                .entries
+                .iter()
+                .filter(|(_, entry)| entry.pty.is_some())
+                .filter_map(|(id, entry)| {
+                    entry
+                        .session
+                        .pid
+                        .map(|pid| (id.clone(), crate::process_tree::private_bytes(pid)))
+                })
+                .collect()
+        };
+        let mut updated = Vec::new();
+        {
+            let mut state = lock_state(&self.inner);
+            for (id, bytes) in sampled {
+                let Some(entry) = state.entries.get_mut(&id) else {
+                    continue;
+                };
+                // A reading that could not be taken leaves the previous figure
+                // in place: an unreadable handle is a momentary condition, and
+                // blanking the row would read as the session using nothing.
+                let Some(bytes) = bytes else { continue };
+                let limited = cap.is_some_and(|cap| bytes >= cap);
+                if entry.session.memory_bytes != Some(bytes)
+                    || entry.session.memory_limited != limited
+                {
+                    entry.session.memory_bytes = Some(bytes);
+                    entry.session.memory_limited = limited;
+                    updated.push(entry.session.clone());
+                }
+            }
+        }
+        let count = updated.len();
+        for session in updated {
+            self.emit(RegistryEvent::SessionUpdated {
+                session: Box::new(session),
+            });
+        }
+        count
+    }
+
     pub fn poll_transcripts(&self, home: &std::path::Path) -> usize {
         // Snapshot the work under the lock, then read files without holding it:
         // a slow disk must not stall status ingestion.
@@ -2615,7 +2799,9 @@ impl SessionRegistry {
 
         let count = updated.len();
         for session in updated {
-            self.emit(RegistryEvent::SessionUpdated { session });
+            self.emit(RegistryEvent::SessionUpdated {
+                session: Box::new(session),
+            });
         }
         count
     }
@@ -2687,7 +2873,9 @@ impl SessionRegistry {
                     );
                     entry.session.clone()
                 };
-                self.emit(RegistryEvent::SessionUpdated { session });
+                self.emit(RegistryEvent::SessionUpdated {
+                session: Box::new(session),
+            });
             }
         }
     }
@@ -2797,7 +2985,9 @@ impl SessionRegistry {
                     .observe(&session, previous_status, previous_state_since, now);
             (restart, session, notifications, teardown)
         };
-        self.emit(RegistryEvent::SessionUpdated { session });
+        self.emit(RegistryEvent::SessionUpdated {
+                session: Box::new(session),
+            });
         self.emit_notification_changes(notifications);
         // An exit pauses the queue rather than losing it: those prompts are
         // still what the operator wanted done, and reviving the session should
@@ -2915,7 +3105,9 @@ impl SessionRegistry {
             }
             entry.session.clone()
         };
-        self.emit(RegistryEvent::SessionUpdated { session });
+        self.emit(RegistryEvent::SessionUpdated {
+                session: Box::new(session),
+            });
         self.complete_process_exit(id, restart);
     }
 
@@ -2942,7 +3134,9 @@ impl SessionRegistry {
             entry.session.mark_unknown_at(SystemTime::now());
             entry.session.clone()
         };
-        self.emit(RegistryEvent::SessionUpdated { session });
+        self.emit(RegistryEvent::SessionUpdated {
+                session: Box::new(session),
+            });
     }
 
     fn schedule_restart(&self, id: SessionId, generation: u64, delay: Duration) {
@@ -3022,7 +3216,9 @@ impl SessionRegistry {
                     .observe(&session, previous_status, previous_state_since, now);
             (restart, session, notifications)
         };
-        self.emit(RegistryEvent::SessionUpdated { session });
+        self.emit(RegistryEvent::SessionUpdated {
+                session: Box::new(session),
+            });
         self.emit_notification_changes(notifications);
         if let Some((generation, delay)) = restart {
             self.schedule_restart(id.clone(), generation, delay);
@@ -3058,7 +3254,9 @@ impl SessionRegistry {
                     .observe(&session, previous_status, previous_state_since, now);
             (session, notifications)
         };
-        self.emit(RegistryEvent::SessionUpdated { session });
+        self.emit(RegistryEvent::SessionUpdated {
+                session: Box::new(session),
+            });
         self.emit_notification_changes(notifications);
     }
 
@@ -3214,7 +3412,9 @@ fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u
             },
         );
     }
-    emit_inner(inner, RegistryEvent::SessionUpdated { session });
+    emit_inner(inner, RegistryEvent::SessionUpdated {
+                session: Box::new(session),
+            });
     emit_notification_changes_inner(inner, notifications);
 }
 
@@ -3351,7 +3551,38 @@ fn admission_block(state: &State) -> Option<AdmissionBlock> {
             return Some(AdmissionBlock::SpendCeiling);
         }
     }
+    if let Some(budget) = state.admission.memory_budget_bytes {
+        // Projection, not measurement: the session being admitted has no
+        // process yet, so the question is whether the fleet would still fit
+        // once it does. Headroom for one more is what makes this a gate rather
+        // than a post-mortem — blocking only once the total is already over
+        // admits exactly the session that puts it there.
+        let projected = projected_memory_bytes(state);
+        let headroom = ASSUMED_SESSION_BYTES_CLAUDE.min(ASSUMED_SESSION_BYTES_CODEX);
+        // An empty fleet always gets one session: a budget too small for any
+        // agent is a misconfiguration, and halting entirely would hide it.
+        let occupied = admitted_count(state) > 0;
+        if occupied && projected.saturating_add(headroom) > budget {
+            return Some(AdmissionBlock::MemoryBudget);
+        }
+    }
     None
+}
+
+/// Private commit the fleet is expected to hold, counting a session that has
+/// not been sampled yet at its agent's measured typical size.
+fn projected_memory_bytes(state: &State) -> u64 {
+    state
+        .entries
+        .values()
+        .filter(|entry| entry.session.status.occupies_admission_slot())
+        .map(|entry| {
+            entry
+                .session
+                .memory_bytes
+                .unwrap_or_else(|| assumed_session_bytes(entry.session.agent))
+        })
+        .sum()
 }
 
 fn admitted_count(state: &State) -> usize {
@@ -3519,10 +3750,14 @@ mod tests {
             command: &ResolvedCommand,
             _size: PtySize,
             _environment: &[(String, String)],
+            _limits: crate::process_tree::JobLimits,
             _on_output: OutputHandler,
         ) -> Result<Arc<dyn AgentSession>, DomainError> {
-            self.spawns.fetch_add(1, Ordering::Relaxed);
+            // Record before signalling: the test waits on `spawns` and then
+            // reads `commands`, so incrementing first leaves a window where the
+            // counter says a spawn happened and the command is not there yet.
             self.commands.lock().unwrap().push(command.clone());
+            self.spawns.fetch_add(1, Ordering::Release);
             Ok(Arc::new(ExitedSession))
         }
     }
@@ -3549,10 +3784,10 @@ mod tests {
             .expect("injected domain launch");
 
         let deadline = Instant::now() + Duration::from_secs(2);
-        while spawns.load(Ordering::Relaxed) == 0 && Instant::now() < deadline {
+        while spawns.load(Ordering::Acquire) == 0 && Instant::now() < deadline {
             std::thread::yield_now();
         }
-        assert_eq!(spawns.load(Ordering::Relaxed), 1);
+        assert_eq!(spawns.load(Ordering::Acquire), 1);
         let commands = commands.lock().unwrap();
         let session_id = commands[0]
             .args
@@ -3692,7 +3927,7 @@ mod tests {
 
         for _ in 0..SUBSCRIBER_QUEUE_CAPACITY {
             registry.emit(RegistryEvent::SessionUpdated {
-                session: session.clone(),
+                session: Box::new(session.clone()),
             });
         }
         for _ in 0..3 {
@@ -3704,6 +3939,128 @@ mod tests {
 
         assert_eq!(events.try_iter().count(), SUBSCRIBER_QUEUE_CAPACITY);
         assert_eq!(registry.admission_snapshot().dropped_events, 3);
+    }
+
+    /// Build a live entry occupying an admission slot, optionally with a
+    /// sampled memory figure.
+    fn live_entry(
+        registry: &SessionRegistry,
+        id: SessionId,
+        agent: Agent,
+        memory_bytes: Option<u64>,
+    ) {
+        let cwd = Path::new(".").to_path_buf();
+        let spec = spec_for(agent, &cwd);
+        let mut session = Session::new(id.clone(), &spec);
+        session.status = SessionStatus::Working;
+        session.phase = SessionPhase::Working;
+        session.memory_bytes = memory_bytes;
+        lock_state(&registry.inner).entries.insert(
+            id,
+            Entry {
+                session,
+                spec,
+                command: ResolvedCommand {
+                    program: PathBuf::from("agent"),
+                    args: Vec::new(),
+                    cwd,
+                },
+                pty: None,
+                scrollback: RingBuffer::default(),
+                grid: TerminalGrid::default(),
+                queue: crate::queue::PromptQueue::default(),
+                generation: 1,
+                stop_requested: false,
+                teardown_done: true,
+                branch_checked: None,
+                span: tracing::Span::none(),
+            },
+        );
+    }
+
+    #[test]
+    fn an_unsampled_session_is_projected_at_its_agents_measured_size() {
+        // Admitting on "we have not looked yet" is how a machine gets
+        // oversubscribed, so a session with no sample still counts.
+        let registry = SessionRegistry::with_admission(AdmissionConfig::new(8, None));
+        live_entry(&registry, SessionId::new(1), Agent::Claude, None);
+        live_entry(&registry, SessionId::new(2), Agent::Codex, None);
+        let state = lock_state(&registry.inner);
+        assert_eq!(
+            projected_memory_bytes(&state),
+            ASSUMED_SESSION_BYTES_CLAUDE + ASSUMED_SESSION_BYTES_CODEX
+        );
+    }
+
+    #[test]
+    fn a_sampled_session_is_projected_at_what_it_actually_uses() {
+        let registry = SessionRegistry::with_admission(AdmissionConfig::new(8, None));
+        live_entry(&registry, SessionId::new(1), Agent::Claude, Some(64 * 1024 * 1024));
+        let state = lock_state(&registry.inner);
+        assert_eq!(projected_memory_bytes(&state), 64 * 1024 * 1024);
+    }
+
+    #[test]
+    fn the_memory_budget_blocks_admission_while_slots_are_still_free() {
+        let registry = SessionRegistry::with_admission(
+            AdmissionConfig::new(8, None).with_memory_limits(
+                Some(600 * 1024 * 1024),
+                None,
+                None,
+            ),
+        );
+        live_entry(&registry, SessionId::new(1), Agent::Claude, None);
+        let snapshot = registry.admission_snapshot();
+        assert_eq!(snapshot.admission_block, Some(AdmissionBlock::MemoryBudget));
+        assert!(
+            snapshot.live_sessions < snapshot.max_live_sessions,
+            "slots are free; memory is what is blocking"
+        );
+        assert_eq!(snapshot.memory_budget_bytes, Some(600 * 1024 * 1024));
+        assert_eq!(snapshot.projected_memory_bytes, ASSUMED_SESSION_BYTES_CLAUDE);
+    }
+
+    #[test]
+    fn an_empty_fleet_always_gets_one_session_even_under_a_tiny_budget() {
+        // A budget too small for any agent is a misconfiguration; halting the
+        // fleet entirely would hide it rather than surface it.
+        let registry = SessionRegistry::with_admission(
+            AdmissionConfig::new(8, None).with_memory_limits(Some(1024), None, None),
+        );
+        assert_eq!(registry.admission_snapshot().admission_block, None);
+    }
+
+    #[test]
+    fn no_memory_budget_never_blocks_admission() {
+        let registry = SessionRegistry::with_admission(AdmissionConfig::new(8, None));
+        for index in 1..=4 {
+            live_entry(&registry, SessionId::new(index), Agent::Claude, None);
+        }
+        let snapshot = registry.admission_snapshot();
+        assert_eq!(snapshot.admission_block, None);
+        assert!(snapshot.projected_memory_bytes > 0, "projection is still reported");
+    }
+
+    #[test]
+    fn a_zero_limit_disables_rather_than_admitting_nothing() {
+        // A misconfigured limit must not halt the fleet.
+        let config = AdmissionConfig::new(4, None).with_memory_limits(Some(0), Some(0), Some(0));
+        assert_eq!(config.memory_budget_bytes, None);
+        assert_eq!(config.session_memory_cap_bytes, None);
+        assert_eq!(config.max_processes_per_session, None);
+        assert_eq!(config.job_limits(), crate::process_tree::JobLimits::default());
+    }
+
+    #[test]
+    fn the_session_cap_becomes_the_jobs_limits() {
+        let config = AdmissionConfig::new(4, None).with_memory_limits(
+            None,
+            Some(2 * 1024 * 1024 * 1024),
+            Some(64),
+        );
+        let limits = config.job_limits();
+        assert_eq!(limits.memory_bytes, Some(2 * 1024 * 1024 * 1024));
+        assert_eq!(limits.active_processes, Some(64));
     }
 
     #[test]

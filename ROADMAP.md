@@ -31,13 +31,6 @@ item above; where the two touch, the note says so.
 
 ### P1
 
-- [ ] P1 — Memory-aware admission with real job-object enforcement
-  Why: admission counts sessions and ignores the resource that actually decides the ceiling, while the job object contains processes without limiting them; a single leaking agent can take the fleet down.
-  Evidence: `crates/terminalai-core/src/process_tree.rs:39` sets only `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` in a fully populated `JOBOBJECT_EXTENDED_LIMIT_INFORMATION`. `CLAUDE.md` records 509 MB (Claude) / 322 MB (Codex) measured. Documented idle leaks: anthropics/claude-code#18859, #21378, #22275. `JOBOBJECT_CPU_RATE_CONTROL_INFORMATION` and `JOB_OBJECT_LIMIT_JOB_MEMORY` are plain Win32 (learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_cpu_rate_control_information).
-  Touches: `crates/terminalai-core/src/process_tree.rs`, `crates/terminalai-core/src/registry.rs`, `crates/terminalai-probe/src/main.rs` (a measurement subcommand exists to extend)
-  Acceptance: per-session working set is sampled and shown; admission refuses when projected total exceeds a configured budget; the job carries a per-session memory cap and an active-process cap, and a session that trips one is reported as limited rather than silently killed. Depends on the `windows-sys` bump below.
-  Complexity: L
-
 - [ ] P1 — Detect expired agent authentication across the fleet
   Why: concurrent sessions provoke OAuth refresh races, and an auth-dead agent looks like a busy one; without a fleet-level signal the operator watches a queue fail one entry at a time.
   Evidence: anthropics/claude-code#24317 "Frequent re-authentication required with multiple concurrent Claude Code sessions (OAuth refresh token race condition)" (41 reactions); #32642. `claude auth status` emits JSON (code.claude.com/docs/en/cli-reference). operator-oss ships a fleet-wide expired-login banner that holds queued follow-ups; agent-deck parks auth-dead sessions in an explicit hold state rather than flapping.

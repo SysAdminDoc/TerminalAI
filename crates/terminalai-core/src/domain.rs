@@ -52,6 +52,7 @@ pub trait AgentDomain: Send + Sync {
         command: &ResolvedCommand,
         size: PtySize,
         environment: &[(String, String)],
+        limits: crate::process_tree::JobLimits,
         on_output: OutputHandler,
     ) -> Result<Arc<dyn AgentSession>, DomainError>;
 }
@@ -67,9 +68,11 @@ impl AgentDomain for LocalPtyDomain {
         command: &ResolvedCommand,
         size: PtySize,
         environment: &[(String, String)],
+        limits: crate::process_tree::JobLimits,
         on_output: OutputHandler,
     ) -> Result<Arc<dyn AgentSession>, DomainError> {
-        let session = PtySession::spawn_with_environment(command, size, environment, on_output)?;
+        let session =
+            PtySession::spawn_with_limits(command, size, environment, limits, on_output)?;
         Ok(Arc::new(session))
     }
 }
