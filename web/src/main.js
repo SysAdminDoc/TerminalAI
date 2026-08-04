@@ -5,7 +5,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { reconcileKeyedRows } from "./fleetRows.js";
+import { reconcileGroupChip, reconcileKeyedRows } from "./fleetRows.js";
 import { countMessage, localizeDom, relativeDwell, t } from "./i18n.js";
 import { rateLimitTitle, rateLimitedLabel } from "./rateLimit.js";
 import { coverage, fleetTotals, folderOf, formatCost, formatTokens, rollupBy, TOKEN_FIELDS } from "./rollup.js";
@@ -1040,6 +1040,11 @@ function updateFleetRow(row, session, position = 1, setSize = 1, rovingId = stat
   row.querySelector(".row-status-label").textContent = label;
   const portBadge = row.querySelector(".row-ports");
   portBadge.textContent = `${t("action-allocated-ports")} ${ports(session.ports)}`;
+  reconcileGroupChip(
+    row,
+    state.groupBy === "none" ? "" : groupOf(session),
+    t("row-group"),
+  );
 
   const agentBadge = row.querySelector(".agent-badge");
   agentBadge.className = `agent-badge agent-${session.agent}`;

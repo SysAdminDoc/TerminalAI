@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { JSDOM } from "jsdom";
 
-import { reconcileKeyedRows } from "../src/fleetRows.js";
+import { reconcileGroupChip, reconcileKeyedRows } from "../src/fleetRows.js";
 
 class FakeRow {
   constructor(id) {
@@ -94,4 +95,53 @@ test("keeps a drafted row hidden rather than removing it from a filtered view", 
   assert.equal(container.children[0], row);
   assert.equal(row.hidden, true);
   assert.equal(row.replyInput.value, "draft");
+});
+
+test("reconciles a grouping chip on an existing row as its group changes", () => {
+  // Grouping reuses keyed rows, so a chip cannot be created only in renderRow:
+  // the row already exists when the operator turns grouping on.
+  const dom = new JSDOM(
+    '<div id="fleet-list"><article data-id="s0001"><div class="row-folder"><span class="row-status-label"></span><span class="row-ports"></span></div></article></div>',
+  );
+  const container = dom.window.document.getElementById("fleet-list");
+  const row = container.firstElementChild;
+  const update = (current, item) => reconcileGroupChip(current, item.group, "Grouped by status");
+
+  reconcileKeyedRows(
+    container,
+    [{ id: "s0001", group: "Working" }],
+    (session) => session.id,
+    () => {
+      throw new Error("the existing row should be reused");
+    },
+    update,
+    () => false,
+  );
+  assert.equal(row.querySelector(".row-group")?.textContent, "Working");
+  assert.equal(row.querySelector(".row-group")?.nextElementSibling.className, "row-ports");
+
+  reconcileKeyedRows(
+    container,
+    [{ id: "s0001", group: "Idle" }],
+    (session) => session.id,
+    () => {
+      throw new Error("the existing row should remain keyed");
+    },
+    update,
+    () => false,
+  );
+  assert.equal(row.querySelector(".row-group")?.textContent, "Idle");
+  assert.equal(container.firstElementChild, row);
+
+  reconcileKeyedRows(
+    container,
+    [{ id: "s0001", group: "" }],
+    (session) => session.id,
+    () => {
+      throw new Error("the existing row should remain keyed");
+    },
+    update,
+    () => false,
+  );
+  assert.equal(row.querySelector(".row-group"), null);
 });

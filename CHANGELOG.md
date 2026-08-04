@@ -89,6 +89,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Grouping now reconciles each row's group chip during keyed updates, so
+  enabling grouping adds labels to existing rows and status/folder changes do
+  not leave stale chips behind.
 - The broadcast dialog now remembers which eligible sessions the operator left
   checked when a partial refusal forces the target list to re-render, so it no
   longer silently re-ticks excluded sessions.

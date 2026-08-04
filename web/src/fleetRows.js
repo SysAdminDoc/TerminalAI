@@ -39,6 +39,29 @@ export function reconcileKeyedRows(container, items, keyOf, createRow, updateRow
   }
 }
 
+/**
+ * Keep the optional grouping label in a keyed row aligned with the current
+ * grouping mode. The row is intentionally reused, so its chip needs the same
+ * reconciliation treatment as the row's status and reply controls.
+ */
+export function reconcileGroupChip(row, group, title) {
+  const folder = row.querySelector(".row-folder");
+  if (!folder) return;
+  const portBadge = folder.querySelector(".row-ports");
+  let chip = folder.querySelector(".row-group");
+  if (!group) {
+    chip?.remove();
+    return;
+  }
+  if (!chip) {
+    chip = row.ownerDocument.createElement("span");
+    chip.className = "row-group";
+    folder.insertBefore(chip, portBadge);
+  }
+  chip.title = title;
+  chip.textContent = group;
+}
+
 function keyOfRow(row) {
   return row.dataset.id;
 }
