@@ -127,6 +127,7 @@ const state = {
   resizeTimer: null,
   lastSentSize: null,
   previewTimer: null,
+  previewRequest: 0,
   preflight: null,
   preflightMode: false,
   preflightLoading: false,
@@ -2428,10 +2429,11 @@ function syncAgentFields() {
 
 function schedulePreview() {
   clearTimeout(state.previewTimer);
-  state.previewTimer = setTimeout(updatePreview, 180);
+  const request = ++state.previewRequest;
+  state.previewTimer = setTimeout(() => updatePreview(request), 180);
 }
 
-async function updatePreview() {
+async function updatePreview(request) {
   const spec = readSpec();
   if (!spec.cwd) {
     $("preview-output").textContent = t("preview-folder");
@@ -2441,9 +2443,11 @@ async function updatePreview() {
   $("preview-state").textContent = t("preview-resolving");
   try {
     const command = await invoke("preview_launch", invokeArgs(spec));
+    if (request !== state.previewRequest) return;
     $("preview-output").textContent = command;
     $("preview-state").textContent = t("preview-exact");
   } catch (error) {
+    if (request !== state.previewRequest) return;
     $("preview-output").textContent = String(error);
     $("preview-state").textContent = t("preview-refused");
   }

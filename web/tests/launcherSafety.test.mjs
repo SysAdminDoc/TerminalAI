@@ -86,6 +86,21 @@ test("launcher catalogs come from runtime capabilities and keep free text", () =
   assert.match(main, /value\.trim\(\) \|\| null/);
 });
 
+test("stale preview responses are discarded after a newer edit", () => {
+  const preview = main.slice(main.indexOf("function schedulePreview"), main.indexOf("async function launchCurrentSpec"));
+  assert.match(main, /previewRequest: 0/);
+  assert.match(preview, /const request = \+\+state\.previewRequest/);
+  assert.match(preview, /setTimeout\(\(\) => updatePreview\(request\), 180\)/);
+  assert.match(
+    preview,
+    /const command = await invoke\("preview_launch", invokeArgs\(spec\)\);\s*if \(request !== state\.previewRequest\) return;/,
+  );
+  assert.match(
+    preview,
+    /catch \(error\) \{\s*if \(request !== state\.previewRequest\) return;/,
+  );
+});
+
 test("the focused terminal replaces the placeholder rather than stacking under it", () => {
   const { dom } = launcherForm();
   const host = dom.window.document.getElementById("terminal-host");
