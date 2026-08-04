@@ -89,6 +89,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Light mode now overrides the fleet-row interaction state, external-session strip, pinned panes,
+  and filters with the light palette. Their shared rules sit before the theme block, and contrast
+  tests keep the variable-based surfaces above 4.5:1 instead of letting dark rgba backgrounds win.
 - The Review view's stylesheet now contains a real `.review-view` rule instead of a literal `\n`
   selector escape, restoring its fixed height, internal scrolling, and panel padding. A CSSOM test
   locks the selector and all three layout declarations together.

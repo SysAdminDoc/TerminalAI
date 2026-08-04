@@ -202,6 +202,18 @@ button { cursor: pointer; }
   .icon-button:hover, .row-action:hover { color: HighlightText; border-color: Highlight; background: Highlight; }
 }
 
+/* Pinned terminals and filters share the theme variables so their light-mode
+   surfaces cannot retain the dark palette by landing after the theme block. */
+.pinned-split { display: grid; gap: 8px; max-height: 38%; padding: 0 20px 12px; overflow: auto; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.pinned-pane { display: flex; min-width: 0; flex-direction: column; border: 1px solid rgba(88, 91, 112, .42); border-radius: 8px; background: rgba(24, 24, 37, .58); }
+.pinned-pane-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 9px; border-bottom: 1px solid rgba(88, 91, 112, .28); }
+.pinned-pane-name { overflow: hidden; color: var(--text); font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.pinned-pane-status { flex: none; font-size: 9px; }
+.pinned-pane-grid { max-height: 190px; margin: 0; padding: 8px 9px; overflow: auto; color: var(--subtext1); font-family: 'Cascadia Code', Consolas, monospace; font-size: 10px; line-height: 1.35; white-space: pre; }
+.pinned-pane-grid-waiting { color: var(--subtext0); font-style: italic; }
+.filter-select select { height: 26px; padding: 0 6px; border: 1px solid rgba(88, 91, 112, .42); border-radius: 6px; background: rgba(24, 24, 37, .7); color: var(--subtext1); font-size: 11px; }
+.row-group { padding: 0 5px; border-radius: 4px; background: rgba(88, 91, 112, .28); color: var(--subtext1); font-size: 9px; }
+
 @media (prefers-color-scheme: light) {
   :root {
     color-scheme: light;
@@ -230,17 +242,14 @@ button { cursor: pointer; }
   .terminal-panel { background: var(--base); }
   .filter-wrap, .preset-control select { background: rgba(255, 255, 255, .78); }
   .row-focused { background: var(--surface0) !important; }
+  .fleet-row:hover, .fleet-row:focus-visible { border-color: var(--surface1); background: var(--surface0); }
+  .external-view { border-top-color: var(--surface1); background: var(--mantle); }
+  .pinned-pane { border-color: var(--surface1); background: var(--mantle); }
+  .pinned-pane-head { border-bottom-color: var(--surface1); }
+  .filter-select select { border-color: var(--surface1); background: var(--mantle); }
+  .row-group { background: var(--surface0); }
   .row-unread { background: linear-gradient(90deg, rgba(254, 100, 11, .10), transparent 70%) !important; }
   .button-primary { color: #ffffff; background: linear-gradient(135deg, #5b21b6, #1547a8); }
   .field input, .field select, .field textarea, .preset-save input, .log-event, .diagnostics-current, .preflight-row, .preview-card, .toast, .review-entry, .review-diff pre { color: var(--text); background: var(--mantle); }
   .row-reply input { background: var(--mantle); }
 }
-.pinned-split { display: grid; gap: 8px; max-height: 38%; padding: 0 20px 12px; overflow: auto; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
-.pinned-pane { display: flex; min-width: 0; flex-direction: column; border: 1px solid rgba(88, 91, 112, .42); border-radius: 8px; background: rgba(24, 24, 37, .58); }
-.pinned-pane-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 9px; border-bottom: 1px solid rgba(88, 91, 112, .28); }
-.pinned-pane-name { overflow: hidden; color: var(--text); font-size: 11px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.pinned-pane-status { flex: none; font-size: 9px; }
-.pinned-pane-grid { max-height: 190px; margin: 0; padding: 8px 9px; overflow: auto; color: var(--subtext1); font-family: 'Cascadia Code', Consolas, monospace; font-size: 10px; line-height: 1.35; white-space: pre; }
-.pinned-pane-grid-waiting { color: var(--subtext0); font-style: italic; }
-.filter-select select { height: 26px; padding: 0 6px; border: 1px solid rgba(88, 91, 112, .42); border-radius: 6px; background: rgba(24, 24, 37, .7); color: var(--subtext1); font-size: 11px; }
-.row-group { padding: 0 5px; border-radius: 4px; background: rgba(88, 91, 112, .28); color: var(--subtext1); font-size: 9px; }
