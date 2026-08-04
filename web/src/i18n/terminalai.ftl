@@ -15,6 +15,11 @@ button-close = Close
 button-cancel = Cancel
 button-launch-session = Launch session
 button-save-preset = Save preset
+button-delete-preset = Delete selected preset
+button-delete-preset-title = Remove this saved or built-in preset
+button-remove = Remove
+button-prompts-short = Prompts
+button-prompts-open = Open the prompt library
 button-fix = Fix
 button-fix-unavailable = Fix unavailable
 button-recheck = Recheck
@@ -137,6 +142,29 @@ work-pause = Pause run
 work-resume = Resume run
 work-clear = Clear run
 work-no-prompts = No stored prompts yet — add one in your prompt library
+prompt-library-title = Prompt library
+prompt-library-count = { $count } stored { $count ->
+    [one] prompt
+   *[other] prompts
+  }
+prompt-library-unavailable = Prompt library unavailable
+prompt-library-load-error = Could not read prompt library: { $error }
+prompt-library-empty = No stored prompts yet. Create one here.
+prompt-editor-title = EDIT PROMPT
+prompt-name = Prompt name
+prompt-name-hint = A short name appears in the work queue.
+prompt-text = Prompt text
+prompt-new = New prompt
+prompt-save = Save prompt
+prompt-select = Edit { $name }
+prompt-delete = Delete { $name }
+prompt-source-seeded = Seeded from a local prompt file
+prompt-source-local = Saved in TerminalAI
+prompt-name-required = Name the prompt first
+prompt-text-required = Write the prompt first
+prompt-saved = Saved { $name }
+prompt-deleted = Deleted { $name }
+prompt-not-found = Prompt { $name } was already removed
 work-started = Queued { $count } { $count ->
     [one] project
    *[other] projects
@@ -201,6 +229,13 @@ projects-unavailable = Projects unavailable
 projects-load-error = Could not read projects: { $error }
 projects-summary = { $withWork } of { $total } have open items · { $unknown } unknown
 projects-launch = Launch
+projects-roots-title = Registered project roots
+projects-root-add = Register root
+projects-roots-empty = No project roots registered
+projects-roots-load-error = Could not read project roots: { $error }
+projects-root-remove = Remove { $root }
+projects-root-removed = Removed project root { $root }
+projects-root-not-found = Project root { $root } was already removed
 touched-today = today
 touched-days = { $days }d ago
 touched-months = { $months }mo ago
@@ -216,6 +251,8 @@ projects-root-added = Registered { $root } — { $count } { $count ->
   }
 projects-none-found = No Git repositories were found under { $root }
 preset-builtin-mark = (built-in)
+preset-deleted = Deleted { $name }
+preset-not-found = Preset { $name } was already removed
 button-restore-presets = Offer every built-in preset again
 presets-restored = { $count } built-in { $count ->
     [one] preset restored

@@ -140,10 +140,14 @@ const state = {
   projects: [],
   scannedProjects: [],
   projectsError: null,
+  projectRoots: [],
+  projectRootsError: null,
   queueSession: null,
   queuePrompts: [],
   queueError: null,
   storedPrompts: [],
+  storedPromptsError: null,
+  activeStoredPrompt: null,
   workRun: null,
   reviewError: null,
   announcementQueue: new Map(),
@@ -1809,25 +1813,156 @@ async function refreshWorkRun() {
   renderWorkRun();
 }
 
+function renderPromptLibrary() {
+  const list = $("stored-prompt-list");
+  if (state.storedPromptsError) {
+    $("prompt-library-count").textContent = t("prompt-library-unavailable");
+    renderDataError(
+      list,
+      t("prompt-library-load-error", { error: state.storedPromptsError }),
+      "prompt-library",
+      loadStoredPrompts,
+    );
+    return;
+  }
+  $("prompt-library-count").textContent = t("prompt-library-count", {
+    count: state.storedPrompts.length,
+  });
+  if (!state.storedPrompts.length) {
+    list.innerHTML =
+      '<p class="rollup-total">' + escapeHtml(t("prompt-library-empty")) + "</p>";
+    return;
+  }
+  list.innerHTML = state.storedPrompts
+    .map((prompt) => {
+      const name = String(prompt.name ?? "");
+      const selectLabel = t("prompt-select", { name });
+      const deleteLabel = t("prompt-delete", { name });
+      const source = prompt.source ? t("prompt-source-seeded") : t("prompt-source-local");
+      const active = name === state.activeStoredPrompt;
+      return '<div class="stored-prompt-row" role="listitem"><button type="button" class="stored-prompt-select" data-prompt-select="' +
+        escapeHtml(name) +
+        '" aria-pressed="' +
+        String(active) +
+        '" aria-label="' +
+        escapeHtml(selectLabel) +
+        '"><span>' +
+        escapeHtml(name) +
+        "</span><small>" +
+        escapeHtml(source) +
+        '</small></button><button type="button" class="row-action row-action-danger" data-prompt-delete="' +
+        escapeHtml(name) +
+        '" title="' +
+        escapeHtml(deleteLabel) +
+        '" aria-label="' +
+        escapeHtml(deleteLabel) +
+        '">×</button></div>';
+    })
+    .join("");
+}
+
+function newStoredPrompt() {
+  state.activeStoredPrompt = null;
+  $("stored-prompt-name").value = "";
+  $("stored-prompt-text").value = "";
+  renderPromptLibrary();
+}
+
+function selectStoredPrompt(name) {
+  const prompt = state.storedPrompts.find((entry) => entry.name === name);
+  if (!prompt) {
+    newStoredPrompt();
+    return;
+  }
+  state.activeStoredPrompt = prompt.name;
+  $("stored-prompt-name").value = prompt.name;
+  $("stored-prompt-text").value = prompt.text;
+  renderPromptLibrary();
+}
+
+async function saveStoredPrompt() {
+  const name = $("stored-prompt-name").value.trim();
+  const text = $("stored-prompt-text").value;
+  if (!name) {
+    showToast(t("prompt-name-required"));
+    $("stored-prompt-name").focus();
+    return;
+  }
+  if (!text.trim()) {
+    showToast(t("prompt-text-required"));
+    $("stored-prompt-text").focus();
+    return;
+  }
+  const previous = state.activeStoredPrompt;
+  try {
+    await invoke("save_stored_prompt", {
+      prompt: { name, text, source: null },
+    });
+    if (previous && previous !== name) {
+      await invoke("delete_stored_prompt", { name: previous });
+    }
+    state.activeStoredPrompt = name;
+    await loadStoredPrompts();
+    selectStoredPrompt(name);
+    showToast(t("prompt-saved", { name }), "success");
+  } catch (error) {
+    showToast(String(error));
+  }
+}
+
+async function deleteStoredPrompt(name) {
+  if (!name) return;
+  try {
+    const removed = await invoke("delete_stored_prompt", { name });
+    if (removed && state.activeStoredPrompt === name) newStoredPrompt();
+    await loadStoredPrompts();
+    showToast(
+      removed ? t("prompt-deleted", { name }) : t("prompt-not-found", { name }),
+      removed ? "success" : "",
+    );
+  } catch (error) {
+    showToast(String(error));
+  }
+}
+
 async function loadStoredPrompts() {
   try {
     state.storedPrompts = await invoke("list_stored_prompts");
+    state.storedPromptsError = null;
   } catch (error) {
     state.storedPrompts = [];
-    showToast(String(error));
+    state.storedPromptsError = String(error);
   }
   const select = $("work-prompt-select");
+  const selected = select.value;
   select.innerHTML = state.storedPrompts
-    .map((prompt) => `<option value="${escapeHtml(prompt.name)}">${escapeHtml(prompt.name)}</option>`)
+    .map((prompt) => '<option value="' + escapeHtml(prompt.name) + '">' + escapeHtml(prompt.name) + "</option>")
     .join("");
   // With nothing stored there is nothing to run, and a button that always
   // errors is worse than one that is plainly unavailable.
   const empty = state.storedPrompts.length === 0;
   $("work-start-button").disabled = empty;
   select.disabled = empty;
-  if (empty) {
-    select.innerHTML = `<option value="">${escapeHtml(t("work-no-prompts"))}</option>`;
+  if (!empty && state.storedPrompts.some((prompt) => prompt.name === selected)) {
+    select.value = selected;
   }
+  if (empty) {
+    select.innerHTML = '<option value="">' + escapeHtml(t("work-no-prompts")) + "</option>";
+  }
+  if (
+    state.activeStoredPrompt &&
+    !state.storedPrompts.some((prompt) => prompt.name === state.activeStoredPrompt)
+  ) {
+    newStoredPrompt();
+  } else {
+    renderPromptLibrary();
+  }
+}
+
+function openPromptLibrary() {
+  const dialog = $("prompt-dialog");
+  if (!dialog.open) dialog.showModal();
+  void loadStoredPrompts();
 }
 
 /**
@@ -1874,7 +2009,7 @@ async function openProjects() {
     state.projectsError = String(error);
   }
   renderProjects();
-  await loadStoredPrompts();
+  await Promise.all([loadProjectRoots(), loadStoredPrompts()]);
   await refreshWorkRun();
 }
 
@@ -2337,6 +2472,7 @@ async function launchCurrentSpec() {
 async function loadPresets() {
   try {
     state.presets = await invoke("list_presets");
+    const selected = $("preset-select").value;
     // Built-ins are labelled, not silently mixed in: an operator who cannot see
     // which ones shipped with the app cannot tell why one of them refuses to be
     // overwritten.
@@ -2347,6 +2483,8 @@ async function loadPresets() {
         return `<option value="${escapeHtml(preset.name)}" title="${escapeHtml(`${label}${title}`)}">${escapeHtml(label)}</option>`;
       })
       .join("")}`;
+    if (state.presets.some((preset) => preset.name === selected)) $("preset-select").value = selected;
+    $("delete-preset-button").disabled = !$("preset-select").value;
   } catch (error) {
     showToast(`Could not load presets: ${error}`);
   }
@@ -2428,6 +2566,67 @@ function applyProjectTemplate() {
  * projects" dropdown is a question the operator has no way to answer. The
  * register button beside Browse is what they see instead.
  */
+function renderProjectRoots() {
+  const list = $("project-root-list");
+  if (state.projectRootsError) {
+    renderDataError(
+      list,
+      t("projects-roots-load-error", { error: state.projectRootsError }),
+      "project-roots",
+      loadProjectRoots,
+    );
+    return;
+  }
+  if (!state.projectRoots.length) {
+    list.innerHTML = '<li class="rollup-total">' + escapeHtml(t("projects-roots-empty")) + "</li>";
+    return;
+  }
+  list.innerHTML = state.projectRoots
+    .map((root) => {
+      const value = String(root);
+      const label = t("projects-root-remove", { root: value });
+      return '<li class="project-root-row"><code class="project-root-path" title="' + escapeHtml(value) + '">' + escapeHtml(value) + '</code><button type="button" class="button button-quiet" data-project-root-remove="' + escapeHtml(value) + '" title="' + escapeHtml(label) + '" aria-label="' + escapeHtml(label) + '">' + escapeHtml(t("button-remove")) + "</button></li>";
+    })
+    .join("");
+}
+
+async function loadProjectRoots() {
+  try {
+    state.projectRoots = await invoke("list_project_roots");
+    state.projectRootsError = null;
+  } catch (error) {
+    state.projectRoots = [];
+    state.projectRootsError = String(error);
+  }
+  renderProjectRoots();
+}
+
+async function refreshScannedProjects() {
+  try {
+    state.scannedProjects = await invoke("scan_projects");
+    state.projectsError = null;
+  } catch (error) {
+    state.scannedProjects = [];
+    state.projectsError = String(error);
+  }
+  renderProjects();
+}
+
+async function removeProjectRoot(path) {
+  try {
+    const removed = await invoke("remove_project_root", { path });
+    await loadProjectRoots();
+    await loadKnownProjects();
+    if ($("projects-dialog").open) await refreshScannedProjects();
+    showToast(
+      removed ? t("projects-root-removed", { root: path }) : t("projects-root-not-found", { root: path }),
+      removed ? "success" : "",
+    );
+  } catch (error) {
+    showToast(String(error));
+  }
+}
+
 async function loadKnownProjects() {
   const field = document.querySelector(".known-projects-field");
   try {
@@ -2462,7 +2661,8 @@ async function registerProjectRoot() {
     showToast(String(error));
     return;
   }
-  await loadKnownProjects();
+  await Promise.all([loadProjectRoots(), loadKnownProjects()]);
+  if ($("projects-dialog").open) await refreshScannedProjects();
   const found = state.projects.filter((project) => project.root === root).length;
   showToast(
     found ? t("projects-root-added", { root, count: found }) : t("projects-none-found", { root }),
@@ -2484,6 +2684,22 @@ async function saveCurrentPreset() {
     await loadPresets();
     $("preset-name-input").value = "";
     showToast(`Preset “${name}” saved`, "success");
+  } catch (error) {
+    showToast(String(error));
+  }
+}
+
+async function deleteSelectedPreset() {
+  const select = $("preset-select");
+  const name = select.value;
+  if (!name) return;
+  try {
+    const removed = await invoke("delete_preset", { name });
+    await loadPresets();
+    showToast(
+      removed ? t("preset-deleted", { name }) : t("preset-not-found", { name }),
+      removed ? "success" : "",
+    );
   } catch (error) {
     showToast(String(error));
   }
@@ -2809,6 +3025,11 @@ function bindEvents() {
   $("cwd-input").addEventListener("change", () => void loadProjectTemplates());
   $("register-root-button").addEventListener("click", () => void registerProjectRoot());
   $("register-root-empty-button").addEventListener("click", () => void registerProjectRoot());
+  $("project-root-add-button").addEventListener("click", () => void registerProjectRoot());
+  $("project-root-list").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-project-root-remove]");
+    if (button) void removeProjectRoot(button.dataset.projectRootRemove);
+  });
   $("project-select").addEventListener("change", () => {
     const path = $("project-select").value;
     if (!path) return;
@@ -2829,6 +3050,10 @@ function bindEvents() {
     }
   });
   $("save-preset-button").addEventListener("click", saveCurrentPreset);
+  $("preset-select").addEventListener("change", () => {
+    $("delete-preset-button").disabled = !$("preset-select").value;
+  });
+  $("delete-preset-button").addEventListener("click", () => void deleteSelectedPreset());
   $("launch-preset-button").addEventListener("click", loadSelectedPreset);
   $("restore-presets-button").addEventListener("click", async () => {
     try {
@@ -2869,6 +3094,19 @@ function bindEvents() {
   $("empty-root-button").addEventListener("click", () => void registerProjectRoot());
   $("projects-toggle").addEventListener("click", () => void openProjects());
   $("close-projects-button").addEventListener("click", () => $("projects-dialog").close());
+  $("prompts-toggle").addEventListener("click", () => openPromptLibrary());
+  $("close-prompt-button").addEventListener("click", () => $("prompt-dialog").close());
+  $("prompt-new-button").addEventListener("click", newStoredPrompt);
+  $("prompt-save-button").addEventListener("click", () => void saveStoredPrompt());
+  $("stored-prompt-list").addEventListener("click", (event) => {
+    const select = event.target.closest("button[data-prompt-select]");
+    if (select) {
+      selectStoredPrompt(select.dataset.promptSelect);
+      return;
+    }
+    const remove = event.target.closest("button[data-prompt-delete]");
+    if (remove) void deleteStoredPrompt(remove.dataset.promptDelete);
+  });
   $("projects-open-only").addEventListener("change", () => renderProjects());
   $("work-start-button").addEventListener("click", () => void startWorkRun());
   $("work-pause-button").addEventListener("click", () => void setWorkRunPaused(true));

@@ -35,6 +35,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   are present. Nothing is invented when they are not: a stored prompt named "drain the roadmap"
   containing something this app made up would be worse than an empty library. A seeded prompt the
   operator deletes stays deleted.
+- Presets and registered project roots can now be removed from the UI, and the prompt library is
+  reachable from the fleet toolbar for creating, editing, and deleting stored prompts.
 
 - A prompt queue per session. Queue what the agent should do next while it is still working, and
   each prompt is sent when the run finishes — a session becomes something you load up and leave
