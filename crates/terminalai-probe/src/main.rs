@@ -1472,12 +1472,14 @@ fn console_hosts() -> std::collections::HashSet<u32> {
 
 #[cfg(windows)]
 fn console_windows() -> std::collections::HashSet<isize> {
-    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
+    // windows-sys 0.61 dropped the `BOOL` alias; the callback contract is a
+    // raw `i32` where nonzero means "keep enumerating".
+    use windows_sys::Win32::Foundation::{HWND, LPARAM};
     use windows_sys::Win32::System::StationsAndDesktops::{EnumDesktopWindows, GetThreadDesktop};
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
     use windows_sys::Win32::UI::WindowsAndMessaging::{GetClassNameW, IsWindowVisible};
 
-    unsafe extern "system" fn collect(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    unsafe extern "system" fn collect(hwnd: HWND, lparam: LPARAM) -> i32 {
         if IsWindowVisible(hwnd) == 0 {
             return 1;
         }

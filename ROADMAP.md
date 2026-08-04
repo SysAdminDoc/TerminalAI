@@ -68,13 +68,6 @@ item above; where the two touch, the note says so.
   Acceptance: the agent process is created already inside its job, or — if reaching into `portable-pty`'s spawn proves impractical — the residual window is measured, documented, and the decision recorded rather than left implicit. Nested jobs give the fleet-wide second tier if adopted.
   Complexity: M
 
-- [ ] P2 — Move the direct `windows-sys` dependency from 0.59 to 0.61
-  Why: prerequisite for the job-object work, and it collapses a lockfile currently carrying three copies.
-  Evidence: workspace `Cargo.toml` declares `windows-sys = "0.59"`; `Cargo.lock` resolves 0.45.0, 0.59.0 and 0.61.2 simultaneously. 0.60 is metadata-driven codegen plus a `link` calling-convention fix; 0.61 replaces `windows-targets` with `windows-link` and makes raw-dylib unconditional, dropping the large import libraries — https://github.com/microsoft/windows-rs/releases
-  Touches: `Cargo.toml`, `crates/terminalai-core/src/process_tree.rs`, `pty.rs`, any module importing `windows_sys`
-  Acceptance: one fewer `windows-sys` copy in the lockfile, `cargo test` and `cargo clippy --workspace --all-targets` clean, and `verify-installer.ps1` still green.
-  Complexity: S
-
 - [ ] P2 — Un-minify `styles.css` and finish the frontend module extraction
   Why: the P1 "a literal `\n` inside styles.css kills the Review view's only layout" was fixed on 2026-08-04, but its cause was not — a 2,204-character line is a file where that class of defect is undetectable by review, so it will recur.
   Evidence: `web/src/styles.css` still has 29 lines over 300 characters, longest 2,204 after that fix (measured with `awk '{print length}' | sort -rn`). `web/src/main.js` is 2,800 lines / 119 KB with a longest line of 1,348, beside five already-extracted modules (`broadcast.js`, `fleetRows.js`, `projects.js`, `rateLimit.js`, `rollup.js`) that establish the pattern.

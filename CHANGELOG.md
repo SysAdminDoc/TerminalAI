@@ -18,6 +18,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   restarting the daemon is not a way to clear the ceiling. The header states the ceiling, how much
   of it is used, and — because only Claude takes `--max-budget-usd` — which agents a per-session
   budget actually binds, rather than implying a hard stop that half the fleet does not have.
+### Changed
+
+- The workspace's direct `windows-sys` dependency moved from 0.59 to 0.61, which is the prerequisite
+  for real job-object limits and drops the large import libraries in favour of unconditional
+  raw-dylib linking. `Win32::Foundation::BOOL` no longer exists in 0.61, so the one window-enumeration
+  callback that named it now uses the raw `i32` the contract has always been. The lockfile still
+  carries a 0.59 copy: it is reached through Tauri's `window-vibrancy` and through `winreg` in a
+  build dependency, neither of which this workspace controls, so the duplicate stays until upstream
+  moves.
+
 - Every admission site now asks one function whether anything may start. The slot cap and the
   ceiling were otherwise two checks in four places, which is how one path ends up enforcing a limit
   another ignores; the snapshot reports which of the two is blocking so a queued row says why.

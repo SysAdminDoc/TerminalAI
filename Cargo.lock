@@ -3903,7 +3903,7 @@ dependencies = [
  "unicode-width",
  "vte",
  "which",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3921,7 +3921,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "widestring",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3932,7 +3932,7 @@ dependencies = [
  "serde_json",
  "terminalai-core",
  "terminalai-daemon",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
