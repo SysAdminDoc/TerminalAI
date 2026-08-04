@@ -89,6 +89,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- The installer gate now requires a newly running `terminalai-daemon.exe` from the scratch prefix as
+  well as its control pipe, so a pre-existing daemon cannot make the installed-app check pass.
+
 - Focused terminal reattachment now gates live output behind the replay and drops the already-replayed
   suffix, preventing duplicated or out-of-order bytes during attach.
 

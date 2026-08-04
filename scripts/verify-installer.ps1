@@ -71,6 +71,27 @@ function Get-PeSubsystem([string]$path) {
     }
 }
 
+function Get-TerminalAiPipeNames() {
+    [System.IO.Directory]::GetFiles('\\.\pipe\') |
+        Where-Object { $_ -like '*terminalai*' }
+}
+
+function Get-InstalledDaemonProcesses([string]$prefix, [int[]]$baselinePids) {
+    $expectedPath = [System.IO.Path]::GetFullPath((Join-Path $prefix 'terminalai-daemon.exe'))
+    @(Get-Process -Name 'terminalai-daemon' -ErrorAction SilentlyContinue | ForEach-Object {
+        if ($baselinePids -contains $_.Id) { return }
+
+        $path = $null
+        try { $path = $_.Path } catch { return }
+        if (-not $path) { return }
+
+        try { $path = [System.IO.Path]::GetFullPath($path) } catch { return }
+        if ([StringComparer]::OrdinalIgnoreCase.Equals($path, $expectedPath)) {
+            $_
+        }
+    })
+}
+
 <#
 Run the visual-isolation helper without ever sharing a pipe with it.
 
@@ -134,6 +155,7 @@ if ($Installer -notlike "*$productVersion*") {
 $prefix = Join-Path ([System.IO.Path]::GetTempPath()) ("terminalai-installcheck-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 $installed = $false
 $process = $null
+$daemonProcess = $null
 
 try {
     Write-Host "Installing into $prefix"
@@ -181,6 +203,18 @@ try {
             throw "visual-isolation ensure failed; refusing to launch on a physical display: $($ensure.Output)"
         }
 
+        $baselineDaemonPids = @(
+            Get-Process -Name 'terminalai-daemon' -ErrorAction SilentlyContinue |
+                Select-Object -ExpandProperty Id
+        )
+        $baselineDaemonPipes = @(Get-TerminalAiPipeNames)
+        if ($baselineDaemonPipes.Count -gt 0) {
+            Write-Host (
+                "note: TerminalAI pipe(s) already existed before launch ({0}); " +
+                'the gate will require a new daemon process from the installed prefix'
+            ) -f ($baselineDaemonPipes -join ', ') -ForegroundColor Yellow
+        }
+
         Write-Host 'Launching the installed binary on the isolated display'
         # launch is the window assertion: it waits for a visible window on the
         # private desktop, proves its placement, and exits non-zero having killed
@@ -201,21 +235,31 @@ try {
             $process = Get-Process -Id $appPid -ErrorAction SilentlyContinue
         }
 
-        # The daemon's control pipe is the proof it started, not merely that a
-        # process exists: a daemon that cannot bind never serves.
+        # A pre-existing daemon can make the app connect successfully without
+        # starting the sidecar from this prefix. Require both a new installed
+        # daemon process and its pipe; the pipe alone is not proof of the
+        # installed sidecar.
         $deadline = (Get-Date).AddSeconds($LaunchTimeoutSeconds)
-        $daemonSeen = $false
-        while ((Get-Date) -lt $deadline -and -not $daemonSeen) {
-            $daemonSeen = [bool](
-                [System.IO.Directory]::GetFiles('\\.\pipe\') |
-                    Where-Object { $_ -like '*terminalai*' }
-            )
-            if (-not $daemonSeen) { Start-Sleep -Milliseconds 500 }
+        $daemonPipeSeen = $false
+        while ((Get-Date) -lt $deadline -and (-not $daemonProcess -or -not $daemonPipeSeen)) {
+            $daemonCandidates = @(Get-InstalledDaemonProcesses $prefix $baselineDaemonPids)
+            if ($daemonCandidates.Count -gt 0) {
+                $daemonProcess = $daemonCandidates[0]
+            }
+            $daemonPipeSeen = @(Get-TerminalAiPipeNames).Count -gt 0
+            if (-not $daemonProcess -or -not $daemonPipeSeen) {
+                Start-Sleep -Milliseconds 500
+            }
         }
-        if (-not $daemonSeen) {
+        if (-not $daemonProcess) {
+            Fail "no new terminalai-daemon.exe from the installed prefix appeared within ${LaunchTimeoutSeconds}s"
+        } else {
+            Pass "installed daemon process is running from $($daemonProcess.Path)"
+        }
+        if (-not $daemonPipeSeen) {
             Fail "no TerminalAI daemon pipe appeared within ${LaunchTimeoutSeconds}s"
         } else {
-            Pass 'daemon control pipe is listening'
+            Pass 'installed daemon control pipe is listening'
         }
 
         if ($process -and -not $process.HasExited) {
