@@ -174,6 +174,26 @@ impl WorkQueue {
         Ok(())
     }
 
+    /// Mark the entry owned by a finished session as done.
+    ///
+    /// Session lifecycle events arrive independently of the queue, so the
+    /// bridge may see an exit more than once (first as `Exited`, then as
+    /// `SessionRemoved`). A repeated event is deliberately a no-op.
+    pub fn finish_session(&mut self, session: &SessionId) -> bool {
+        let Some(entry) = self.entries.iter_mut().find(|entry| {
+            matches!(
+                &entry.state,
+                EntryState::Running { session: running } if running == session
+            )
+        }) else {
+            return false;
+        };
+        entry.state = EntryState::Done {
+            session: session.clone(),
+        };
+        true
+    }
+
     /// Move a flagged entry back into the queue, having accepted the risk.
     ///
     /// Only ever from `Flagged`: an entry that failed for another reason is not
@@ -368,6 +388,25 @@ mod tests {
             .set_state(Path::new(r"C:\repos\b"), EntryState::Skipped)
             .expect("skip");
         assert!(queue.is_finished());
+    }
+
+    #[test]
+    fn a_finished_session_is_done_and_exposes_the_next_pending_project() {
+        let mut queue = WorkQueue::new("drain", &projects(&["a", "b"])).expect("queue");
+        let session = SessionId::new(1);
+        queue
+            .set_state(
+                Path::new(r"C:\repos\a"),
+                EntryState::Running {
+                    session: session.clone(),
+                },
+            )
+            .expect("running");
+
+        assert!(queue.finish_session(&session));
+        assert!(matches!(queue.entries[0].state, EntryState::Done { .. }));
+        assert_eq!(queue.next_pending().expect("next").name, "b");
+        assert!(!queue.finish_session(&session), "duplicate exit changed state");
     }
 
     #[test]

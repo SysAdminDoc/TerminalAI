@@ -89,6 +89,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Work runs now mark exited or removed sessions as done and automatically admit
+  the next pending project when a fleet slot opens.
 - Transcript tailing now advances past oversized and invalid-UTF-8 JSONL records instead of
   retrying the same offset forever. The bounded byte reader preserves partial-line behavior while
   skipping records the JSON parser cannot safely consume.

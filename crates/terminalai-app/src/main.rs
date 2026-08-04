@@ -635,14 +635,22 @@ fn clear_work_run(state: State<'_, AppState>) -> Result<(), String> {
 /// machine can run would duplicate a budget that already exists, and drift.
 fn drive_work_run(state: &State<'_, AppState>) -> Result<(), String> {
     let client = daemon_client(state)?;
+    drive_work_run_with(&client, &state.work_run_store, &state.prompts)
+}
+
+fn drive_work_run_with(
+    client: &DaemonClient,
+    work_run_store: &work::WorkRunStore,
+    prompts: &work::PromptLibrary,
+) -> Result<(), String> {
     loop {
-        let Some(queue) = state.work_run_store.get()? else {
+        let Some(queue) = work_run_store.get()? else {
             return Ok(());
         };
         if queue.paused || queue.is_finished() {
             return Ok(());
         }
-        let admission = match daemon_response(&client, Request::Snapshot)? {
+        let admission = match daemon_response(client, Request::Snapshot)? {
             Response::Snapshot { admission, .. } => admission,
             Response::Error { message } => return Err(message),
             other => return Err(format!("unexpected snapshot response: {other:?}")),
@@ -658,16 +666,15 @@ fn drive_work_run(state: &State<'_, AppState>) -> Result<(), String> {
         // cleaned up in the meantime should not stay flagged from an hour ago.
         let tree = terminalai_core::work_queue::tree_state(&entry.project);
         if !tree.is_clean() {
-            state
-                .work_run_store
+            work_run_store
                 .update(|queue| queue.set_state(&entry.project, EntryState::Flagged { tree }))?;
             continue;
         }
 
-        let text = match state.prompts.get(&queue.prompt)? {
+        let text = match prompts.get(&queue.prompt)? {
             Some(prompt) => prompt.text,
             None => {
-                state.work_run_store.update(|queue| {
+                work_run_store.update(|queue| {
                     queue.set_state(
                         &entry.project,
                         EntryState::Failed {
@@ -688,7 +695,7 @@ fn drive_work_run(state: &State<'_, AppState>) -> Result<(), String> {
             ..LaunchSpec::default()
         };
         let launched = daemon_response(
-            &client,
+            client,
             Request::Launch {
                 spec: Box::new(spec),
                 configured_path: None,
@@ -697,7 +704,7 @@ fn drive_work_run(state: &State<'_, AppState>) -> Result<(), String> {
         let id = match launched {
             Response::Launched { id, .. } => id,
             Response::Error { message } => {
-                state.work_run_store.update(|queue| {
+                work_run_store.update(|queue| {
                     queue.set_state(&entry.project, EntryState::Failed { detail: message })
                 })?;
                 continue;
@@ -705,14 +712,14 @@ fn drive_work_run(state: &State<'_, AppState>) -> Result<(), String> {
             other => return Err(format!("unexpected launch response: {other:?}")),
         };
         match daemon_response(
-            &client,
+            client,
             Request::EnqueuePrompt {
                 id: id.clone(),
                 text,
             },
         )? {
             Response::Enqueued { .. } => {
-                state.work_run_store.update(|queue| {
+                work_run_store.update(|queue| {
                     queue.set_state(
                         &entry.project,
                         EntryState::Running {
@@ -724,7 +731,7 @@ fn drive_work_run(state: &State<'_, AppState>) -> Result<(), String> {
             Response::Error { message } => {
                 // The session exists but has no instruction, which is worse than
                 // not starting it at all: say so rather than leave it running.
-                state.work_run_store.update(|queue| {
+                work_run_store.update(|queue| {
                     queue.set_state(
                         &entry.project,
                         EntryState::Failed {
@@ -738,6 +745,21 @@ fn drive_work_run(state: &State<'_, AppState>) -> Result<(), String> {
             other => return Err(format!("unexpected queue response: {other:?}")),
         }
     }
+}
+
+fn finish_work_run_session(
+    client: &DaemonClient,
+    work_run_store: &work::WorkRunStore,
+    prompts: &work::PromptLibrary,
+    session: &SessionId,
+) -> Result<(), String> {
+    let finished = work_run_store
+        .update(|queue| queue.finish_session(session))?
+        .unwrap_or(false);
+    if finished {
+        drive_work_run_with(client, work_run_store, prompts)?;
+    }
+    Ok(())
 }
 
 /// Every repository under the registered roots.
@@ -1352,7 +1374,13 @@ fn install_daemon_client(
     client
         .subscribe()
         .map_err(|error| format!("subscribe to daemon protocol v{PROTOCOL_VERSION}: {error}"))?;
-    bridge_daemon_events(app, &client, state.output_channels.clone());
+    bridge_daemon_events(
+        app,
+        &client,
+        state.output_channels.clone(),
+        state.work_run_store.clone(),
+        state.prompts.clone(),
+    );
     *state
         .client
         .lock()
@@ -1367,6 +1395,8 @@ fn bridge_daemon_events(
     app: &tauri::AppHandle,
     client: &DaemonClient,
     output_channels: Arc<Mutex<HashMap<SessionId, Channel<InvokeResponseBody>>>>,
+    work_run_store: work::WorkRunStore,
+    prompts: work::PromptLibrary,
 ) {
     let initial_waiting = client
         .call_with_timeout(Request::Snapshot, Duration::from_secs(2))
@@ -1378,6 +1408,7 @@ fn bridge_daemon_events(
         .unwrap_or_default();
     let receiver = client.events();
     let app = app.clone();
+    let work_run_client = client.clone();
     // Toast clicks arrive on a WinRT thread; the listener moves that work onto
     // a thread the Tauri runtime knows about.
     let (toast_activations, toast_clicks) = std::sync::mpsc::channel();
@@ -1421,6 +1452,19 @@ fn bridge_daemon_events(
                     Some(Ok(event)) => {
                         match &event {
                             RegistryEvent::SessionUpdated { session } => {
+                                if session.status == SessionStatus::Exited {
+                                    if let Err(error) = finish_work_run_session(
+                                        &work_run_client,
+                                        &work_run_store,
+                                        &prompts,
+                                        &session.id,
+                                    ) {
+                                        eprintln!(
+                                            "TerminalAI: could not advance the work run after {} exited: {error}",
+                                            session.id
+                                        );
+                                    }
+                                }
                                 if is_waiting_session(session) {
                                     waiting.insert(session.id.clone());
                                 } else {
@@ -1434,6 +1478,16 @@ fn bridge_daemon_events(
                                 );
                             }
                             RegistryEvent::SessionRemoved { id } => {
+                                if let Err(error) = finish_work_run_session(
+                                    &work_run_client,
+                                    &work_run_store,
+                                    &prompts,
+                                    id,
+                                ) {
+                                    eprintln!(
+                                        "TerminalAI: could not advance the work run after {id} was removed: {error}"
+                                    );
+                                }
                                 waiting.remove(id);
                                 toasted.remove(id);
                             }
@@ -1777,7 +1831,13 @@ fn run_app() -> Result<(), String> {
             })?;
             let output_channels = Arc::new(Mutex::new(HashMap::new()));
             if let Some(client) = client.as_ref() {
-                bridge_daemon_events(app.handle(), client, output_channels.clone());
+                bridge_daemon_events(
+                    app.handle(),
+                    client,
+                    output_channels.clone(),
+                    work_run_store.clone(),
+                    prompts.clone(),
+                );
             }
             app.manage(AppState {
                 client: Mutex::new(client),
