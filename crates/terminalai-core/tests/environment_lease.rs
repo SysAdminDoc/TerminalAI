@@ -93,6 +93,8 @@ fn a_copy_glob_cannot_escape_the_repository() {
     for escape in [
         "copy = [\"../../secrets/.env\"]",
         "copy = [\"/etc/passwd\"]",
+        "copy = [\"\\\\Windows\\\\System32\\\\.env\"]",
+        "copy = [\"C:temp/.env\"]",
         "copy = [\"config/../../outside\"]",
     ] {
         assert!(

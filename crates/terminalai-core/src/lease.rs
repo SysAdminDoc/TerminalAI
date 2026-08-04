@@ -25,7 +25,7 @@
 //! offered.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// Where a repository declares its lease, relative to the repository root.
 pub const LEASE_FILE: &str = ".terminalai/environment.toml";
@@ -229,16 +229,11 @@ fn string_field(table: &dyn toml_edit::TableLike, key: &str) -> Option<String> {
 }
 
 fn validate_repository_relative_path(what: &str, value: &str) -> Result<(), LeaseError> {
-    let drive_prefix = value.len() >= 2
-        && value.as_bytes()[1] == b':'
-        && value.as_bytes()[0].is_ascii_alphabetic();
     if value.is_empty()
         || value.chars().any(char::is_control)
-        || value.starts_with('/')
-        || value.starts_with('\\')
-        || value.contains("..")
-        || drive_prefix
-        || Path::new(value).is_absolute()
+        || Path::new(value)
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_)))
     {
         return Err(LeaseError::Invalid(format!(
             "{what} {value:?} must stay inside the repository"

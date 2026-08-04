@@ -28,7 +28,7 @@
 //! with the wrong permission mode while believing the repository's own defaults
 //! were applied.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::agent::Agent;
 use crate::launch::{Effort, LaunchSpec, Permission, Sandbox};
@@ -164,14 +164,13 @@ impl Template {
             parse_sandbox(sandbox).ok_or_else(|| self.unusable("sandbox", sandbox))?;
         }
         for dir in &self.add_dirs {
-            // The directory is joined onto the repository root, so a parent
-            // reference or an absolute path would grant the agent write access
-            // somewhere the operator never chose.
-            let path = Path::new(dir);
-            if path.is_absolute()
-                || path
-                    .components()
-                    .any(|part| matches!(part, std::path::Component::ParentDir))
+            // The directory is joined onto the repository root, so every path
+            // component must be ordinary. This rejects parent, root and drive
+            // components, including Windows root-relative and drive-relative
+            // paths that `Path::is_absolute` does not consider absolute.
+            if Path::new(dir)
+                .components()
+                .any(|part| !matches!(part, Component::Normal(_)))
             {
                 return Err(TemplateError::Invalid(format!(
                     "{:?} adds {dir:?}, which is outside the repository",
@@ -319,7 +318,19 @@ add_dirs = ["docs"]
     #[test]
     fn extra_directories_cannot_escape_the_repository() {
         // These become writable roots for the agent.
-        for hostile in ["../../secrets", r"C:\Windows", "docs/../../.."] {
+        let safe = parse("[[template]]\nname = \"x\"\nadd_dirs = [\"docs\"]\n")
+            .expect("safe directory");
+        let mut spec = LaunchSpec::default();
+        safe[0].apply(Path::new(r"C:\repos\shop"), &mut spec);
+        assert_eq!(spec.add_dirs, vec![PathBuf::from(r"C:\repos\shop\docs")]);
+
+        for hostile in [
+            "../../secrets",
+            r"C:\Windows",
+            r"\Windows\System32",
+            "C:temp",
+            "docs/../../..",
+        ] {
             let text = format!("[[template]]\nname = \"x\"\nadd_dirs = [\"{}\"]\n", hostile.replace('\\', "\\\\"));
             let error = parse(&text).expect_err(hostile);
             assert!(matches!(error, TemplateError::Invalid(_)), "{hostile}: {error:?}");
