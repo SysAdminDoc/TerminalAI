@@ -89,6 +89,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Rate-limited and preflight red/green states now keep their declared glyph colors and backgrounds,
+  including the red pulse shown for a focused rate-limited session.
+
 - Grouping now reconciles each row's group chip during keyed updates, so
   enabling grouping adds labels to existing rows and status/folder changes do
   not leave stale chips behind.

@@ -28,7 +28,21 @@ test("forced colors preserves the xterm surface and maps controls to system colo
 test("reduced motion disables the remaining spinner and glow effects", () => {
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
   assert.match(css, /\.fleet-loading::before \{ animation: none !important; \}/);
-  assert.match(css, /\.unread-dot, \.pulse-peach, \.pulse-yellow, \.pulse-mauve \{ box-shadow: none !important; \}/);
+  assert.match(css, /\.unread-dot, \.pulse-peach, \.pulse-yellow, \.pulse-mauve, \.pulse-red \{ box-shadow: none !important; \}/);
+});
+
+test("status metadata has matching tone and pulse classes", () => {
+  const statusMeta = main.slice(main.indexOf("const STATUS_META"), main.indexOf("const STATUS_KEYS"));
+  const preflightMeta = main.slice(main.indexOf("const PREFLIGHT_META"), main.indexOf("const RELEASES_ENDPOINT"));
+  const statusTones = [...statusMeta.matchAll(/tone: "([^"]+)"/g)].map(([, tone]) => tone);
+  const preflightTones = [...preflightMeta.matchAll(/tone: "([^"]+)"/g)].map(([, tone]) => tone);
+
+  for (const tone of new Set([...statusTones, ...preflightTones])) {
+    assert.match(css, new RegExp(`\\.tone-${tone}\\s*\\{`), `${tone} has no tone class`);
+  }
+  for (const tone of new Set(statusTones)) {
+    assert.match(css, new RegExp(`\\.pulse-${tone}\\s*\\{`), `${tone} has no pulse class`);
+  }
 });
 
 test("the review view owns its scroll surface", () => {
