@@ -138,7 +138,18 @@ when the agent proceeds, and quiet during startup or the first seconds of a tool
 
 The daemon admits three live processes by default. Set `TERMINALAI_MAX_LIVE_SESSIONS` to change the
 cap and `TERMINALAI_DEFAULT_BUDGET_USD` to change the default Claude `--max-budget-usd` (or `none` to
-disable it). The fleet header shows live/queued counts, how many sessions a provider is currently
+disable it).
+
+A per-session budget bounds one agent; nothing bounded the fleet, so twenty sessions each obeying a
+$5 cap could spend $100 with every individual limit reporting itself satisfied.
+`TERMINALAI_SPEND_CEILING_USD` sets a fleet-wide ceiling over a rolling window
+(`TERMINALAI_SPEND_WINDOW_HOURS`, 24 by default); reaching it stops anything new from starting and
+never touches a session that is already running. The ledger is persisted with the session store, so
+restarting the daemon does not clear the window. Because only Claude takes a per-session
+`--max-budget-usd`, the header says which agents a budget actually binds rather than implying a hard
+stop the whole fleet does not have.
+
+The fleet header shows live/queued counts, how many sessions a provider is currently
 rate limiting, and when the soonest quota window reopens. Spend is derived from each session's
 transcript and renders an em dash until at least one session reports one — a computed-looking
 `$0.00` would be worse than saying so — with a tooltip naming the price table it was computed

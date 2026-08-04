@@ -2023,6 +2023,7 @@ mod tests {
         };
         let id = SessionId::new(1);
         let registry = SessionRegistry::from_store(SessionStoreSnapshot {
+            spend: Vec::new(),
             magic: SESSION_STORE_MAGIC.to_owned(),
             schema_version: SESSION_STORE_SCHEMA_VERSION,
             sessions: vec![StoredSession {

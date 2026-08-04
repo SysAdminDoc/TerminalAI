@@ -363,6 +363,7 @@ mod tests {
         };
         let session = Session::new(SessionId::new(1), &spec);
         let registry = SessionRegistry::from_store(SessionStoreSnapshot {
+            spend: Vec::new(),
             magic: SESSION_STORE_MAGIC.to_owned(),
             schema_version: terminalai_core::store::SESSION_STORE_SCHEMA_VERSION,
             sessions: vec![StoredSession {
@@ -413,6 +414,7 @@ mod tests {
         };
         let id = SessionId::new(1);
         let registry = SessionRegistry::from_store(SessionStoreSnapshot {
+            spend: Vec::new(),
             magic: SESSION_STORE_MAGIC.to_owned(),
             schema_version: terminalai_core::store::SESSION_STORE_SCHEMA_VERSION,
             sessions: vec![StoredSession {

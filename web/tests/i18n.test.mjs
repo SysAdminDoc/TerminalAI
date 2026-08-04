@@ -15,6 +15,7 @@ const rendererSources = [
   readFileSync(new URL("../src/projects.js", import.meta.url), "utf8"),
   readFileSync(new URL("../src/rateLimit.js", import.meta.url), "utf8"),
   readFileSync(new URL("../src/rollup.js", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/spendCeiling.js", import.meta.url), "utf8"),
 ].join("\n");
 
 function bundle() {

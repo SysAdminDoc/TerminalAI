@@ -31,13 +31,6 @@ item above; where the two touch, the note says so.
 
 ### P1
 
-- [ ] P1 — A fleet-wide spend ceiling that refuses admission
-  Why: runaway spend is the single most-reported complaint in the whole community corpus, and a fleet ceiling is the one commercially paywalled capability that fits a single-operator tool; today the only guard is a per-session Claude budget with no aggregate.
-  Evidence: `AdmissionConfig` (`crates/terminalai-core/src/registry.rs:61-66`) carries `max_live_sessions` and `default_budget_usd` only — nothing aggregates. anthropics/claude-code#16157 (722 reactions, 1483 comments), #38335 (539 reactions), openai/codex#28879 (558 reactions). Warp gates a team-wide spend cap behind Build/Business (warp.dev/pricing); nobody paywalls the single-user rollup this project already has.
-  Touches: `crates/terminalai-core/src/registry.rs` (admission), `crates/terminalai-core/src/transcript.rs`, `crates/terminalai-daemon/src/lib.rs`, `web/src/rollup.js`, `web/src/main.js`
-  Acceptance: a configurable rolling-window fleet spend ceiling; crossing it refuses new admissions with a named reason and leaves running sessions alone. The header states the ceiling, spend against it, and — because Codex has no documented budget flag — says explicitly which agents are enforced versus admission-refused only.
-  Complexity: M
-
 - [ ] P1 — Memory-aware admission with real job-object enforcement
   Why: admission counts sessions and ignores the resource that actually decides the ceiling, while the job object contains processes without limiting them; a single leaking agent can take the fleet down.
   Evidence: `crates/terminalai-core/src/process_tree.rs:39` sets only `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` in a fully populated `JOBOBJECT_EXTENDED_LIMIT_INFORMATION`. `CLAUDE.md` records 509 MB (Claude) / 322 MB (Codex) measured. Documented idle leaks: anthropics/claude-code#18859, #21378, #22275. `JOBOBJECT_CPU_RATE_CONTROL_INFORMATION` and `JOB_OBJECT_LIMIT_JOB_MEMORY` are plain Win32 (learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_cpu_rate_control_information).

@@ -3,6 +3,25 @@
 All notable changes to TerminalAI are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- A fleet-wide spend ceiling. A per-session budget bounds one agent; nothing bounded the fleet, so
+  twenty sessions each obeying a $5 cap could spend $100 while every individual limit reported
+  itself satisfied. `TERMINALAI_SPEND_CEILING_USD` sets the ceiling over a rolling window
+  (`TERMINALAI_SPEND_WINDOW_HOURS`, 24 by default). Reaching it stops anything new from starting and
+  never touches a running session — the ceiling is an admission gate, not a kill switch. Spend is
+  recorded as deltas, because a session reports a running total and the window has to count the
+  money once and count it when it was spent; the ledger buckets by minute, so a window costs at most
+  one entry per minute no matter how chatty the fleet is. It is persisted with the session store, so
+  restarting the daemon is not a way to clear the ceiling. The header states the ceiling, how much
+  of it is used, and — because only Claude takes `--max-budget-usd` — which agents a per-session
+  budget actually binds, rather than implying a hard stop that half the fleet does not have.
+- Every admission site now asks one function whether anything may start. The slot cap and the
+  ceiling were otherwise two checks in four places, which is how one path ends up enforcing a limit
+  another ignores; the snapshot reports which of the two is blocking so a queued row says why.
+
 ## [0.7.0] — 2026-08-04
 
 ### Added

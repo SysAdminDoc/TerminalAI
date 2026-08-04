@@ -23,7 +23,9 @@ test("the fleet's spend figure is the way into the breakdown", () => {
 
 test("the entry point is a button, not a span with a handler", () => {
   // It is keyboard reachable and announced as a control only if it is one.
-  assert.match(main, /<button type="button" class="summary-item summary-spend"/);
+  // The class list gained a conditional modifier when the spend ceiling started
+  // marking a blocking cap; the guarantee this asserts is the element type.
+  assert.match(main, /<button type="button" class="summary-item summary-spend/);
   assert.match(main, /escapeHtml\(t\("button-open-rollup"\)\)/);
   assert.match(css, /\.summary-spend:focus-visible/);
 });

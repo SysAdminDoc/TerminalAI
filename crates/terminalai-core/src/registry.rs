@@ -65,6 +65,11 @@ pub struct AdmissionConfig {
     /// Applied to Claude launches that did not supply an explicit cap. Codex
     /// has no equivalent launcher flag and therefore leaves this unused.
     pub default_budget_usd: Option<f64>,
+    /// Fleet spend allowed inside `spend_window` before nothing new starts.
+    /// `None` disables the ceiling; running sessions are never stopped by it.
+    pub spend_ceiling_usd: Option<f64>,
+    /// How far back the ceiling looks.
+    pub spend_window: Duration,
 }
 
 impl AdmissionConfig {
@@ -73,7 +78,24 @@ impl AdmissionConfig {
             max_live_sessions: max_live_sessions.max(1),
             default_budget_usd: default_budget_usd
                 .filter(|value| value.is_finite() && *value >= 0.0),
+            spend_ceiling_usd: None,
+            spend_window: crate::spend::DEFAULT_SPEND_WINDOW,
         }
+    }
+
+    /// Set the fleet ceiling. A non-finite or negative figure disables it
+    /// rather than admitting nothing, and a zero-length window is refused for
+    /// the same reason: a misconfigured ceiling must not halt the fleet.
+    pub fn with_spend_ceiling(
+        mut self,
+        ceiling_usd: Option<f64>,
+        window: Option<Duration>,
+    ) -> Self {
+        self.spend_ceiling_usd = ceiling_usd.filter(|value| value.is_finite() && *value >= 0.0);
+        self.spend_window = window
+            .filter(|value| !value.is_zero())
+            .unwrap_or(crate::spend::DEFAULT_SPEND_WINDOW);
+        self
     }
 
     /// Read daemon-wide limits without introducing a second config file.
@@ -99,6 +121,30 @@ impl AdmissionConfig {
             })?),
             Err(_) => Some(DEFAULT_SESSION_BUDGET_USD),
         };
+        let spend_ceiling_usd = match std::env::var("TERMINALAI_SPEND_CEILING_USD") {
+            Ok(value)
+                if value.eq_ignore_ascii_case("none") || value.eq_ignore_ascii_case("off") =>
+            {
+                None
+            }
+            Ok(value) => Some(value.parse::<f64>().map_err(|_| {
+                "TERMINALAI_SPEND_CEILING_USD must be a non-negative decimal or 'none'".to_string()
+            })?),
+            Err(_) => None,
+        };
+        let spend_window = std::env::var("TERMINALAI_SPEND_WINDOW_HOURS")
+            .ok()
+            .map(|value| {
+                value
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|hours| hours.is_finite() && *hours > 0.0)
+                    .map(|hours| Duration::from_secs_f64(hours * 3600.0))
+                    .ok_or_else(|| {
+                        "TERMINALAI_SPEND_WINDOW_HOURS must be a positive decimal".to_string()
+                    })
+            })
+            .transpose()?;
         let config = Self::new(max_live_sessions, default_budget_usd);
         if config.max_live_sessions != max_live_sessions {
             return Err("TERMINALAI_MAX_LIVE_SESSIONS must be at least 1".into());
@@ -106,8 +152,26 @@ impl AdmissionConfig {
         if config.default_budget_usd != default_budget_usd {
             return Err("TERMINALAI_DEFAULT_BUDGET_USD must be finite and non-negative".into());
         }
+        let config = config.with_spend_ceiling(spend_ceiling_usd, spend_window);
+        if config.spend_ceiling_usd != spend_ceiling_usd {
+            return Err("TERMINALAI_SPEND_CEILING_USD must be finite and non-negative".into());
+        }
         Ok(config)
     }
+}
+
+/// Why the gate is not starting anything new right now.
+///
+/// Kept as one value so every admission site gives the same answer, and so the
+/// operator is told which limit they hit rather than watching a row sit in
+/// `Queued` with no explanation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AdmissionBlock {
+    /// Every live slot is taken.
+    SlotsFull,
+    /// Fleet spend inside the window has reached the ceiling.
+    SpendCeiling,
 }
 
 impl Default for AdmissionConfig {
@@ -135,6 +199,24 @@ pub struct AdmissionSnapshot {
     /// unknown, not zero.
     #[serde(default)]
     pub sessions_reporting_cost: usize,
+    /// Fleet spend inside the ceiling's window. Always reported, so the figure
+    /// is visible before a ceiling is ever configured.
+    #[serde(default)]
+    pub spend_window_usd: f64,
+    /// The configured ceiling, if any. `None` means nothing is being enforced.
+    #[serde(default)]
+    pub spend_ceiling_usd: Option<f64>,
+    /// Width of the rolling window, in hours.
+    #[serde(default)]
+    pub spend_window_hours: f64,
+    /// Why nothing new is starting, when something is stopping it.
+    #[serde(default)]
+    pub admission_block: Option<AdmissionBlock>,
+    /// Agents whose own launcher can enforce a per-session budget. Codex has no
+    /// documented equivalent, so its sessions are admission-refused only and
+    /// the header has to say so rather than implying a hard stop.
+    #[serde(default)]
+    pub budget_enforced_agents: Vec<String>,
     /// Sessions a provider is currently refusing work. Surfaced in the header
     /// because a limited fleet otherwise reads as a busy one.
     #[serde(default)]
@@ -220,6 +302,8 @@ struct State {
     extra: BTreeMap<String, serde_json::Value>,
     queue: VecDeque<SessionId>,
     admission: AdmissionConfig,
+    /// Fleet spend over the rolling window the ceiling is measured against.
+    spend: crate::spend::SpendLedger,
     notifications: NotificationCenter,
     subscribers: Vec<SyncSender<RegistryEvent>>,
 }
@@ -398,6 +482,7 @@ impl SessionRegistry {
                 extra: BTreeMap::new(),
                 queue: VecDeque::new(),
                 admission,
+                spend: crate::spend::SpendLedger::new(),
                 notifications: NotificationCenter::default(),
                 subscribers: Vec::new(),
             }),
@@ -451,6 +536,12 @@ impl SessionRegistry {
         }
         state.archives = archives;
         state.extra = extra;
+        // Spend that already happened still counts against the window, so a
+        // restart cannot be used to clear the ceiling. Anything older than the
+        // window is dropped on the way in rather than carried as dead weight.
+        state.spend = crate::spend::SpendLedger::from_buckets(snapshot.spend);
+        let window = state.admission.spend_window;
+        state.spend.prune_at(SystemTime::now(), window);
         for stored in snapshot.sessions {
             let StoredSession {
                 mut session,
@@ -522,6 +613,16 @@ impl SessionRegistry {
                 .values()
                 .filter(|entry| entry.session.cost_usd.is_some())
                 .count(),
+            spend_window_usd: state
+                .spend
+                .window_total_at(SystemTime::now(), state.admission.spend_window),
+            spend_ceiling_usd: state.admission.spend_ceiling_usd,
+            spend_window_hours: state.admission.spend_window.as_secs_f64() / 3600.0,
+            admission_block: admission_block(&state),
+            // Claude takes `--max-budget-usd`; Codex documents no equivalent, so
+            // saying "budget" without naming which agent it binds would claim an
+            // enforcement that does not exist for half the fleet.
+            budget_enforced_agents: vec![crate::agent::Agent::Claude.command_name().to_string()],
             rate_limited_sessions: state
                 .entries
                 .values()
@@ -564,6 +665,7 @@ impl SessionRegistry {
         SessionStoreSnapshot {
             magic: crate::store::SESSION_STORE_MAGIC.to_owned(),
             schema_version: crate::store::SESSION_STORE_SCHEMA_VERSION,
+            spend: state.spend.buckets().copied().collect(),
             sessions: state
                 .entries
                 .values()
@@ -660,7 +762,7 @@ impl SessionRegistry {
             let mut state = lock_state(&self.inner);
             let id = SessionId::new(state.next_id);
             state.next_id = state.next_id.saturating_add(1);
-            let queued = admitted_count(&state) >= state.admission.max_live_sessions;
+            let queued = admission_block(&state).is_some();
             let mut session = Session::new(id.clone(), &spec);
             session.branch = branch;
             if queued {
@@ -970,7 +1072,7 @@ impl SessionRegistry {
     pub fn revive(&self, id: &SessionId) -> Result<SessionId, RegistryError> {
         let (command, generation, queued) = {
             let mut state = lock_state(&self.inner);
-            let admission_full = admitted_count(&state) >= state.admission.max_live_sessions;
+            let admission_full = admission_block(&state).is_some();
             let entry = state
                 .entries
                 .get_mut(id)
@@ -2451,6 +2553,7 @@ impl SessionRegistry {
         };
 
         let mut updated = Vec::new();
+        let mut spend_deltas: Vec<f64> = Vec::new();
         {
             let mut state = lock_state(&self.inner);
             for (id, update) in updates {
@@ -2483,6 +2586,11 @@ impl SessionRegistry {
                 // header keeps saying the spend is unknown.
                 if update.totals.requests > 0 {
                     if entry.session.cost_usd != Some(update.cost_usd) {
+                        // A session reports a running total; the ledger wants
+                        // the increase, so the fleet window counts the money
+                        // once and counts it when it was spent.
+                        let previous = entry.session.cost_usd.unwrap_or(0.0);
+                        spend_deltas.push(update.cost_usd - previous);
                         entry.session.cost_usd = Some(update.cost_usd);
                         changed = true;
                     }
@@ -2494,6 +2602,14 @@ impl SessionRegistry {
                 if changed {
                     updated.push(entry.session.clone());
                 }
+            }
+            if !spend_deltas.is_empty() {
+                let now = SystemTime::now();
+                for delta in spend_deltas.drain(..) {
+                    state.spend.record_at(now, delta);
+                }
+                let window = state.admission.spend_window;
+                state.spend.prune_at(now, window);
             }
         }
 
@@ -2534,7 +2650,7 @@ impl SessionRegistry {
         loop {
             let (id, command, generation) = {
                 let mut state = lock_state(&self.inner);
-                if admitted_count(&state) >= state.admission.max_live_sessions {
+                if admission_block(&state).is_some() {
                     return;
                 }
                 let Some(id) = state.queue.pop_front() else {
@@ -2850,7 +2966,7 @@ impl SessionRegistry {
     fn restart(&self, id: SessionId, pending_generation: u64) {
         let (command, generation) = {
             let mut state = lock_state(&self.inner);
-            let admission_full = admitted_count(&state) >= state.admission.max_live_sessions;
+            let admission_full = admission_block(&state).is_some();
             let Some(entry) = state.entries.get_mut(&id) else {
                 return;
             };
@@ -3218,6 +3334,26 @@ fn next_sequence(id: &SessionId) -> u64 {
 /// Rate-limited sessions are excluded: they are running, but the provider is
 /// refusing them work, so counting them would keep a queued session waiting
 /// behind a process that provably cannot progress.
+/// The one place that decides whether anything new may start.
+///
+/// Every admission site calls this so the slot cap and the spend ceiling cannot
+/// drift apart: a second copy of "is there room" is how one path ends up
+/// enforcing a limit the other ignores.
+fn admission_block(state: &State) -> Option<AdmissionBlock> {
+    if admitted_count(state) >= state.admission.max_live_sessions {
+        return Some(AdmissionBlock::SlotsFull);
+    }
+    if let Some(ceiling) = state.admission.spend_ceiling_usd {
+        let spent = state
+            .spend
+            .window_total_at(SystemTime::now(), state.admission.spend_window);
+        if spent >= ceiling {
+            return Some(AdmissionBlock::SpendCeiling);
+        }
+    }
+    None
+}
+
 fn admitted_count(state: &State) -> usize {
     state
         .entries
@@ -3571,6 +3707,155 @@ mod tests {
     }
 
     #[test]
+    fn the_spend_ceiling_refuses_new_admissions_and_leaves_running_sessions_alone() {
+        let registry = SessionRegistry::with_admission(
+            AdmissionConfig::new(8, None)
+                .with_spend_ceiling(Some(10.0), Some(Duration::from_secs(3600))),
+        );
+        let cwd = Path::new(".").to_path_buf();
+        let spec = spec_for(Agent::Claude, &cwd);
+
+        // A running row that the ceiling must not touch.
+        let active_id = SessionId::new(99);
+        let mut active = Session::new(active_id.clone(), &spec);
+        active.status = SessionStatus::Working;
+        active.phase = SessionPhase::Working;
+        lock_state(&registry.inner).entries.insert(
+            active_id.clone(),
+            Entry {
+                session: active,
+                spec: spec.clone(),
+                command: ResolvedCommand {
+                    program: PathBuf::from("active-agent"),
+                    args: Vec::new(),
+                    cwd: cwd.clone(),
+                },
+                pty: None,
+                scrollback: RingBuffer::default(),
+                grid: TerminalGrid::default(),
+                queue: crate::queue::PromptQueue::default(),
+                generation: 1,
+                stop_requested: false,
+                teardown_done: true,
+                branch_checked: None,
+                span: tracing::Span::none(),
+            },
+        );
+
+        // Under the ceiling there is nothing stopping a launch.
+        assert_eq!(registry.admission_snapshot().admission_block, None);
+
+        lock_state(&registry.inner)
+            .spend
+            .record_at(SystemTime::now(), 12.0);
+
+        let snapshot = registry.admission_snapshot();
+        assert_eq!(
+            snapshot.admission_block,
+            Some(AdmissionBlock::SpendCeiling),
+            "the ceiling, not the slot cap, is what is blocking"
+        );
+        assert!(snapshot.live_sessions < snapshot.max_live_sessions, "slots are free");
+        assert_eq!(snapshot.spend_ceiling_usd, Some(10.0));
+        assert!((snapshot.spend_window_usd - 12.0).abs() < 1e-9);
+
+        let queued_id = registry
+            .launch(
+                spec,
+                AgentBinary {
+                    agent: Agent::Claude,
+                    path: PathBuf::from("missing-terminalai-test-agent.exe"),
+                    origin: Origin::Path,
+                },
+            )
+            .expect("a launch over the ceiling is queued, not rejected outright");
+        assert!(registry.is_queued(&queued_id).expect("queued row"));
+        assert_eq!(
+            lock_state(&registry.inner).entries[&active_id].session.status,
+            SessionStatus::Working,
+            "a running session is never stopped by the ceiling"
+        );
+    }
+
+    #[test]
+    fn a_ceiling_of_none_never_blocks_admission() {
+        let registry = SessionRegistry::with_admission(
+            AdmissionConfig::new(8, None).with_spend_ceiling(None, None),
+        );
+        lock_state(&registry.inner)
+            .spend
+            .record_at(SystemTime::now(), 5_000.0);
+        let snapshot = registry.admission_snapshot();
+        assert_eq!(snapshot.admission_block, None);
+        assert_eq!(snapshot.spend_ceiling_usd, None);
+        assert!(snapshot.spend_window_usd > 0.0, "spend is still reported");
+    }
+
+    #[test]
+    fn the_slot_cap_is_reported_ahead_of_the_ceiling() {
+        // Both limits are hit; the operator is told about the one they can act
+        // on immediately rather than a arbitrary pick between the two.
+        let registry = SessionRegistry::with_admission(
+            AdmissionConfig::new(1, None).with_spend_ceiling(Some(1.0), None),
+        );
+        let cwd = Path::new(".").to_path_buf();
+        let spec = spec_for(Agent::Claude, &cwd);
+        let active_id = SessionId::new(1);
+        let mut active = Session::new(active_id.clone(), &spec);
+        active.status = SessionStatus::Working;
+        active.phase = SessionPhase::Working;
+        lock_state(&registry.inner).entries.insert(
+            active_id,
+            Entry {
+                session: active,
+                spec: spec.clone(),
+                command: ResolvedCommand {
+                    program: PathBuf::from("active-agent"),
+                    args: Vec::new(),
+                    cwd: cwd.clone(),
+                },
+                pty: None,
+                scrollback: RingBuffer::default(),
+                grid: TerminalGrid::default(),
+                queue: crate::queue::PromptQueue::default(),
+                generation: 1,
+                stop_requested: false,
+                teardown_done: true,
+                branch_checked: None,
+                span: tracing::Span::none(),
+            },
+        );
+        lock_state(&registry.inner)
+            .spend
+            .record_at(SystemTime::now(), 9.0);
+        assert_eq!(
+            registry.admission_snapshot().admission_block,
+            Some(AdmissionBlock::SlotsFull)
+        );
+    }
+
+    #[test]
+    fn spend_survives_a_store_round_trip() {
+        let registry = SessionRegistry::with_admission(
+            AdmissionConfig::new(4, None).with_spend_ceiling(Some(10.0), None),
+        );
+        lock_state(&registry.inner)
+            .spend
+            .record_at(SystemTime::now(), 7.5);
+        let snapshot = registry.store_snapshot();
+        assert!(!snapshot.spend.is_empty(), "the ledger is persisted");
+
+        let restored = SessionRegistry::from_store_with_admission(
+            snapshot,
+            AdmissionConfig::new(4, None).with_spend_ceiling(Some(10.0), None),
+        );
+        assert!(
+            (restored.admission_snapshot().spend_window_usd - 7.5).abs() < 1e-9,
+            "restarting the daemon does not clear the ceiling"
+        );
+    }
+
+    #[test]
     fn admission_queues_overflow_and_applies_default_budget() {
         let registry = SessionRegistry::with_admission(AdmissionConfig::new(1, Some(4.5)));
         let cwd = Path::new(".").to_path_buf();
@@ -3750,6 +4035,7 @@ mod tests {
         let snapshot = SessionStoreSnapshot {
             magic: crate::store::SESSION_STORE_MAGIC.to_owned(),
             schema_version: crate::store::SESSION_STORE_SCHEMA_VERSION,
+            spend: Vec::new(),
             sessions: vec![StoredSession {
                 session,
                 spec,

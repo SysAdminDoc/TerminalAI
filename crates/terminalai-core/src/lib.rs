@@ -35,6 +35,7 @@ pub mod review;
 pub mod roadmap;
 pub mod scrollback;
 pub mod session;
+pub mod spend;
 pub mod tail;
 pub mod store;
 pub mod template;

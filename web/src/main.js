@@ -8,6 +8,7 @@ import "@xterm/xterm/css/xterm.css";
 import { reconcileGroupChip, reconcileKeyedRows } from "./fleetRows.js";
 import { countMessage, localizeDom, relativeDwell, t } from "./i18n.js";
 import { quotaLabel, quotaUnreportedLabel, rateLimitTitle, rateLimitedLabel } from "./rateLimit.js";
+import { spendCeiling, spendCeilingTitle } from "./spendCeiling.js";
 import { coverage, fleetTotals, folderOf, formatCost, formatTokens, rollupBy, TOKEN_FIELDS } from "./rollup.js";
 import { defaultSelection, isEligible, summarize, targets } from "./broadcast.js";
 import { hasOpenWork, openItemsCell, sortProjects, stalenessLabel, summarize as summarizeProjects } from "./projects.js";
@@ -727,6 +728,10 @@ function renderSummary() {
     ? t("pricing-reporting", { pricing: pricingVersion, reporting: reporting.length, sessions: state.sessions.length })
     : t("pricing-none", { pricing: pricingVersion });
   const maxLive = state.admission.max_live_sessions ?? 3;
+  // The ceiling is fleet-wide and refuses admission; it never stops a running
+  // session, so it belongs beside the spend figure rather than in the row list.
+  const ceiling = spendCeiling(state.admission);
+  const ceilingTitle = spendCeilingTitle(state.admission, t);
   const limitedSummary = limited.length
     ? '<span class="summary-separator">/</span><span class="summary-item summary-limited" title="' + escapeHtml(rateLimitTitle(limited, t)) + '">' + escapeHtml(countMessage("count-rate-limited", limited.length)) + "</span>"
     : "";
@@ -747,7 +752,7 @@ function renderSummary() {
     '<span class="summary-separator">/</span><span class="summary-item">' + escapeHtml(countMessage("count-active", working)) + "</span>" +
     limitedSummary +
     quotaSummary +
-    '<span class="summary-separator">/</span><button type="button" class="summary-item summary-spend" id="fleet-spend" title="' + escapeHtml(spendTitle) + '" aria-label="' + escapeHtml(t("button-open-rollup")) + '"><b>' + spendLabel + "</b> " + escapeHtml(t("fleet-spent")) + "</button>";
+    '<span class="summary-separator">/</span><button type="button" class="summary-item summary-spend' + (ceiling && ceiling.blocked ? " summary-limited" : "") + '" id="fleet-spend" title="' + escapeHtml(spendTitle + " " + ceilingTitle) + '" aria-label="' + escapeHtml(t("button-open-rollup")) + '"><b>' + spendLabel + "</b> " + escapeHtml(t("fleet-spent")) + (ceiling ? " " + escapeHtml("(" + ceiling.percent + "% of cap)") : "") + "</button>";
   const summary = $("fleet-summary");
   if (summary.innerHTML !== summaryMarkup) summary.innerHTML = summaryMarkup;
   const droppedEvents = Number(state.admission.dropped_events) || 0;

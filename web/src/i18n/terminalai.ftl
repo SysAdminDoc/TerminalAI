@@ -346,6 +346,15 @@ tracked-sessions = { $count } tracked
 event-drops = { $count } event drops
 pricing-reporting = Prices as of { $pricing }; { $reporting } of { $sessions } sessions reporting
 pricing-none = No session has reported a cost yet. Prices as of { $pricing }
+spend-ceiling-of = Fleet spend { $spent } of { $ceiling }{ $window }.
+spend-window-hours = { $hours ->
+    [one] over the last hour
+   *[other] over the last { $hours } hours
+}
+spend-ceiling-blocking = The ceiling is reached, so nothing new is starting; running sessions are untouched.
+spend-no-ceiling = No fleet spend ceiling is set.
+spend-enforced-agents = A per-session budget is enforced for: { $agents }. Other agents are admission-refused only.
+spend-enforced-none = No agent enforces a per-session budget; the ceiling refuses new sessions only.
 announcement-one = { $name } needs you: { $status }.
 announcement-many = { $count } sessions need you: { $names }.
 

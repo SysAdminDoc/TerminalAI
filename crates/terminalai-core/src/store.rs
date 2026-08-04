@@ -24,6 +24,11 @@ pub struct SessionStoreSnapshot {
     pub schema_version: u32,
     pub sessions: Vec<StoredSession>,
     pub archives: Vec<ArchivedSession>,
+    /// Fleet spend buckets behind the admission ceiling. Defaulted so a store
+    /// written before the ceiling existed still loads, and persisted so the
+    /// ceiling cannot be reset by restarting the daemon.
+    #[serde(default)]
+    pub spend: Vec<crate::spend::SpendBucket>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, serde_json::Value>,
 }
@@ -35,6 +40,7 @@ impl Default for SessionStoreSnapshot {
             schema_version: SESSION_STORE_SCHEMA_VERSION,
             sessions: Vec::new(),
             archives: Vec::new(),
+            spend: Vec::new(),
             extra: BTreeMap::new(),
         }
     }
@@ -265,6 +271,7 @@ mod tests {
         let snapshot = SessionStoreSnapshot {
             magic: SESSION_STORE_MAGIC.to_owned(),
             schema_version: SESSION_STORE_SCHEMA_VERSION,
+            spend: Vec::new(),
             sessions: vec![StoredSession {
                 session,
                 spec,
@@ -311,6 +318,7 @@ mod tests {
         let snapshot = SessionStoreSnapshot {
             magic: SESSION_STORE_MAGIC.to_owned(),
             schema_version: SESSION_STORE_SCHEMA_VERSION,
+            spend: Vec::new(),
             sessions: vec![
                 StoredSession {
                     session: Session::new(SessionId::new(1), &spec),
