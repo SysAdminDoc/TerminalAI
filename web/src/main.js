@@ -574,7 +574,8 @@ function renderReviewEntry(entry) {
   const conflictMarkup = conflicts.length || markers
     ? '<div class="review-conflict" role="alert"><strong>' + escapeHtml(t("review-conflict-markers")) + '</strong><span>' + escapeHtml(countMessage("review-conflicted-file", conflicts.length)) + (markers ? " · " + escapeHtml(t("review-marker-lines", { count: markers })) : "") + "</span>" + conflictDetails + "</div>"
     : "";
-  const errorMarkup = entry.error ? '<div class="review-error" role="alert">' + escapeHtml(entry.error) + "</div>" : "";
+  const reviewError = entry.error || entry.land_error;
+  const errorMarkup = reviewError ? '<div class="review-error" role="alert">' + escapeHtml(reviewError) + "</div>" : "";
   const diffMarkup = entry.diff
     ? '<details class="review-diff" ' + (conflicts.length || markers ? "open" : "") + "><summary>" + escapeHtml(t("review-show-diff")) + (entry.diff_truncated ? " · " + escapeHtml(t("review-truncated")) : "") + "</summary><pre>" + escapeHtml(entry.diff) + "</pre></details>"
     : '<div class="review-no-diff">' + escapeHtml(t("review-no-diff")) + "</div>";
@@ -1346,11 +1347,14 @@ async function landSession(id, cwd, button) {
       await loadReview();
       return;
     }
-    // A refusal names one specific condition. Surfaced whole: a truncated
-    // reason is the difference between fixing it and guessing.
-    showToast(t("review-land-refused", { reason: refusalText(outcome) }));
+    // A refusal names one specific condition. Keep the whole reason on the
+    // review entry: a toast disappears while the operator is still reading.
+    const reason = t("review-land-refused", { reason: refusalText(outcome) });
+    entry.land_error = reason;
+    renderReview();
   } catch (error) {
-    showToast(String(error));
+    entry.land_error = t("review-land-refused", { reason: String(error) });
+    renderReview();
   } finally {
     if (button) {
       button.disabled = false;

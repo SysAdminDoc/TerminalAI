@@ -54,13 +54,23 @@ test("an unknown refusal is still shown rather than swallowed", () => {
   assert.match(body, /return String\(outcome\.reason \?\? outcome\);/);
 });
 
-test("a refusal is surfaced and the button becomes usable again", () => {
+test("a refusal stays on the review entry and the button becomes usable again", () => {
   const fn = main.slice(main.indexOf("async function landSession"));
   const body = fn.slice(0, fn.indexOf("\n/// Turn a structured refusal"));
-  assert.match(body, /showToast\(t\("review-land-refused"/);
+  assert.match(body, /const reason = t\("review-land-refused"/);
+  assert.match(body, /entry\.land_error = reason;/);
+  assert.match(body, /renderReview\(\);/);
+  assert.doesNotMatch(body, /showToast\(t\("review-land-refused"/);
   // finally, not the success path: a refused landing must not leave a dead
   // button behind.
   assert.match(body, /\} finally \{[\s\S]*button\.disabled = false;/);
+});
+
+test("the review renderer keeps landing refusals visible beside the diff", () => {
+  const render = main.slice(main.indexOf("function renderReviewEntry"), main.indexOf("\nfunction ports"));
+  assert.match(render, /const reviewError = entry\.error \|\| entry\.land_error;/);
+  assert.match(render, /escapeHtml\(reviewError\)/);
+  assert.match(render, /class="review-error" role="alert"/);
 });
 
 test("every land string the renderer uses exists in the catalog", () => {

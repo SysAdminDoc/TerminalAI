@@ -93,6 +93,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   validation beside the field with focus, aria-invalid and a correctly rendered Windows path placeholder.
 - Template and lease relative-path validation now rejects every non-normal path component,
   including Windows root-relative and drive-relative paths that could escape the repository.
+- Review landing refusals now stay in the review entry as an accessible error, preserving
+  the full reason after the transient action feedback has disappeared.
 - Fleet and queue row actions now use 24×24px hit boxes while preserving the compact fleet row pitch.
 
 - The Presets selector now keeps a visible keyboard focus indicator in both themes.
