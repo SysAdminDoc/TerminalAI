@@ -3014,13 +3014,17 @@ fn run_lease_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    if let Some(connection) = connection {
-        command.env("PGURI", connection);
-        // psql reads the connection from the first non-option argument or from
-        // libpq's own variables; PGURI is not one of them, so pass it properly.
-        command.env("PGCONNECT_TIMEOUT", "10");
-        command.arg(connection);
-    }
+    let extra_environment = connection
+        .map(|connection| {
+            vec![
+                // libpq treats PGDATABASE as its dbname default, including
+                // URI/keyword connection strings. PGURI is not a libpq key.
+                ("PGDATABASE".to_owned(), connection.to_owned()),
+                ("PGCONNECT_TIMEOUT".to_owned(), "10".to_owned()),
+            ]
+        })
+        .unwrap_or_default();
+    environment::configure_command_environment(&mut command, &extra_environment);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -3128,6 +3132,85 @@ mod tests {
             std::thread::yield_now();
         }
         assert_eq!(spawns.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn lease_command_child_probe() {
+        let cwd = std::env::current_dir().expect("probe cwd");
+        let marker = cwd.join("terminalai-lease-command-probe.request");
+        if !marker.exists() {
+            return;
+        }
+        let report = serde_json::json!({
+            "args": std::env::args().collect::<Vec<_>>(),
+            "environment": std::env::vars().collect::<std::collections::BTreeMap<_, _>>(),
+        });
+        std::fs::write(
+            cwd.join("terminalai-lease-command-probe.json"),
+            serde_json::to_vec(&report).expect("encode probe report"),
+        )
+        .expect("write probe report");
+    }
+
+    #[test]
+    fn lease_command_uses_the_allowlist_without_putting_connection_in_argv() {
+        let scratch = spool_scratch("lease-command");
+        std::fs::create_dir_all(&scratch.0).expect("scratch directory");
+        std::fs::write(
+            scratch.0.join("terminalai-lease-command-probe.request"),
+            "probe",
+        )
+        .expect("probe marker");
+
+        let connection = "postgresql://admin:password@127.0.0.1:5432/postgres?sslmode=require";
+        let executable = std::env::current_exe().expect("test executable");
+        run_lease_command(
+            executable.to_str().expect("test executable path"),
+            &scratch.0,
+            &["lease_command_child_probe".to_owned()],
+            Some(connection),
+            "lease-test",
+        )
+        .expect("spawn lease command probe");
+
+        let report: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(scratch.0.join("terminalai-lease-command-probe.json"))
+                .expect("probe report"),
+        )
+        .expect("decode probe report");
+        let child_args = report["args"].as_array().expect("child argv");
+        assert!(
+            !child_args
+                .iter()
+                .any(|argument| argument.as_str() == Some(connection)),
+            "connection string leaked into child argv: {child_args:?}"
+        );
+
+        let child_environment = report["environment"]
+            .as_object()
+            .expect("child environment");
+        let allowed = environment::safe_environment_keys()
+            .iter()
+            .copied()
+            .chain(["PGDATABASE", "PGCONNECT_TIMEOUT"])
+            .collect::<std::collections::BTreeSet<_>>();
+        let unexpected = child_environment
+            .keys()
+            .filter(|key| !allowed.contains(key.as_str()))
+            .collect::<Vec<_>>();
+        assert!(
+            unexpected.is_empty(),
+            "lease command inherited unexpected environment keys: {unexpected:?}"
+        );
+        assert_eq!(
+            child_environment["PGDATABASE"].as_str(),
+            Some(connection)
+        );
+        assert_eq!(
+            child_environment["PGCONNECT_TIMEOUT"].as_str(),
+            Some("10")
+        );
+        assert!(!child_environment.contains_key("PGURI"));
     }
 
     #[test]

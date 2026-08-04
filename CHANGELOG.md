@@ -89,6 +89,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Repository lease commands now use the sanitized child environment and carry
+  Postgres connection strings in `PGDATABASE` rather than argv. `PGURI` is no
+  longer emitted, so database passwords do not leak through process listings or
+  the daemon's inherited environment.
 - Hook delivery is now bound to a random per-session secret carried only in the
   supervised agent environment. Managed Claude hooks use the command adapter to
   carry it, explicit HTTP callers must supply it in addition to the daemon bearer,
