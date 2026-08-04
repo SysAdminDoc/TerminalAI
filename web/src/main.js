@@ -12,6 +12,7 @@ import { spendCeiling, spendCeilingTitle } from "./spendCeiling.js";
 import { coverage, fleetTotals, folderOf, formatCost, formatTokens, rollupBy, TOKEN_FIELDS } from "./rollup.js";
 import { defaultSelection, isEligible, summarize, targets } from "./broadcast.js";
 import { hasOpenWork, openItemsCell, sortProjects, stalenessLabel, summarize as summarizeProjects } from "./projects.js";
+import { renderSessionHistory } from "./sessionHistory.js";
 import { systemTimeMs } from "./time.js";
 import "./styles.css";
 
@@ -2299,6 +2300,43 @@ async function startWorkRun() {
   renderWorkRun();
 }
 
+async function openSessionHistory() {
+  const dialog = $("history-dialog");
+  if (!dialog.open) dialog.showModal();
+  $("history-body").innerHTML = `<p class="rollup-total">${escapeHtml(t("loading"))}</p>`;
+  let archives = [];
+  try {
+    archives = await invoke("session_history");
+  } catch (error) {
+    $("history-count").textContent = "";
+    $("history-body").innerHTML =
+      `<p class="rollup-total">${escapeHtml(t("session-history-error", { error: String(error) }))}</p>`;
+    return;
+  }
+  $("history-count").textContent = t("session-history-count", { count: archives.length });
+  $("history-body").innerHTML = renderSessionHistory(archives, {
+    escape: escapeHtml,
+    translate: t,
+    formatTime: (ms) => new Date(ms).toLocaleString(),
+  });
+  for (const button of $("history-body").querySelectorAll("[data-relaunch]")) {
+    button.addEventListener("click", () => {
+      const archive = archives.find((item) => item.id === button.dataset.relaunch);
+      if (!archive) return;
+      dialog.close();
+      openLauncher();
+      // Only what the archive actually holds. The command is kept as text, so
+      // restoring a model or a sandbox from it would mean parsing an argv this
+      // record never promised to keep parseable.
+      $("agent-input").value = archive.agent;
+      $("name-input").value = archive.name ?? "";
+      $("cwd-input").value = archive.cwd ?? "";
+      schedulePreview();
+      void loadProjectTemplates();
+    });
+  }
+}
+
 async function openProjects() {
   const dialog = $("projects-dialog");
   if (!dialog.open) dialog.showModal();
@@ -3412,6 +3450,8 @@ function bindEvents() {
   });
   $("explainer-toggle").addEventListener("click", () => openExplainer());
   $("settings-toggle").addEventListener("click", () => void openSettings());
+  $("history-toggle").addEventListener("click", () => void openSessionHistory());
+  $("close-history-button").addEventListener("click", () => $("history-dialog").close());
   $("save-settings-button").addEventListener("click", () => void saveSettings());
   $("close-settings-button").addEventListener("click", () => $("settings-dialog").close());
   $("empty-explainer-button").addEventListener("click", () => openExplainer());

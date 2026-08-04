@@ -220,6 +220,9 @@ pub enum Request {
     MarkReviewed {
         id: SessionId,
     },
+    /// Sessions this supervisor finished and archived. Read-only history: the
+    /// records carry no handle, only enough to relaunch the same command.
+    SessionHistory,
     /// Read the daemon-wide admission policy.
     AdmissionConfig,
     /// Replace it without restarting. Running sessions are untouched.
@@ -394,6 +397,9 @@ pub enum Response {
     },
     ExternalSessions {
         sessions: Vec<terminalai_core::ExternalSession>,
+    },
+    SessionHistory {
+        archives: Vec<terminalai_core::ArchivedSession>,
     },
     Status {
         session: Session,
@@ -1220,6 +1226,9 @@ fn dispatch_with_endpoint(
         },
         Request::ExternalSessions => Response::ExternalSessions {
             sessions: external_sessions(),
+        },
+        Request::SessionHistory => Response::SessionHistory {
+            archives: registry.archives(),
         },
         Request::Land { request } => Response::Land {
             outcome: land_queue().land(&request),

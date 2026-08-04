@@ -43,6 +43,8 @@ USAGE:
   terminalai-probe pin     <session-id> --json      (toggle a pinned live grid)
   terminalai-probe grid    <session-id> --json      (parsed grid for a pinned pane)
   terminalai-probe history <session-id> [bytes] [--json]  (output the memory ring has dropped)
+  terminalai-probe archives --json                   (sessions this supervisor finished)
+  terminalai-probe archive <session-id> [--json]     (retire a stopped row into the history)
   terminalai-probe mcp     [--write-token <t> --write-session <id>]...  (MCP server on stdio)
   terminalai-probe land    --source <dir> --target <dir> [--expect-head <sha>]
                            [--verify <program> [--verify-arg <arg>]...] [--verify-timeout <s>]
@@ -97,6 +99,8 @@ fn main() {
         Some("pin") => cmd_pin(&args[1..]),
         Some("grid") => cmd_grid(&args[1..]),
         Some("history") => cmd_history(&args[1..]),
+        Some("archives") => cmd_archives(&args[1..]),
+        Some("archive") => cmd_archive(&args[1..]),
         Some("hook") => cmd_hook(&args[1..]),
         Some("hooks") => cmd_hooks(&args[1..]),
         Some("--help") | Some("-h") | None => {
@@ -612,6 +616,53 @@ fn cmd_grid(args: &[String]) -> i32 {
 
 /// Read a session's output history, including bytes the in-memory ring has
 /// already dropped. The one way to see the disk tier from outside the GUI.
+/// Retire one stopped row into the history, the same request the row's button
+/// sends. Present so the whole archive path can be driven without a WebView.
+fn cmd_archive(args: &[String]) -> i32 {
+    let (machine, rest) = without_json(args);
+    let Some(id) = rest.first() else {
+        return control_usage("archive <session-id> [--json]");
+    };
+    match control_call(Request::Archive {
+        id: SessionId(id.clone()),
+    }) {
+        Ok(other) => print_control_response(other, machine),
+        Err(error) => print_control_error(error, machine),
+    }
+}
+
+/// Read the archive of finished sessions the same way the window does.
+///
+/// The window reaches this through a Tauri command; the probe reaches the same
+/// request directly, so the record shape can be checked without a WebView.
+fn cmd_archives(args: &[String]) -> i32 {
+    let (machine, _) = without_json(args);
+    match control_call(Request::SessionHistory) {
+        Ok(Response::SessionHistory { archives }) if machine => {
+            print_json(serde_json::json!({ "archives": archives }));
+            0
+        }
+        Ok(Response::SessionHistory { archives }) => {
+            if archives.is_empty() {
+                println!("no archived sessions");
+                return 0;
+            }
+            for archive in archives {
+                println!(
+                    "{}  {:<8} {:<24} {}",
+                    archive.id.0,
+                    format!("{:?}", archive.agent).to_lowercase(),
+                    archive.name,
+                    archive.command
+                );
+            }
+            0
+        }
+        Ok(other) => print_control_response(other, machine),
+        Err(error) => print_control_error(error, machine),
+    }
+}
+
 fn cmd_history(args: &[String]) -> i32 {
     let (machine, rest) = without_json(args);
     let Some(id) = rest.first() else {

@@ -5,6 +5,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Added
+
+- A history of finished sessions. The store has written an archive record for every retired row
+  since the first release — id, agent, label, folder and the exact command — and read it back only
+  to advance the id counter, so a finished-work view existed as data with no renderer. **History**
+  in the toolbar lists them newest first with the command that produced them and offers to launch
+  one again. The relaunch fills in the agent, label and folder and says so: the archive keeps the
+  command as text, so restoring a model or a sandbox from it would mean parsing an argv the record
+  never promised to keep parseable. A record written before archives carried a timestamp shows an em
+  dash rather than a date in 1970. `terminalai-probe archives` and `terminalai-probe archive <id>`
+  drive the same requests without a WebView. The archive is read-only by construction — the response
+  carries no handle to anything live.
+
 ### Changed
 
 - The stylesheet is one declaration per line. `styles.css` shipped as 293 lines whose longest was

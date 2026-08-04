@@ -40,13 +40,6 @@ item above; where the two touch, the note says so.
   Acceptance: the row and wide-meta renderers live in their own modules within the 120-column limit, the ratchet in `lineLength.test.mjs` drops to what remains, and the rendered markup is unchanged — verified by driving the UI, not by reading the diff.
   Complexity: M
 
-- [ ] P2 — Surface the session history the store already keeps
-  Why: `ArchivedSession` records id, agent, name, cwd and the exact command, persists across restarts, and is read back only to advance a counter — a finished-work view exists as data with no renderer.
-  Evidence: `crates/terminalai-core/src/store.rs:60-66` defines the record; `registry.rs:435-439` reads archives solely to compute `next_id`; no Tauri command in `crates/terminalai-app/src/main.rs` exposes them (compare the roughly 55 registered commands).
-  Touches: `crates/terminalai-daemon/src/lib.rs`, `crates/terminalai-app/src/main.rs`, `crates/terminalai-app/capabilities/default.json`, `web/src/main.js`
-  Acceptance: a history view lists archived sessions with their command and folder and can relaunch one into the launcher pre-filled. Pairs naturally with the archive cap above — bound it before exposing it.
-  Complexity: M
-
 - [ ] P2 — An approvals inbox across the fleet
   Why: permission decisions are the fleet's blocking work and are currently answered one focused session at a time; the field has converged on a single queue, and Claude Code exposes the hook needed to answer programmatically.
   Evidence: `SessionStatus::NeedsApproval` exists (`crates/terminalai-core/src/session.rs:73`) but no aggregate surface does. `PermissionRequest`/`PermissionDenied` are already managed in `hook_config.rs` and support `updatedInput` and `retry` (code.claude.com/docs/en/hooks). Requested at anthropics/claude-code#58247; shipped by wmux and octomux (https://github.com/ShreyPaharia/octomux).

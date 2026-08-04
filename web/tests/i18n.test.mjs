@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
 
 import { FluentBundle, FluentResource } from "@fluent/bundle";
@@ -8,15 +8,13 @@ const catalogSource = readFileSync(new URL("../src/i18n/terminalai.ftl", import.
 const i18n = readFileSync(new URL("../src/i18n.js", import.meta.url), "utf8");
 const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-const rendererSources = [
-  i18n,
-  main,
-  readFileSync(new URL("../src/broadcast.js", import.meta.url), "utf8"),
-  readFileSync(new URL("../src/projects.js", import.meta.url), "utf8"),
-  readFileSync(new URL("../src/rateLimit.js", import.meta.url), "utf8"),
-  readFileSync(new URL("../src/rollup.js", import.meta.url), "utf8"),
-  readFileSync(new URL("../src/spendCeiling.js", import.meta.url), "utf8"),
-].join("\n");
+// Every module, read from the directory rather than a hand-kept list: a list
+// silently drops a newly extracted renderer out of coverage, which is the
+// opposite of what this file is for.
+const rendererSources = readdirSync(new URL("../src/", import.meta.url))
+  .filter((name) => name.endsWith(".js"))
+  .map((name) => readFileSync(new URL(`../src/${name}`, import.meta.url), "utf8"))
+  .join("\n");
 
 function bundle() {
   const instance = new FluentBundle(["en-US"], { useIsolating: false });

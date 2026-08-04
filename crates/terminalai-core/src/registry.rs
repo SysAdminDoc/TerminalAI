@@ -865,6 +865,18 @@ impl SessionRegistry {
         }
     }
 
+    /// Finished sessions, newest first.
+    ///
+    /// The store has always carried these — id, agent, name, folder and the
+    /// exact command — and read them back only to advance the id counter. They
+    /// are bounded by [`crate::store::MAX_ARCHIVES`] and
+    /// [`crate::store::ARCHIVE_MAX_AGE`], so this is a whole answer rather than
+    /// a page of one.
+    pub fn archives(&self) -> Vec<ArchivedSession> {
+        let state = lock_state(&self.inner);
+        state.archives.iter().rev().cloned().collect()
+    }
+
     /// Subscribe to pushed changes. Closed receivers are removed automatically.
     pub fn subscribe(&self) -> Receiver<RegistryEvent> {
         let (sender, receiver) = mpsc::sync_channel(SUBSCRIBER_QUEUE_CAPACITY);
@@ -4626,6 +4638,33 @@ mod tests {
             !stored.archives.iter().any(|item| item.id == SessionId::new(1)),
             "the oldest record is the one that went"
         );
+    }
+
+    #[test]
+    fn the_history_is_newest_first_and_carries_the_exact_command() {
+        let cwd = Path::new(".").to_path_buf();
+        let now = SystemTime::now();
+        let snapshot = SessionStoreSnapshot {
+            archives: (0..3u64)
+                .map(|sequence| ArchivedSession {
+                    id: SessionId::new(sequence + 1),
+                    agent: Agent::Claude,
+                    name: format!("row-{sequence}"),
+                    cwd: cwd.clone(),
+                    command: format!("claude.exe --model opus-{sequence}"),
+                    archived_at: Some(now),
+                })
+                .collect(),
+            ..Default::default()
+        };
+        let registry = SessionRegistry::from_store(snapshot);
+        let history = registry.archives();
+        assert_eq!(history.len(), 3);
+        // The store appends, so the last archived row is the one the operator is
+        // most likely to want back — it must not be at the bottom of the list.
+        assert_eq!(history[0].id, SessionId::new(3));
+        assert_eq!(history[2].id, SessionId::new(1));
+        assert_eq!(history[0].command, "claude.exe --model opus-2");
     }
 
     #[test]

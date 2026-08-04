@@ -249,6 +249,21 @@ button {
   color: var(--text);
 }
 
+/* The archived command is the widest thing in the history table and the least
+   worth truncating: it is the whole reason the record was kept. It gets the
+   slack, the folder gets an ellipsis and its full path in a title. */
+.history-command code {
+  color: var(--subtext1);
+  font-family: "Cascadia Mono", ui-monospace, monospace;
+  font-size: 11px;
+}
+
+.history-folder {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .rollup-number {
   text-align: right;
   font-variant-numeric: tabular-nums;

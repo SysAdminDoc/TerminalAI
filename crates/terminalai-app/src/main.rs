@@ -252,6 +252,26 @@ async fn external_sessions(
     .await
 }
 
+/// Sessions this supervisor finished, newest first.
+///
+/// The archive has always been written and never read back for anything but the
+/// id counter. It carries no PTY handle and no output — only what is needed to
+/// see what ran and to start the same thing again.
+#[tauri::command]
+async fn session_history(
+    state: State<'_, AppState>,
+) -> Result<Vec<terminalai_core::ArchivedSession>, String> {
+    let client = daemon_client(&state)?;
+    run_blocking("session_history", move || {
+        match daemon_response(&client, Request::SessionHistory)? {
+            Response::SessionHistory { archives } => Ok(archives),
+            Response::Error { message } => Err(message),
+            other => Err(format!("unexpected session-history response: {other:?}")),
+        }
+    })
+    .await
+}
+
 /// Read the daemon-wide admission policy for the settings dialog.
 #[tauri::command]
 fn admission_config(
@@ -2060,6 +2080,7 @@ fn run_app() -> Result<(), String> {
             fleet_snapshot,
             review_snapshot,
             external_sessions,
+            session_history,
             mark_reviewed,
             admission_config,
             set_admission,
