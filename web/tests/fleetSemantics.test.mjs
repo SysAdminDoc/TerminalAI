@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { JSDOM } from "jsdom";
+
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
 
@@ -47,4 +49,22 @@ test("preflight remains reachable when daemon state is unavailable", () => {
   assert.match(main, /invoke\("preflight_fix"/);
   assert.match(main, /state\.preflightMode = true/);
   assert.match(main, /data-diagnostics-action="preflight"/);
+});
+
+test("visibility synchronizers reference elements that exist in the shell", () => {
+  const dom = new JSDOM(html);
+  for (const functionName of ["syncPreflightVisibility", "syncReviewVisibility"]) {
+    const start = main.indexOf(`function ${functionName}()`);
+    assert.notEqual(start, -1, `${functionName} is present`);
+    const end = main.indexOf("\n}", start);
+    assert.notEqual(end, -1, `${functionName} has a body`);
+    const body = main.slice(start, end);
+    const literal = body.match(/\[([^\]]+)\]\.forEach/);
+    assert.ok(literal, `${functionName} has a visibility id list`);
+    const ids = [...literal[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+    assert.ok(ids.length > 0, `${functionName} names at least one element`);
+    for (const id of ids) {
+      assert.ok(dom.window.document.getElementById(id), `${functionName} references missing #${id}`);
+    }
+  }
 });

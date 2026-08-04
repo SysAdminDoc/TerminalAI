@@ -89,6 +89,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- The Preflight and Review views now open correctly. Their visibility synchronizers reference the
+  column-label element by an id that exists in the shell, with a DOM regression test covering every
+  element named by both synchronizers.
 - All 55 Tauri commands now have grants in every desktop capability profile. The build checks both
   the `generate_handler!` registration and the capability files, so a newly registered command
   cannot compile into an unusable invoke path or leave a stale permission behind.
