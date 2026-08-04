@@ -89,6 +89,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- “Load older output” now requests the in-memory ring plus a bounded older window, and the daemon
+  frame/history budgets carry that full replay. A >1 MiB registry regression proves the returned
+  history contains bytes the ring has already dropped.
 - Terminal resize deduplication now includes the focused session id, so switching sessions sends
   the current renderer dimensions to the newly focused pty even when the grid size is unchanged.
   A sizing regression test keeps the per-session signature intact.

@@ -63,8 +63,14 @@ test("a second click while a read is in flight is ignored", () => {
 });
 
 test("the request stays within one control frame", () => {
-  // The daemon clamps to its own ceiling; asking for more would silently
-  // return less, which reads as history having been lost.
-  assert.match(main, /const HISTORY_REQUEST_BYTES = 128 \* 1024;/);
+  // The response includes the whole in-memory ring plus an older window. The
+  // daemon's bounded frame is sized for that request rather than truncating it
+  // back to the ring's newest bytes.
+  assert.match(main, /const MAX_SCROLLBACK_BYTES = 512 \* 1024;/);
+  assert.match(main, /const HISTORY_OLDER_BYTES = 128 \* 1024;/);
+  assert.match(main, /const HISTORY_REQUEST_BYTES = MAX_SCROLLBACK_BYTES \+ HISTORY_OLDER_BYTES;/);
+  const ring = Number(main.match(/const MAX_SCROLLBACK_BYTES = (\d+) \* 1024;/)[1]) * 1024;
+  const older = Number(main.match(/const HISTORY_OLDER_BYTES = (\d+) \* 1024;/)[1]) * 1024;
+  assert.ok(ring + older > ring, "history request must reach before the ring");
   assert.match(loadOlderOutput, /maxBytes: HISTORY_REQUEST_BYTES,/);
 });

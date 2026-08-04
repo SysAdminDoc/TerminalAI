@@ -1925,10 +1925,12 @@ function createOutputChannel(id) {
   return channel;
 }
 
-/// Most history one request may carry. Matches the daemon's own ceiling; asking
-/// for more returns the same bytes, so the number lives in one place
-/// conceptually even though both ends must agree on it.
-const HISTORY_REQUEST_BYTES = 128 * 1024;
+/// The focused pane already contains this in-memory ring after attach. Ask for
+/// the ring plus one older window so the reset-and-replay path includes bytes
+/// the pane did not already show.
+const MAX_SCROLLBACK_BYTES = 512 * 1024;
+const HISTORY_OLDER_BYTES = 128 * 1024;
+const HISTORY_REQUEST_BYTES = MAX_SCROLLBACK_BYTES + HISTORY_OLDER_BYTES;
 
 /// Prepend output the in-memory ring has already dropped.
 ///

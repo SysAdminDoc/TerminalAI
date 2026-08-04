@@ -2998,7 +2998,6 @@ mod tests {
     use crate::app_server::{AppServerEvent, AppServerThreadStatus, AppServerTokenUsage};
     use crate::domain::{AgentDomain, AgentSession, DomainError, OutputHandler};
     use crate::launch::spec_for;
-    use crate::scrollback::MAX_DISK_SCROLLBACK_BYTES;
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
@@ -4197,8 +4196,8 @@ mod tests {
     #[test]
     fn history_reaches_past_what_the_memory_ring_kept() {
         // The reason the disk tier exists. The ring is deliberately small, so
-        // an agent that produced a megabyte of output has already lost the
-        // start of it from memory by the time anyone asks.
+        // an agent that produced more than a megabyte of output has already
+        // lost the beginning by the time anyone asks.
         let dir = spool_scratch("past-ring");
         let registry = SessionRegistry::new();
         let id = SessionId::new(1);
@@ -4207,26 +4206,25 @@ mod tests {
             ScrollbackSpool::new(&dir.0).expect("spool"),
         ));
 
-        feed(&registry, &id, b"THE FIRST THING IT SAID
-");
-        feed(&registry, &id, &vec![b'x'; MAX_SCROLLBACK_BYTES]);
-        feed(&registry, &id, b"THE LAST THING IT SAID
-");
+        feed(&registry, &id, &vec![b'x'; 500 * 1024]);
+        let marker = b"THE FIRST THING IT SAID\n";
+        feed(&registry, &id, marker);
+        feed(&registry, &id, &vec![b'y'; 600 * 1024]);
         registry.inner.spool().expect("spool").flush();
 
         let ring = registry.scrollback(&id).expect("ring");
         assert!(
-            !ring.starts_with(b"THE FIRST"),
-            "the ring is supposed to have dropped this"
+            !ring.windows(marker.len()).any(|window| window == marker),
+            "the ring is supposed to have dropped the older marker"
         );
+        let request_bytes = MAX_SCROLLBACK_BYTES as u64 + 128 * 1024;
         let history = registry
-            .scrollback_history(&id, MAX_DISK_SCROLLBACK_BYTES)
+            .scrollback_history(&id, request_bytes)
             .expect("history");
+        assert!(history.len() > MAX_SCROLLBACK_BYTES, "history did not reach past the ring");
         let text = String::from_utf8_lossy(&history);
-        assert!(text.contains("THE FIRST THING IT SAID"), "history lost the start");
-        assert!(text.contains("THE LAST THING IT SAID"), "history lost the end");
+        assert!(text.contains("THE FIRST THING IT SAID"), "history lost the older output");
     }
-
     #[test]
     fn without_a_spool_history_falls_back_to_the_ring() {
         // The in-process app server and every test construct a registry with no

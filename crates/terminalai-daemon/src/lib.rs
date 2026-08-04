@@ -81,19 +81,22 @@ const OUTGOING_QUEUE_CAPACITY: usize = 256;
 /// A peer that sends bytes without a newline would otherwise grow a `String`
 /// until the process is out of memory — and this is a local control plane, so
 /// the peer is a program, not a person. The cap is generously above the largest
-/// legitimate frame: a `Write` carrying a multi-kilobyte prompt.
-pub const MAX_FRAME_BYTES: usize = 1024 * 1024;
+/// legitimate frame: a `ScrollbackHistory` response carries a bounded history
+/// as a JSON array of numbers, which is several times larger on the wire than
+/// its raw bytes.
+pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 /// Largest `Write` payload accepted for one session. Rejected, never truncated:
 /// half a prompt reaching an agent is worse than none.
 pub const MAX_WRITE_BYTES: usize = 256 * 1024;
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
-/// Most history one request may return.
+/// Most history one request may return: the in-memory ring plus one older
+/// window, so the UI can replay bytes from before the pane's existing tail.
 ///
 /// A response is one frame, and a frame is capped at [`MAX_FRAME_BYTES`]. The
-/// bytes are JSON-encoded as an array of numbers, which costs several times
-/// their length, so the ceiling here is well under the frame limit rather than
-/// equal to it — a reply that cannot be framed is worse than a short one.
-pub const MAX_HISTORY_BYTES: u64 = 128 * 1024;
+/// bytes are JSON-encoded as an array of numbers, so the frame ceiling remains
+/// several times larger than the raw history budget.
+pub const MAX_HISTORY_BYTES: u64 =
+    terminalai_core::registry::MAX_SCROLLBACK_BYTES as u64 + 128 * 1024;
 /// Most sessions one broadcast may target.
 ///
 /// Well above the fleet's ~30-session design point, and bounded so a malformed
@@ -1628,6 +1631,18 @@ fn spawn_transcript_poller(registry: SessionRegistry, shutdown: Arc<AtomicBool>)
 mod tests {
     use super::*;
     use terminalai_core::AppServerEvent;
+
+    #[test]
+    fn history_budget_reaches_before_the_memory_ring() {
+        assert!(
+            MAX_HISTORY_BYTES > terminalai_core::registry::MAX_SCROLLBACK_BYTES as u64,
+            "history must include bytes older than the in-memory ring"
+        );
+        assert!(
+            MAX_FRAME_BYTES >= (MAX_HISTORY_BYTES as usize).saturating_mul(4),
+            "JSON byte arrays need several times their raw history size"
+        );
+    }
 
     #[test]
     fn an_endless_frame_is_refused_instead_of_exhausting_memory() {
