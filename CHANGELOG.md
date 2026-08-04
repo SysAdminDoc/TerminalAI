@@ -89,6 +89,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Focused terminal reattachment now gates live output behind the replay and drops the already-replayed
+  suffix, preventing duplicated or out-of-order bytes during attach.
+
 - A transient client-thread allocation failure now drops only that connection
   instead of invoking a second panic-on-spawn fallback that could kill the daemon.
 

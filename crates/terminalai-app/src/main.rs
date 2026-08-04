@@ -30,13 +30,106 @@ use terminalai_daemon::{
     DaemonClient, HookEndpoint, IpcError, Request, Response, PROTOCOL_VERSION,
 };
 
+type OutputChannels = Arc<Mutex<HashMap<SessionId, Arc<OutputRoute>>>>;
+
+struct OutputRoute {
+    channel: Channel<InvokeResponseBody>,
+    state: Mutex<OutputRouteState>,
+}
+
+struct OutputRouteState {
+    replaying: bool,
+    pending: Vec<u8>,
+}
+
+impl OutputRoute {
+    fn new(channel: Channel<InvokeResponseBody>, replaying: bool) -> Self {
+        Self {
+            channel,
+            state: Mutex::new(OutputRouteState {
+                replaying,
+                pending: Vec::new(),
+            }),
+        }
+    }
+
+    fn queue(&self, data: Vec<u8>) -> Result<(), String> {
+        self.state
+            .lock()
+            .map_err(|_| "output route is poisoned".to_string())?
+            .pending
+            .extend(data);
+        Ok(())
+    }
+
+    fn flush(&self) -> Result<(), String> {
+        let data = {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| "output route is poisoned".to_string())?;
+            if state.replaying || state.pending.is_empty() {
+                return Ok(());
+            }
+            std::mem::take(&mut state.pending)
+        };
+        self.channel
+            .send(InvokeResponseBody::Raw(data))
+            .map_err(|error| format!("send terminal bytes: {error}"))
+    }
+
+    fn complete_replay(&self, replay: Vec<u8>) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "output route is poisoned".to_string())?;
+        let pending = std::mem::take(&mut state.pending);
+        let pending_start = replay_overlap(&replay, &pending);
+        self.channel
+            .send(InvokeResponseBody::Raw(replay))
+            .map_err(|error| format!("send terminal replay: {error}"))?;
+        if pending_start < pending.len() {
+            self.channel
+                .send(InvokeResponseBody::Raw(pending[pending_start..].to_vec()))
+                .map_err(|error| format!("send terminal output after replay: {error}"))?;
+        }
+        state.replaying = false;
+        Ok(())
+    }
+}
+
+/// Return the number of buffered bytes already covered by the replay.
+///
+/// Normally the buffered stream starts with a suffix of the ring. Searching
+/// for the longest matching suffix also handles a very long RPC where the
+/// ring has already dropped the oldest part of the buffered stream: those
+/// bytes must still be discarded because the replay is the pane's reset point.
+fn replay_overlap(replay: &[u8], pending: &[u8]) -> usize {
+    let mut best_length = 0;
+    let mut best_end = 0;
+    for start in 0..pending.len() {
+        let max_length = replay.len().min(pending.len() - start);
+        for length in (1..=max_length).rev() {
+            if replay[replay.len() - length..] == pending[start..start + length] {
+                let end = start + length;
+                if length > best_length || (length == best_length && end < best_end) {
+                    best_length = length;
+                    best_end = end;
+                }
+                break;
+            }
+        }
+    }
+    best_end
+}
+
 struct AppState {
     client: Mutex<Option<DaemonClient>>,
     presets: PresetStore,
     project_roots: projects::ProjectRoots,
     prompts: work::PromptLibrary,
     work_run_store: work::WorkRunStore,
-    output_channels: Arc<Mutex<HashMap<SessionId, Channel<InvokeResponseBody>>>>,
+    output_channels: OutputChannels,
 }
 
 #[derive(Debug, Serialize)]
@@ -329,14 +422,27 @@ fn toggle_pin(id: SessionId, state: State<'_, AppState>) -> Result<bool, String>
 fn register_output_channel(
     id: SessionId,
     channel: Channel<InvokeResponseBody>,
-    channels: &Arc<Mutex<HashMap<SessionId, Channel<InvokeResponseBody>>>>,
-) -> Result<(), String> {
+    channels: &OutputChannels,
+    replaying: bool,
+) -> Result<Arc<OutputRoute>, String> {
     let mut channels = channels
         .lock()
         .map_err(|_| "output channel registry is poisoned".to_string())?;
+    let route = Arc::new(OutputRoute::new(channel, replaying));
     channels.retain(|session_id, _| session_id == &id);
-    channels.insert(id, channel);
-    Ok(())
+    channels.insert(id, route.clone());
+    Ok(route)
+}
+
+fn remove_output_route(id: &SessionId, route: &Arc<OutputRoute>, channels: &OutputChannels) {
+    if let Ok(mut channels) = channels.lock() {
+        if channels
+            .get(id)
+            .is_some_and(|current| Arc::ptr_eq(current, route))
+        {
+            channels.remove(id);
+        }
+    }
 }
 
 fn send_raw(channel: &Channel<InvokeResponseBody>, data: Vec<u8>) -> Result<(), String> {
@@ -351,7 +457,7 @@ fn subscribe_output(
     channel: Channel<InvokeResponseBody>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    register_output_channel(id, channel, &state.output_channels)
+    register_output_channel(id, channel, &state.output_channels, false).map(|_| ())
 }
 
 #[tauri::command]
@@ -490,13 +596,24 @@ fn attach_session_output(
     channel: Channel<InvokeResponseBody>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    register_output_channel(id.clone(), channel.clone(), &state.output_channels)?;
-    let client = daemon_client(&state)?;
-    match daemon_response(&client, Request::Reattach { id })? {
-        Response::Reattached { data } => send_raw(&channel, data),
-        Response::Error { message } => Err(message),
-        other => Err(format!("unexpected reattach response: {other:?}")),
+    let route = register_output_channel(id.clone(), channel, &state.output_channels, true)?;
+    let client = match daemon_client(&state) {
+        Ok(client) => client,
+        Err(error) => {
+            remove_output_route(&id, &route, &state.output_channels);
+            return Err(error);
+        }
+    };
+    let result = match daemon_response(&client, Request::Reattach { id: id.clone() }) {
+        Ok(Response::Reattached { data }) => route.complete_replay(data),
+        Ok(Response::Error { message }) => Err(message),
+        Ok(other) => Err(format!("unexpected reattach response: {other:?}")),
+        Err(error) => Err(error),
+    };
+    if result.is_err() {
+        remove_output_route(&id, &route, &state.output_channels);
     }
+    result
 }
 
 #[tauri::command]
@@ -1403,7 +1520,7 @@ const LOG_BATCH_INTERVAL: Duration = Duration::from_millis(100);
 fn bridge_daemon_events(
     app: &tauri::AppHandle,
     client: &DaemonClient,
-    output_channels: Arc<Mutex<HashMap<SessionId, Channel<InvokeResponseBody>>>>,
+    output_channels: OutputChannels,
     work_run_store: work::WorkRunStore,
     prompts: work::PromptLibrary,
 ) {
@@ -1435,7 +1552,6 @@ fn bridge_daemon_events(
             // Reported once rather than on every attention event.
             let mut toast_failed = false;
             update_taskbar_waiting_count(&app, waiting.len());
-            let mut pending = HashMap::<SessionId, Vec<u8>>::new();
             let mut pending_logs = VecDeque::<LogEntry>::new();
             let mut next_output_flush = Instant::now() + OUTPUT_BATCH_INTERVAL;
             let mut next_log_flush = Instant::now() + LOG_BATCH_INTERVAL;
@@ -1450,7 +1566,7 @@ fn bridge_daemon_events(
                     .map(|events| events.recv_timeout(timeout));
                 match received {
                     Some(Ok(RegistryEvent::Output { id, data })) => {
-                        pending.entry(id).or_default().extend(data);
+                        queue_output(&output_channels, id, data);
                     }
                     Some(Ok(RegistryEvent::Log { entry })) => {
                         pending_logs.push_back(entry);
@@ -1506,18 +1622,18 @@ fn bridge_daemon_events(
                             update_taskbar_waiting_count(&app, waiting.len());
                             rendered_waiting = Some(waiting.len());
                         }
-                        flush_output_batches(&mut pending, &output_channels);
+                        flush_output_batches(&output_channels);
                         next_output_flush = Instant::now() + OUTPUT_BATCH_INTERVAL;
                         if app.emit("terminalai:event", event).is_err() {
                             break;
                         }
                     }
                     Some(Err(RecvTimeoutError::Timeout)) => {
-                        flush_output_batches(&mut pending, &output_channels);
+                        flush_output_batches(&output_channels);
                         next_output_flush = Instant::now() + OUTPUT_BATCH_INTERVAL;
                     }
                     Some(Err(RecvTimeoutError::Disconnected)) | None => {
-                        flush_output_batches(&mut pending, &output_channels);
+                        flush_output_batches(&output_channels);
                         let _ = flush_log_batches(&mut pending_logs, &app);
                         break;
                     }
@@ -1709,23 +1825,33 @@ fn flush_log_batches(pending: &mut VecDeque<LogEntry>, app: &tauri::AppHandle) -
     app.emit("terminalai:logs", batch).is_ok()
 }
 
-fn flush_output_batches(
-    pending: &mut HashMap<SessionId, Vec<u8>>,
-    output_channels: &Arc<Mutex<HashMap<SessionId, Channel<InvokeResponseBody>>>>,
-) {
-    let batches = std::mem::take(pending);
-    for (id, data) in batches {
-        let channel = output_channels
-            .lock()
-            .ok()
-            .and_then(|channels| channels.get(&id).cloned());
-        let Some(channel) = channel else {
-            continue;
-        };
-        if channel.send(InvokeResponseBody::Raw(data)).is_err() {
-            if let Ok(mut channels) = output_channels.lock() {
-                channels.remove(&id);
-            }
+fn queue_output(output_channels: &OutputChannels, id: SessionId, data: Vec<u8>) {
+    let route = output_channels
+        .lock()
+        .ok()
+        .and_then(|channels| channels.get(&id).cloned());
+    let Some(route) = route else {
+        return;
+    };
+    if route.queue(data).is_err() {
+        remove_output_route(&id, &route, output_channels);
+    }
+}
+
+fn flush_output_batches(output_channels: &OutputChannels) {
+    let routes = output_channels
+        .lock()
+        .ok()
+        .map(|channels| {
+            channels
+                .iter()
+                .map(|(id, route)| (id.clone(), route.clone()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for (id, route) in routes {
+        if route.flush().is_err() {
+            remove_output_route(&id, &route, output_channels);
         }
     }
 }
@@ -1988,6 +2114,18 @@ mod tests {
     #[test]
     fn protocol_version_is_pinned_for_the_shell() {
         assert_eq!(PROTOCOL_VERSION, 3);
+    }
+
+    #[test]
+    fn attaching_mid_stream_replays_each_pty_byte_once_in_order() {
+        let replay = b"prompt\r\noutput> ".to_vec();
+        let pending = b"output> next\r\n".to_vec();
+        let overlap = replay_overlap(&replay, &pending);
+        let mut rendered = replay;
+        rendered.extend_from_slice(&pending[overlap..]);
+
+        assert_eq!(rendered, b"prompt\r\noutput> next\r\n");
+        assert_eq!(replay_overlap(b"abc", b"xyz"), 0);
     }
 
     #[test]
