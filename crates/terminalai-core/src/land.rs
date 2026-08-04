@@ -36,6 +36,7 @@ pub const DEFAULT_VERIFY_TIMEOUT: Duration = Duration::from_secs(600);
 /// Upper bound for an operator-supplied verify budget. This keeps a malformed
 /// wire value from overflowing `Instant` or holding the landing gate forever.
 pub const MAX_VERIFY_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
+const MIN_EXPECTED_HEAD_LEN: usize = 4;
 
 /// What the operator asked to land, and what it must be true against.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -264,7 +265,8 @@ fn head_matches(expected: &str, found: &str) -> bool {
     // An abbreviated hash from the review surface must still match the full one.
     let expected = expected.trim();
     let found = found.trim();
-    !expected.is_empty() && (found.starts_with(expected) || expected.starts_with(found))
+    expected.len() >= MIN_EXPECTED_HEAD_LEN
+        && (found.starts_with(expected) || expected.starts_with(found))
 }
 
 fn read_head(target: &Path) -> Result<String, LandRefusal> {

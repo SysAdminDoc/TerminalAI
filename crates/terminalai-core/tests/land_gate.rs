@@ -170,6 +170,29 @@ fn an_abbreviated_reviewed_hash_still_matches_the_full_one() {
 }
 
 #[test]
+fn expected_head_abbreviations_shorter_than_four_are_refused() {
+    let (_root, target, source) = repo_pair("abbrev-too-short", "one\n");
+    std::fs::write(source.join("file.txt"), "one\ntwo\n").expect("edit");
+    let full = git(&target, &["rev-parse", "HEAD"]).trim().to_owned();
+
+    for length in 1..=3 {
+        let mut plan = request(&source, &target);
+        plan.expected_target_head = Some(full[..length].to_owned());
+        assert!(
+            matches!(
+                LandQueue::new().land(&plan),
+                LandOutcome::Refused(LandRefusal::TargetMoved { .. })
+            ),
+            "expected a {length}-character pin to be refused"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(target.join("file.txt")).expect("target file"),
+        "one\n"
+    );
+}
+
+#[test]
 fn a_dirty_target_is_refused_before_anything_is_written() {
     let (_root, target, source) = repo_pair("dirty", "one\n");
     std::fs::write(source.join("file.txt"), "one\ntwo\n").expect("edit");
