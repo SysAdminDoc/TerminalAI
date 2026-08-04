@@ -51,6 +51,11 @@ test("preflight remains reachable when daemon state is unavailable", () => {
   assert.match(main, /data-diagnostics-action="preflight"/);
 });
 
+test("managed hook policy has a distinct blocked and non-fixable state", () => {
+  assert.match(main, /blocked: \{ glyph: "⊘", label: "preflight-blocked", tone: "red" \}/);
+  assert.match(main, /check\.can_fix \? "" : " disabled"/);
+});
+
 test("visibility synchronizers reference elements that exist in the shell", () => {
   const dom = new JSDOM(html);
   for (const functionName of ["syncPreflightVisibility", "syncReviewVisibility"]) {

@@ -1131,17 +1131,34 @@ fn preflight_hooks() -> PreflightCheck {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let codex_home = std::env::var_os("CODEX_HOME").map(PathBuf::from);
     let executable = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("terminalai"));
+    let managed_policy = match terminalai_core::managed_hook_policy() {
+        Ok(policy) => policy,
+        Err(error) => {
+            return PreflightCheck {
+                id: "hooks".into(),
+                label: "Managed hooks".into(),
+                state: "error".into(),
+                detected: "Managed policy unreadable".into(),
+                detail: Some(error.to_string()),
+                can_fix: false,
+            };
+        }
+    };
     let endpoint = DaemonClient::connect_with_timeout(PREFLIGHT_DAEMON_TIMEOUT)
         .ok()
         .and_then(|client| client.hook_endpoint().ok());
     let mut detected = Vec::new();
     let mut details = Vec::new();
     let mut healthy = true;
+    let mut claude_installed = false;
     for agent in [Agent::Claude, Agent::Codex] {
         let path = terminalai_core::hook_config_path(agent, &home, codex_home.as_deref());
         let transport = hook_transport(agent, &executable, endpoint.as_ref());
         match terminalai_core::hook_status_at_with_transport(agent, &path, &transport) {
             Ok(status) => {
+                if agent == Agent::Claude {
+                    claude_installed = status.installed;
+                }
                 let state = if status.disabled {
                     "disabled"
                 } else if status.stale {
@@ -1164,6 +1181,9 @@ fn preflight_hooks() -> PreflightCheck {
             }
         }
     }
+    if let Some(policy) = managed_policy.filter(|policy| policy.blocks_user_hooks()) {
+        return blocked_hook_preflight(&policy, claude_installed, &details.join(" · "));
+    }
     PreflightCheck {
         id: "hooks".into(),
         label: "Managed hooks".into(),
@@ -1171,6 +1191,30 @@ fn preflight_hooks() -> PreflightCheck {
         detected: detected.join(" · "),
         detail: Some(details.join(" · ")),
         can_fix: true,
+    }
+}
+
+fn blocked_hook_preflight(
+    policy: &terminalai_core::ManagedHookPolicy,
+    claude_installed: bool,
+    details: &str,
+) -> PreflightCheck {
+    let sources = policy.sources.join(", ");
+    let settings = policy.blocking_settings().join(", ");
+    let detected = if claude_installed {
+        format!("hooks installed but disabled by policy at {sources}")
+    } else {
+        format!("hooks cannot fire: policy disables them at {sources}")
+    };
+    PreflightCheck {
+        id: "hooks".into(),
+        label: "Managed hooks".into(),
+        state: "blocked".into(),
+        detected,
+        detail: Some(format!(
+            "Claude managed policy sets {settings}. TerminalAI cannot override administrator policy; remove or change it outside this app. {details}"
+        )),
+        can_fix: false,
     }
 }
 
@@ -2189,6 +2233,27 @@ mod tests {
         assert!(is_hook_invocation(&["hook".into(), "claude".into()]));
         assert!(!is_hook_invocation(&["--help".into()]));
         assert!(!is_hook_invocation(&[]));
+    }
+
+    #[test]
+    fn managed_hook_policy_is_a_distinct_non_fixable_preflight_state() {
+        let policy = terminalai_core::ManagedHookPolicy {
+            sources: vec![r"C:\Program Files\ClaudeCode\managed-settings.json".into()],
+            disable_all_hooks: true,
+            allow_managed_hooks_only: false,
+            strict_plugin_hooks: false,
+        };
+        let check = blocked_hook_preflight(&policy, true, "Claude: installed");
+        assert_eq!(check.state, "blocked");
+        assert!(!check.can_fix);
+        assert_eq!(
+            check.detected,
+            r"hooks installed but disabled by policy at C:\Program Files\ClaudeCode\managed-settings.json"
+        );
+        assert!(check
+            .detail
+            .expect("policy detail")
+            .contains("disableAllHooks=true"));
     }
 
     #[test]

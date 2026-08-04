@@ -82,6 +82,7 @@ status-tearing-down = Tearing down environment
 preflight-ready = Ready
 preflight-needs-attention = Needs attention
 preflight-unavailable = Unavailable
+preflight-blocked = Blocked by policy
 preflight-not-applicable = Not applicable
 preflight-checking = Checking local dependencies…
 preflight-all-ready = All detected control-plane dependencies are ready.

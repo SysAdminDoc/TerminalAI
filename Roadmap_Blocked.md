@@ -104,3 +104,13 @@ documented flag and filename convention were not exercised against a real Claude
 does not claim that external acceptance. Close it with an operator-owned isolated launch that
 confirms the generated id creates the expected JSONL path and that two same-folder sessions each
 remain attached to their own transcript.
+
+## P0 managed hook policy live-device residual — 2026-08-04
+
+Preflight now evaluates the local Windows policy chain: the HKLM policy value, the system
+`managed-settings.json` plus sorted drop-ins, and the HKCU fallback. Unit tests cover the effective
+merge and the exact non-fixable `blocked` result without changing this machine's administrator
+policy. A server-managed or policy-helper result delivered only inside a Claude session is not
+observable before that session starts, so this local preflight cannot claim to detect those remote
+sources. An operator-owned run with `disableAllHooks: true` in an approved managed source can
+confirm the full banner against a real Claude installation.

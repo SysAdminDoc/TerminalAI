@@ -61,6 +61,12 @@ pub enum HookConfigError {
     },
     #[error("Codex hooks are disabled by the existing features.hooks=false setting")]
     HooksDisabled,
+    #[error("managed settings at {location} are invalid JSON: {error}")]
+    ManagedSettingsJson { location: String, error: String },
+    #[error("managed settings at {location} have an invalid root shape")]
+    ManagedSettingsShape { location: String },
+    #[error("could not read managed settings at {location}: {error}")]
+    ManagedSettingsIo { location: String, error: String },
     #[error("{agent} does not support HTTP hook handlers")]
     UnsupportedTransport { agent: &'static str },
 }
@@ -100,6 +106,37 @@ pub struct HookStatus {
     pub http_installed: bool,
 }
 
+/// The locally observable Claude policy that can prevent TerminalAI's
+/// user-level hook entries from running. Remote/server-managed policy is not
+/// visible to a local preflight and is intentionally not guessed here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManagedHookPolicy {
+    pub sources: Vec<String>,
+    pub disable_all_hooks: bool,
+    pub allow_managed_hooks_only: bool,
+    pub strict_plugin_hooks: bool,
+}
+
+impl ManagedHookPolicy {
+    pub fn blocks_user_hooks(&self) -> bool {
+        self.disable_all_hooks || self.allow_managed_hooks_only || self.strict_plugin_hooks
+    }
+
+    pub fn blocking_settings(&self) -> Vec<&'static str> {
+        let mut settings = Vec::new();
+        if self.disable_all_hooks {
+            settings.push("disableAllHooks=true");
+        }
+        if self.allow_managed_hooks_only {
+            settings.push("allowManagedHooksOnly=true");
+        }
+        if self.strict_plugin_hooks {
+            settings.push("strictPluginOnlyCustomization includes hooks");
+        }
+        settings
+    }
+}
+
 pub fn config_path(agent: Agent, home: &Path, codex_home: Option<&Path>) -> PathBuf {
     match agent {
         Agent::Claude => home.join(".claude").join("settings.json"),
@@ -108,6 +145,243 @@ pub fn config_path(agent: Agent, home: &Path, codex_home: Option<&Path>) -> Path
             .unwrap_or_else(|| home.join(".codex"))
             .join("config.toml"),
     }
+}
+
+/// Read the highest-priority locally inspectable Claude managed-settings
+/// source. The order mirrors Claude Code's native Windows precedence:
+/// machine policy, system managed-settings files, then the user policy key.
+/// A source with no hook-blocking key still wins over lower-priority sources;
+/// lower policy tiers must not be merged into an effective result.
+pub fn managed_hook_policy() -> Result<Option<ManagedHookPolicy>, HookConfigError> {
+    #[cfg(windows)]
+    {
+        managed_hook_policy_windows()
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(None)
+    }
+}
+
+fn managed_hook_policy_from_settings(
+    sources: Vec<String>,
+    settings: JsonValue,
+) -> Result<ManagedHookPolicy, HookConfigError> {
+    let object = settings.as_object().ok_or_else(|| {
+        HookConfigError::ManagedSettingsShape {
+            location: sources.join(", "),
+        }
+    })?;
+    let strict_plugin_hooks = match object.get("strictPluginOnlyCustomization") {
+        Some(value) if value.as_bool() == Some(true) => true,
+        Some(value) => value
+            .as_array()
+            .is_some_and(|values| values.iter().any(|value| value.as_str() == Some("hooks"))),
+        None => false,
+    };
+    Ok(ManagedHookPolicy {
+        sources,
+        disable_all_hooks: object
+            .get("disableAllHooks")
+            .and_then(JsonValue::as_bool)
+            == Some(true),
+        allow_managed_hooks_only: object
+            .get("allowManagedHooksOnly")
+            .and_then(JsonValue::as_bool)
+            == Some(true),
+        strict_plugin_hooks,
+    })
+}
+
+fn merge_managed_settings(target: &mut JsonValue, overlay: JsonValue) {
+    match (target, overlay) {
+        (JsonValue::Object(target), JsonValue::Object(overlay)) => {
+            for (key, value) in overlay {
+                if let Some(existing) = target.get_mut(&key) {
+                    merge_managed_settings(existing, value);
+                } else {
+                    target.insert(key, value);
+                }
+            }
+        }
+        (JsonValue::Array(target), JsonValue::Array(overlay)) => {
+            for value in overlay {
+                if !target.iter().any(|existing| existing == &value) {
+                    target.push(value);
+                }
+            }
+        }
+        (target, overlay) => *target = overlay,
+    }
+}
+
+fn read_managed_settings_file(path: &Path) -> Result<JsonValue, HookConfigError> {
+    let location = path.display().to_string();
+    let text = fs::read_to_string(path).map_err(|error| HookConfigError::ManagedSettingsIo {
+        location: location.clone(),
+        error: error.to_string(),
+    })?;
+    serde_json::from_str(&text).map_err(|error| HookConfigError::ManagedSettingsJson {
+        location,
+        error: error.to_string(),
+    })
+}
+
+fn file_managed_hook_policy(root: &Path) -> Result<Option<ManagedHookPolicy>, HookConfigError> {
+    let base = root.join("managed-settings.json");
+    let dropins = root.join("managed-settings.d");
+    let mut effective = None;
+    let mut sources = Vec::new();
+
+    if base.is_file() {
+        effective = Some(read_managed_settings_file(&base)?);
+        sources.push(base.display().to_string());
+    }
+
+    let mut paths = match fs::read_dir(&dropins) {
+        Ok(entries) => entries
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| HookConfigError::ManagedSettingsIo {
+                location: dropins.display().to_string(),
+                error: error.to_string(),
+            })?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => {
+            return Err(HookConfigError::ManagedSettingsIo {
+                location: dropins.display().to_string(),
+                error: error.to_string(),
+            });
+        }
+    };
+    paths.sort_by(|left, right| left.to_string_lossy().cmp(&right.to_string_lossy()));
+    for path in paths {
+        let is_json = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            == Some("json");
+        let hidden = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with('.'));
+        if !path.is_file() || !is_json || hidden {
+            continue;
+        }
+        let value = read_managed_settings_file(&path)?;
+        if let Some(current) = effective.as_mut() {
+            merge_managed_settings(current, value);
+        } else {
+            effective = Some(value);
+        }
+        sources.push(path.display().to_string());
+    }
+
+    effective
+        .map(|settings| managed_hook_policy_from_settings(sources, settings))
+        .transpose()
+}
+
+#[cfg(windows)]
+fn managed_hook_policy_windows() -> Result<Option<ManagedHookPolicy>, HookConfigError> {
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+
+    let machine_source = r"HKLM\SOFTWARE\Policies\ClaudeCode\Settings";
+    if let Some((source, text)) = read_registry_settings(HKEY_LOCAL_MACHINE, machine_source)? {
+        let settings = serde_json::from_str(&text).map_err(|error| {
+            HookConfigError::ManagedSettingsJson {
+                location: source.clone(),
+                error: error.to_string(),
+            }
+        })?;
+        return managed_hook_policy_from_settings(vec![source], settings).map(Some);
+    }
+
+    let program_files = std::env::var_os("ProgramFiles")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
+    if let Some(policy) = file_managed_hook_policy(&program_files.join("ClaudeCode"))? {
+        return Ok(Some(policy));
+    }
+
+    let user_source = r"HKCU\SOFTWARE\Policies\ClaudeCode\Settings";
+    if let Some((source, text)) = read_registry_settings(HKEY_CURRENT_USER, user_source)? {
+        let settings = serde_json::from_str(&text).map_err(|error| {
+            HookConfigError::ManagedSettingsJson {
+                location: source.clone(),
+                error: error.to_string(),
+            }
+        })?;
+        return managed_hook_policy_from_settings(vec![source], settings).map(Some);
+    }
+
+    Ok(None)
+}
+
+#[cfg(windows)]
+fn read_registry_settings(
+    root: windows_sys::Win32::System::Registry::HKEY,
+    source: &str,
+) -> Result<Option<(String, String)>, HookConfigError> {
+    use std::ffi::c_void;
+    use std::ptr::null_mut;
+    use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+    use windows_sys::Win32::System::Registry::{
+        RegGetValueW, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ,
+    };
+
+    let subkey = wide_null(r"SOFTWARE\Policies\ClaudeCode");
+    let value_name = wide_null("Settings");
+    let flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ;
+    let mut value_type = 0;
+    let mut size = 0u32;
+    let mut result = unsafe {
+        RegGetValueW(
+            root,
+            subkey.as_ptr(),
+            value_name.as_ptr(),
+            flags,
+            &mut value_type,
+            null_mut(),
+            &mut size,
+        )
+    };
+    if result == ERROR_FILE_NOT_FOUND {
+        return Ok(None);
+    }
+    if result != ERROR_SUCCESS {
+        return Err(HookConfigError::ManagedSettingsIo {
+            location: source.to_owned(),
+            error: std::io::Error::from_raw_os_error(result as i32).to_string(),
+        });
+    }
+    let mut buffer = vec![0u16; (size as usize).div_ceil(2)];
+    result = unsafe {
+        RegGetValueW(
+            root,
+            subkey.as_ptr(),
+            value_name.as_ptr(),
+            flags,
+            &mut value_type,
+            buffer.as_mut_ptr().cast::<c_void>(),
+            &mut size,
+        )
+    };
+    if result != ERROR_SUCCESS {
+        return Err(HookConfigError::ManagedSettingsIo {
+            location: source.to_owned(),
+            error: std::io::Error::from_raw_os_error(result as i32).to_string(),
+        });
+    }
+    let units = (size as usize / std::mem::size_of::<u16>()).min(buffer.len());
+    let text = String::from_utf16_lossy(&buffer[..units])
+        .trim_end_matches('\0')
+        .to_owned();
+    Ok(Some((source.to_owned(), text)))
+}
+
+#[cfg(windows)]
+fn wide_null(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 pub fn command_for(agent: Agent, executable: &Path) -> String {
@@ -983,6 +1257,57 @@ mod tests {
         assert!(status.installed);
         assert!(status.fallback_installed);
         assert!(!status.stale);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn managed_hook_policy_detects_every_user_hook_blocker() {
+        let policy = managed_hook_policy_from_settings(
+            vec![r"HKLM\SOFTWARE\Policies\ClaudeCode\Settings".into()],
+            json!({
+                "disableAllHooks": true,
+                "allowManagedHooksOnly": true,
+                "strictPluginOnlyCustomization": ["hooks"]
+            }),
+        )
+        .expect("policy");
+        assert!(policy.blocks_user_hooks());
+        assert_eq!(
+            policy.blocking_settings(),
+            vec![
+                "disableAllHooks=true",
+                "allowManagedHooksOnly=true",
+                "strictPluginOnlyCustomization includes hooks"
+            ]
+        );
+    }
+
+    #[test]
+    fn managed_settings_dropins_are_merged_in_name_order() {
+        let dir = test_dir();
+        let dropins = dir.join("managed-settings.d");
+        fs::create_dir_all(&dropins).expect("dropins");
+        fs::write(
+            dir.join("managed-settings.json"),
+            r#"{"disableAllHooks":false,"strictPluginOnlyCustomization":["hooks"],"nested":{"keep":true}}"#,
+        )
+        .expect("base settings");
+        fs::write(
+            dropins.join("20-hooks.json"),
+            r#"{"disableAllHooks":true,"strictPluginOnlyCustomization":["skills"]}"#,
+        )
+        .expect("hook policy");
+        fs::write(
+            dropins.join(".ignored.json"),
+            r#"{"disableAllHooks":false}"#,
+        )
+        .expect("hidden settings");
+
+        let policy = file_managed_hook_policy(&dir)
+            .expect("read policy")
+            .expect("policy exists");
+        assert!(policy.blocks_user_hooks());
+        assert_eq!(policy.sources.len(), 2);
         let _ = fs::remove_dir_all(dir);
     }
 

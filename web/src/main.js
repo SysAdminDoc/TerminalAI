@@ -54,6 +54,7 @@ const PREFLIGHT_META = {
   ok: { glyph: "✓", label: "preflight-ready", tone: "green" },
   warn: { glyph: "!", label: "preflight-needs-attention", tone: "peach" },
   error: { glyph: "×", label: "preflight-unavailable", tone: "red" },
+  blocked: { glyph: "⊘", label: "preflight-blocked", tone: "red" },
   unsupported: { glyph: "—", label: "preflight-not-applicable", tone: "overlay0" },
 };
 const RELEASES_ENDPOINT = "https://api.github.com/repos/SysAdminDoc/TerminalAI/releases/latest";

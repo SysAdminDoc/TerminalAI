@@ -98,6 +98,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - New Claude launches receive a generated UUID through `--session-id`; transcript tailing follows
   that named JSONL file directly and leaves timestamp ranking only for agents without the explicit
   binding capability.
+- Preflight now reads local Claude managed policy sources and marks installed hooks as blocked and
+  non-fixable when an administrator disables them or allows only managed/plugin hooks.
 - Daemon accept retries now back off after persistent listener errors, the optional Codex app-server
   transport rejects oversized frames, and session-store quarantine moves cannot replace a same-name
   file. App and daemon logs now have distinct prefixes, while the app's notification diagnostic no

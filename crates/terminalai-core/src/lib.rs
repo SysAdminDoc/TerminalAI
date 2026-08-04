@@ -68,8 +68,9 @@ pub use hook_config::{
     install_at_with_transport as install_hooks_at_with_transport,
     downgrade_claude_http_at as downgrade_claude_http_hooks_at,
     preview as hook_config_preview, remove_at as remove_hooks_at,
-    status_at as hook_status_at, status_at_with_transport as hook_status_at_with_transport,
-    HookChange, HookConfigError, HookStatus, HookTransport, MANAGED_MARKER,
+    managed_hook_policy, status_at as hook_status_at,
+    status_at_with_transport as hook_status_at_with_transport, HookChange, HookConfigError,
+    HookStatus, HookTransport, ManagedHookPolicy, MANAGED_MARKER,
 };
 pub use hooks::{
     parse_hook, parse_hook_in, HookEvent, HookNotification, HookParseError, HookSignal,
