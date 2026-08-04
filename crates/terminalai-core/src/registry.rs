@@ -40,6 +40,7 @@ const SUBSCRIBER_QUEUE_CAPACITY: usize = 256;
 /// Minimum gap between Git branch lookups for one session. Hooks fire per tool
 /// call; a branch changes far less often than that.
 const BRANCH_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+const NOTIFICATION_RECHECK_INTERVAL: Duration = Duration::from_millis(250);
 pub const DEFAULT_MAX_LIVE_SESSIONS: usize = 3;
 pub const DEFAULT_SESSION_BUDGET_USD: f64 = 5.0;
 
@@ -1740,6 +1741,19 @@ impl SessionRegistry {
         }
     }
 
+    fn recheck_notifications(&self, now: SystemTime) {
+        let changes = {
+            let mut state = lock_state(&self.inner);
+            let sessions: Vec<_> = state
+                .entries
+                .values()
+                .map(|entry| entry.session.clone())
+                .collect();
+            state.notifications.recheck(&sessions, now)
+        };
+        self.emit_notification_changes(changes);
+    }
+
     fn start_entry(
         &self,
         id: &SessionId,
@@ -2754,17 +2768,20 @@ fn restart_scheduler_loop(receiver: Receiver<RestartTask>, inner: Weak<Inner>) {
             SessionRegistry { inner }.restart(task.id, task.generation);
         }
 
-        if let Some(task) = pending.peek() {
-            match receiver.recv_timeout(task.due.saturating_duration_since(Instant::now())) {
-                Ok(task) => pending.push(task),
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+        let wait = pending
+            .peek()
+            .map(|task| task.due.saturating_duration_since(Instant::now()))
+            .unwrap_or(NOTIFICATION_RECHECK_INTERVAL)
+            .min(NOTIFICATION_RECHECK_INTERVAL);
+        match receiver.recv_timeout(wait) {
+            Ok(task) => pending.push(task),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let Some(inner) = inner.upgrade() else {
+                    return;
+                };
+                SessionRegistry { inner }.recheck_notifications(SystemTime::now());
             }
-        } else {
-            match receiver.recv() {
-                Ok(task) => pending.push(task),
-                Err(_) => return,
-            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
         }
     }
 }

@@ -91,6 +91,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Persistent attention states suppressed during startup or long-tool grace are now rechecked and
+  raised when the grace period ends, even without another status transition.
 - Scrollback cleanup now waits for a full writer queue instead of losing a session's delete
   request and leaving its disk segments orphaned.
 - Session ids now escape underscores in both scrollback logs and store sidecars, preventing

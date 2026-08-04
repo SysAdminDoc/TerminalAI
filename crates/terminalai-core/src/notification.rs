@@ -58,6 +58,12 @@ pub enum NotificationChange {
     },
 }
 
+#[derive(Debug, Clone)]
+struct PendingNotification {
+    notification: AttentionNotification,
+    due: SystemTime,
+}
+
 impl NotificationChange {
     /// Convert only visible lifecycle changes into wire events. Suppression is
     /// intentionally silent: the row still reflects the attention status,
@@ -78,6 +84,7 @@ impl NotificationChange {
 #[derive(Debug, Default)]
 pub struct NotificationCenter {
     active: BTreeMap<String, AttentionNotification>,
+    pending: BTreeMap<SessionId, PendingNotification>,
 }
 
 impl NotificationCenter {
@@ -104,6 +111,13 @@ impl NotificationCenter {
 
         let mut changes = self.retract_session(&session.id);
         if let Some(reason) = suppression_reason(previous_status, previous_state_since, now) {
+            self.pending.insert(
+                session.id.clone(),
+                PendingNotification {
+                    notification: notification.clone(),
+                    due: suppression_deadline(reason, now),
+                },
+            );
             changes.push(NotificationChange::Suppressed {
                 notification,
                 reason,
@@ -117,6 +131,7 @@ impl NotificationCenter {
     }
 
     pub fn retract_session(&mut self, id: &SessionId) -> Vec<NotificationChange> {
+        self.pending.remove(id);
         let keys: Vec<_> = self
             .active
             .iter()
@@ -127,6 +142,46 @@ impl NotificationCenter {
             .filter_map(|key| self.active.remove(&key))
             .map(NotificationChange::Retracted)
             .collect()
+    }
+
+    /// Re-evaluate attention states whose initial notification fell inside a
+    /// grace window. The registry calls this from its existing scheduler, so a
+    /// persistent prompt is raised even if no later status transition arrives.
+    pub fn recheck(
+        &mut self,
+        sessions: &[Session],
+        now: SystemTime,
+    ) -> Vec<NotificationChange> {
+        let due: Vec<_> = self
+            .pending
+            .iter()
+            .filter(|(_, pending)| pending.due <= now)
+            .map(|(id, _)| id.clone())
+            .collect();
+        let mut changes = Vec::new();
+        for id in due {
+            let Some(pending) = self.pending.remove(&id) else {
+                continue;
+            };
+            let Some(session) = sessions
+                .iter()
+                .find(|session| session.id == pending.notification.session_id)
+            else {
+                continue;
+            };
+            if session.status != pending.notification.status {
+                continue;
+            }
+            let notification = AttentionNotification::new(session, session.status, now);
+            if self.active.contains_key(&notification.dedup_key) {
+                continue;
+            }
+            changes.extend(self.retract_session(&id));
+            self.active
+                .insert(notification.dedup_key.clone(), notification.clone());
+            changes.push(NotificationChange::Raised(notification));
+        }
+        changes
     }
 
     pub fn active(&self) -> Vec<AttentionNotification> {
@@ -207,6 +262,14 @@ fn suppression_reason(
     } else {
         None
     }
+}
+
+fn suppression_deadline(reason: SuppressionReason, now: SystemTime) -> SystemTime {
+    let grace = match reason {
+        SuppressionReason::Startup => STARTUP_GRACE_PERIOD,
+        SuppressionReason::LongTool => LONG_TOOL_GRACE_PERIOD,
+    };
+    now.checked_add(grace).unwrap_or(now)
 }
 
 #[cfg(test)]
@@ -363,6 +426,38 @@ mod tests {
                 .first(),
             Some(NotificationChange::Raised(_))
         ));
+    }
+
+    #[test]
+    fn suppressed_attention_is_raised_after_the_grace_recheck() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(100);
+        let mut tool = session("repo", SessionStatus::NeedsYou);
+        tool.state_since = now;
+        let mut center = NotificationCenter::default();
+        assert!(matches!(
+            center
+                .observe(
+                    &tool,
+                    SessionStatus::Working,
+                    now - Duration::from_secs(1),
+                    now
+                )
+                .first(),
+            Some(NotificationChange::Suppressed {
+                reason: SuppressionReason::LongTool,
+                ..
+            })
+        ));
+
+        let changes = center.recheck(
+            std::slice::from_ref(&tool),
+            now + LONG_TOOL_GRACE_PERIOD + Duration::from_secs(1),
+        );
+        assert!(matches!(
+            changes.first(),
+            Some(NotificationChange::Raised(_))
+        ));
+        assert_eq!(center.active().len(), 1);
     }
 
     #[test]
