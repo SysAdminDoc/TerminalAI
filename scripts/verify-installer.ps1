@@ -12,7 +12,15 @@ binary catches the failure. This gate:
   3. asserts the sidecars landed next to the installed terminalai.exe,
   4. launches the installed binary on the isolated virtual display and asserts a
      visible fleet window plus a listening daemon pipe,
-  5. uninstalls and removes the scratch prefix.
+  5. installs again over that install with the daemon still running, which is the
+     path every existing user takes and the one a clean install never exercises,
+  6. uninstalls and removes the scratch prefix.
+
+Step 5 exists because the daemon is deliberately designed to outlive its window,
+so at upgrade time it is still running and still holds an open image section on
+its own executable. Whether the two builds differ is irrelevant to that lock, so
+the default is to install the same package over itself; pass -PreviousInstaller
+to run a genuine previous-release-to-current upgrade instead.
 
 Every failure is loud and named. Exit code is non-zero on any failure.
 
@@ -22,6 +30,7 @@ pwsh -NoProfile -File scripts/verify-installer.ps1
 [CmdletBinding()]
 param(
     [string]$Installer = $null,
+    [string]$PreviousInstaller = $null,
     [int]$LaunchTimeoutSeconds = 60,
     [switch]$KeepPrefix
 )
@@ -156,17 +165,56 @@ $prefix = Join-Path ([System.IO.Path]::GetTempPath()) ("terminalai-installcheck-
 $installed = $false
 $process = $null
 $daemonProcess = $null
+$seedDaemon = $null
 
-try {
-    Write-Host "Installing into $prefix"
+$storeDirectory = $null
+if ($env:LOCALAPPDATA) { $storeDirectory = Join-Path $env:LOCALAPPDATA 'TerminalAI' }
+
+function Get-QuarantinedStoreFiles() {
+    if (-not $storeDirectory -or -not (Test-Path -LiteralPath $storeDirectory)) { return @() }
+    @(Get-ChildItem -LiteralPath $storeDirectory -Filter 'sessions.corrupt-*.json' -ErrorAction SilentlyContinue)
+}
+
+function Install-Package([string]$package, [string]$target) {
     # NSIS: /S is silent, /D must be last and unquoted.
-    $arguments = "/S /D=$prefix"
-    $installerProcess = Start-Process -FilePath $Installer -ArgumentList $arguments -PassThru
+    $run = Start-Process -FilePath $package -ArgumentList "/S /D=$target" -PassThru
     # Touching Handle caches it, so ExitCode is still readable after the process
     # exits. Without this, a fast installer leaves an object whose ExitCode throws.
-    $null = $installerProcess.Handle
-    $installerProcess.WaitForExit()
-    $installerExit = $installerProcess.ExitCode
+    $null = $run.Handle
+    $run.WaitForExit()
+    $run.ExitCode
+}
+
+try {
+    if ($PreviousInstaller) {
+        if (-not (Test-Path -LiteralPath $PreviousInstaller)) {
+            throw "previous installer not found: $PreviousInstaller"
+        }
+        Write-Host "Seeding $prefix with the previous release: $PreviousInstaller"
+        $seedExit = Install-Package $PreviousInstaller $prefix
+        if ($seedExit -ne 0) {
+            throw "the previous release's installer exited with code $seedExit; cannot stage an upgrade"
+        }
+        $installed = $true
+        $seedDaemonExe = Join-Path $prefix 'terminalai-daemon.exe'
+        if (-not (Test-Path -LiteralPath $seedDaemonExe)) {
+            throw "the previous release installed no terminalai-daemon.exe; cannot stage an upgrade"
+        }
+        # The GUI is not what holds the lock. Starting the sidecar alone puts the
+        # prefix in exactly the state an upgrade meets: a running daemon with an
+        # open image section on the file the installer is about to overwrite.
+        $seedDaemon = Start-Process -FilePath $seedDaemonExe -PassThru -WindowStyle Hidden
+        $null = $seedDaemon.Handle
+        Start-Sleep -Seconds 2
+        if ($seedDaemon.HasExited) {
+            Write-Host 'note: the previous release daemon exited immediately; the upgrade lock may not be staged' -ForegroundColor Yellow
+        } else {
+            Pass 'previous release installed and its daemon is running'
+        }
+    }
+
+    Write-Host "Installing into $prefix"
+    $installerExit = Install-Package $Installer $prefix
     if ($installerExit -ne 0) {
         Fail "installer exited with code $installerExit"
     } else {
@@ -266,6 +314,96 @@ try {
             Pass 'the application is still running after the daemon handshake'
         } else {
             Fail 'the installed application exited instead of staying up'
+        }
+
+        # The upgrade path. Every existing user installs over a prefix whose daemon is
+        # still running by design, holding its named pipe and an open image section on
+        # its own executable; a clean install into a scratch prefix never touches that.
+        # Close the window and leave the daemon up, which is precisely the documented
+        # steady state, then install over it.
+        if ($failures.Count -eq 0 -and $daemonProcess) {
+            Write-Host 'Upgrading over the running install'
+            if ($process -and -not $process.HasExited) {
+                Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                $process.WaitForExit(10000) | Out-Null
+            }
+            $process = $null
+
+            $daemonProcess.Refresh()
+            if ($daemonProcess.HasExited) {
+                Fail 'the daemon did not outlive its window, so the upgrade lock could not be staged'
+            } else {
+                Pass 'the daemon outlived its window, staging the upgrade lock'
+            }
+
+            $quarantineBefore = @(Get-QuarantinedStoreFiles | Select-Object -ExpandProperty FullName)
+            $upgradeExit = Install-Package $Installer $prefix
+            if ($upgradeExit -ne 0) {
+                Fail "installing over the running daemon exited with code $upgradeExit"
+            } else {
+                Pass 'installer completed over a running daemon'
+            }
+
+            $daemonProcess.Refresh()
+            if (-not $daemonProcess.HasExited) {
+                Fail 'the previous daemon survived the upgrade; its executable was overwritten underneath it or not at all'
+            } else {
+                Pass 'the upgrade stopped the previous daemon before writing over it'
+            }
+            $daemonProcess = $null
+
+            foreach ($sidecar in $declaredSidecars) {
+                $sidecarExe = Join-Path $prefix "$sidecar.exe"
+                if (-not (Test-Path -LiteralPath $sidecarExe)) {
+                    Fail "sidecar missing after the upgrade: $sidecarExe"
+                } else {
+                    Pass "sidecar survived the upgrade: $sidecar.exe"
+                }
+            }
+
+            $relaunch = Invoke-Isolation @('launch', '-FilePath', $appExe)
+            if ($relaunch.ExitCode -ne 0) {
+                Fail "the upgraded application drew no verified window on the isolated display: $($relaunch.Output)"
+            } else {
+                Pass 'the upgraded application starts'
+            }
+
+            $relaunchInfo = $relaunch.Output |
+                Where-Object { $_.TrimStart().StartsWith('{') } |
+                Select-Object -Last 1
+            if ($relaunchInfo) {
+                $appPid = ($relaunchInfo | ConvertFrom-Json).processId
+                $process = Get-Process -Id $appPid -ErrorAction SilentlyContinue
+            }
+
+            $deadline = (Get-Date).AddSeconds($LaunchTimeoutSeconds)
+            $upgradedDaemon = $null
+            while ((Get-Date) -lt $deadline -and -not $upgradedDaemon) {
+                $candidates = @(Get-InstalledDaemonProcesses $prefix $baselineDaemonPids)
+                if ($candidates.Count -gt 0) {
+                    $upgradedDaemon = $candidates[0]
+                } else {
+                    Start-Sleep -Milliseconds 500
+                }
+            }
+            if (-not $upgradedDaemon) {
+                Fail "no terminalai-daemon.exe from the upgraded prefix appeared within ${LaunchTimeoutSeconds}s"
+            } else {
+                $daemonProcess = $upgradedDaemon
+                Pass 'the upgraded daemon is running'
+            }
+
+            # A store the upgraded daemon cannot parse is renamed aside rather than
+            # reported, so silence here is not evidence: look for the rename.
+            $newlyQuarantined = @(
+                Get-QuarantinedStoreFiles |
+                    Where-Object { $quarantineBefore -notcontains $_.FullName }
+            )
+            if ($newlyQuarantined.Count -gt 0) {
+                Fail "the upgraded daemon quarantined the session store: $(($newlyQuarantined | Select-Object -ExpandProperty Name) -join ', ')"
+            } else {
+                Pass 'the session store survived the upgrade unquarantined'
+            }
         }
     } else {
         Write-Host 'Skipping launch: the installed prefix is already incomplete.' -ForegroundColor Yellow

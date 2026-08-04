@@ -3,6 +3,29 @@
 All notable changes to TerminalAI are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- Upgrading over an existing install no longer fails on the running daemon. Tauri's NSIS template
+  stops the main binary and nothing else, and this app's daemon is deliberately designed to outlive
+  its window — so at upgrade time it was still running, still holding its named pipe, and still
+  holding an open image section on the executable the installer was about to overwrite. Every
+  existing user took that path. An `NSIS_HOOK_PREINSTALL` now asks the daemon to shut down cleanly
+  through the installed probe, so its session store is flushed rather than losing whatever
+  accumulated since the last write, then stops both sidecars before the first file is written. The
+  uninstaller does the same, for the same reason. The reboot fallback was never available here:
+  `/REBOOTOK` applies to deletions only, and the delayed move it maps to needs Administrators while
+  this installer runs as the current user.
+
+- The release gate now proves the upgrade path rather than only a clean install. It installs, starts
+  the app, closes the window while leaving the daemon running — the documented steady state — then
+  installs over it and asserts the previous daemon was stopped, every sidecar survived, the app
+  starts again and the session store was not quarantined. Verified to fail without the installer
+  hook above. `-PreviousInstaller` stages a genuine previous-release-to-current upgrade when an
+  earlier package is available; without it the same package is installed over itself, which holds
+  the identical lock.
+
 ## [0.6.0] — 2026-08-03
 
 ### Added
