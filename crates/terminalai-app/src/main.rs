@@ -1,6 +1,9 @@
 mod preset;
 mod projects;
 mod toast;
+mod work;
+
+use terminalai_core::work_queue::{EntryState, WorkQueue};
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
@@ -29,6 +32,8 @@ struct AppState {
     client: Mutex<Option<DaemonClient>>,
     presets: PresetStore,
     project_roots: projects::ProjectRoots,
+    prompts: work::PromptLibrary,
+    work_run_store: work::WorkRunStore,
     output_channels: Arc<Mutex<HashMap<SessionId, Channel<InvokeResponseBody>>>>,
 }
 
@@ -534,6 +539,203 @@ fn list_templates(cwd: PathBuf) -> Result<Vec<terminalai_core::template::Templat
 #[tauri::command]
 fn save_preset(preset: Preset, state: State<'_, AppState>) -> Result<(), String> {
     state.presets.save(preset)
+}
+
+/// The stored prompt library.
+#[tauri::command]
+fn list_stored_prompts(state: State<'_, AppState>) -> Result<Vec<work::StoredPrompt>, String> {
+    state.prompts.list()
+}
+
+#[tauri::command]
+fn save_stored_prompt(prompt: work::StoredPrompt, state: State<'_, AppState>) -> Result<(), String> {
+    state.prompts.save(prompt)
+}
+
+#[tauri::command]
+fn delete_stored_prompt(name: String, state: State<'_, AppState>) -> Result<bool, String> {
+    state.prompts.delete(&name)
+}
+
+#[tauri::command]
+fn work_run(state: State<'_, AppState>) -> Result<Option<WorkQueue>, String> {
+    state.work_run_store.get()
+}
+
+/// Queue one stored prompt against a set of projects.
+///
+/// Replaces any previous run: two at once would compete for the same fleet
+/// slots, and neither report would describe what actually happened.
+#[tauri::command]
+fn start_work_run(
+    prompt: String,
+    projects: Vec<PathBuf>,
+    state: State<'_, AppState>,
+) -> Result<Option<WorkQueue>, String> {
+    if state.prompts.get(&prompt)?.is_none() {
+        return Err(format!("no stored prompt named {prompt}"));
+    }
+    let named: Vec<(String, PathBuf)> = projects
+        .into_iter()
+        .map(|path| {
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.to_string_lossy().into_owned());
+            (name, path)
+        })
+        .collect();
+    let queue = WorkQueue::new(&prompt, &named).map_err(|error| error.to_string())?;
+    state.work_run_store.set(Some(queue))?;
+    drive_work_run(&state)?;
+    state.work_run_store.get()
+}
+
+/// Accept the risk on a project flagged for a dirty tree.
+#[tauri::command]
+fn approve_flagged_project(path: PathBuf, state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .work_run_store
+        .update(|queue| queue.approve_flagged(&path))?
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    drive_work_run(&state)
+}
+
+#[tauri::command]
+fn skip_work_project(path: PathBuf, state: State<'_, AppState>) -> Result<(), String> {
+    state
+        .work_run_store
+        .update(|queue| queue.set_state(&path, EntryState::Skipped))?
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    drive_work_run(&state)
+}
+
+#[tauri::command]
+fn set_work_run_paused(paused: bool, state: State<'_, AppState>) -> Result<(), String> {
+    state.work_run_store.update(|queue| queue.paused = paused)?;
+    if !paused {
+        drive_work_run(&state)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn clear_work_run(state: State<'_, AppState>) -> Result<(), String> {
+    state.work_run_store.set(None)
+}
+
+/// Start as many of the run's projects as the fleet has room for.
+///
+/// Admission is the fleet's decision, not the queue's: this asks for one slot at
+/// a time and stops when the answer is no. Deciding here how many agents the
+/// machine can run would duplicate a budget that already exists, and drift.
+fn drive_work_run(state: &State<'_, AppState>) -> Result<(), String> {
+    let client = daemon_client(state)?;
+    loop {
+        let Some(queue) = state.work_run_store.get()? else {
+            return Ok(());
+        };
+        if queue.paused || queue.is_finished() {
+            return Ok(());
+        }
+        let admission = match daemon_response(&client, Request::Snapshot)? {
+            Response::Snapshot { admission, .. } => admission,
+            Response::Error { message } => return Err(message),
+            other => return Err(format!("unexpected snapshot response: {other:?}")),
+        };
+        if admission.live_sessions >= admission.max_live_sessions {
+            return Ok(());
+        }
+        let Some(entry) = queue.next_pending().cloned() else {
+            return Ok(());
+        };
+
+        // Checked now rather than when the run was created: a tree the operator
+        // cleaned up in the meantime should not stay flagged from an hour ago.
+        let tree = terminalai_core::work_queue::tree_state(&entry.project);
+        if !tree.is_clean() {
+            state
+                .work_run_store
+                .update(|queue| queue.set_state(&entry.project, EntryState::Flagged { tree }))?;
+            continue;
+        }
+
+        let text = match state.prompts.get(&queue.prompt)? {
+            Some(prompt) => prompt.text,
+            None => {
+                state.work_run_store.update(|queue| {
+                    queue.set_state(
+                        &entry.project,
+                        EntryState::Failed {
+                            detail: "the stored prompt was deleted while the run was going".into(),
+                        },
+                    )
+                })?;
+                continue;
+            }
+        };
+
+        // Launched with no initial prompt: the text goes on the session own
+        // prompt queue, which delivers it as a bracketed-paste pty write. As an
+        // argument it would reach a command line, and these prompts are
+        // kilobytes of prose containing characters Windows quoting mangles.
+        let spec = LaunchSpec {
+            cwd: entry.project.clone(),
+            ..LaunchSpec::default()
+        };
+        let launched = daemon_response(
+            &client,
+            Request::Launch {
+                spec: Box::new(spec),
+                configured_path: None,
+            },
+        )?;
+        let id = match launched {
+            Response::Launched { id, .. } => id,
+            Response::Error { message } => {
+                state.work_run_store.update(|queue| {
+                    queue.set_state(&entry.project, EntryState::Failed { detail: message })
+                })?;
+                continue;
+            }
+            other => return Err(format!("unexpected launch response: {other:?}")),
+        };
+        match daemon_response(
+            &client,
+            Request::EnqueuePrompt {
+                id: id.clone(),
+                text,
+            },
+        )? {
+            Response::Enqueued { .. } => {
+                state.work_run_store.update(|queue| {
+                    queue.set_state(
+                        &entry.project,
+                        EntryState::Running {
+                            session: id.clone(),
+                        },
+                    )
+                })?;
+            }
+            Response::Error { message } => {
+                // The session exists but has no instruction, which is worse than
+                // not starting it at all: say so rather than leave it running.
+                state.work_run_store.update(|queue| {
+                    queue.set_state(
+                        &entry.project,
+                        EntryState::Failed {
+                            detail: format!(
+                                "session started but the prompt could not be queued: {message}"
+                            ),
+                        },
+                    )
+                })?;
+            }
+            other => return Err(format!("unexpected queue response: {other:?}")),
+        }
+    }
 }
 
 /// Every repository under the registered roots.
@@ -1523,6 +1725,15 @@ fn run_app() -> Result<(), String> {
             restore_builtin_presets,
             list_projects,
             scan_projects,
+            list_stored_prompts,
+            save_stored_prompt,
+            delete_stored_prompt,
+            work_run,
+            start_work_run,
+            approve_flagged_project,
+            skip_work_project,
+            set_work_run_paused,
+            clear_work_run,
             list_project_roots,
             add_project_root,
             remove_project_root,
@@ -1556,6 +1767,12 @@ fn run_app() -> Result<(), String> {
             let project_roots = projects::ProjectRoots::load_default().map_err(|error| {
                 Box::new(std::io::Error::other(error)) as Box<dyn std::error::Error>
             })?;
+            let prompts = work::PromptLibrary::load_default().map_err(|error| {
+                Box::new(std::io::Error::other(error)) as Box<dyn std::error::Error>
+            })?;
+            let work_run_store = work::WorkRunStore::load_default().map_err(|error| {
+                Box::new(std::io::Error::other(error)) as Box<dyn std::error::Error>
+            })?;
             let output_channels = Arc::new(Mutex::new(HashMap::new()));
             if let Some(client) = client.as_ref() {
                 bridge_daemon_events(app.handle(), client, output_channels.clone());
@@ -1564,6 +1781,8 @@ fn run_app() -> Result<(), String> {
                 client: Mutex::new(client),
                 presets,
                 project_roots,
+                prompts,
+                work_run_store,
                 output_channels,
             });
             Ok(())

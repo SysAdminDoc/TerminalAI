@@ -7,6 +7,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- A stored prompt library and a work queue that runs one prompt across many projects, creating a
+  session per project as the fleet has room. Distinct from broadcast, which targets sessions that
+  already exist; this one creates them, so it is far more careful. A repository with uncommitted
+  changes is flagged rather than launched into — an agent let loose on a dirty tree mixes its work
+  with the operator's, and the resulting diff cannot be separated afterwards — and a tree Git
+  cannot read counts as not clean, never as clean. The check runs when the entry is about to
+  start, not when the run was created, so a tree cleaned up in the meantime is not still flagged
+  from an hour ago. Admission stays the fleet's decision: the queue asks for one slot at a time and
+  stops when the answer is no. Every outcome category is reported, including the ones that did
+  nothing, because a run over forty projects that says only "done" is one the operator has to audit
+  by hand. Runs survive a restart.
+- The prompt is delivered as a bracketed-paste pty write, not as a command-line argument: the
+  session is launched with no initial prompt and the text goes onto its prompt queue. These
+  prompts are kilobytes of prose, and a command line is the wrong place for that on any platform —
+  an impossible one on Windows, where quoting mangles `&`, `^`, `|` and `%`.
+- The library seeds itself once from the operator's own templates in `~/.claude/prompts` when they
+  are present. Nothing is invented when they are not: a stored prompt named "drain the roadmap"
+  containing something this app made up would be worse than an empty library. A seeded prompt the
+  operator deletes stays deleted.
+
 - A prompt queue per session. Queue what the agent should do next while it is still working, and
   each prompt is sent when the run finishes — a session becomes something you load up and leave
   rather than something you come back to. The queue advances on the same reported status the fleet

@@ -84,6 +84,15 @@ button { cursor: pointer; }
 /* A queued count is information; a paused queue is a thing to act on, so only
    the paused state takes a colour. */
 .row-action-warn { color: var(--peach); }
+.work-run-bar { display: flex; gap: 10px; align-items: end; margin-top: 12px; }
+.work-run-bar .field { flex: 1; }
+.work-run-body { margin-top: 12px; max-height: 30vh; overflow-y: auto; }
+.work-entry { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 3px 4px; font-size: 12px; border-bottom: 1px solid var(--surface0); }
+.work-entry-state { color: var(--subtext0); }
+/* Only the states needing a decision take a colour; done and running are the
+   expected path and should not compete for attention. */
+.work-entry-flagged .work-entry-state { color: var(--peach); }
+.work-entry-failed .work-entry-state { color: var(--red); }
 .top-actions { display: flex; align-items: center; gap: 8px; }
 .button { border: 1px solid transparent; border-radius: 7px; padding: 8px 12px; color: var(--text); font-size: 12px; font-weight: 650; transition: border-color .16s ease, background .16s ease, transform .16s ease; }.button:hover { transform: translateY(-1px); }.button:active { transform: translateY(0); }
 .button-primary { background: linear-gradient(135deg, #cba6f7, #b4befe); color: #1e1e2e; box-shadow: 0 6px 20px rgba(203, 166, 247, .16); }.button-primary:hover { background: linear-gradient(135deg, #d8b9ff, #c3ccff); }

@@ -141,6 +141,8 @@ const state = {
   scannedProjects: [],
   queueSession: null,
   queuePrompts: [],
+  storedPrompts: [],
+  workRun: null,
   announcementQueue: new Map(),
   announcementTimer: null,
   orderFreeze: null,
@@ -1613,6 +1615,158 @@ function renderProjects() {
   }
 }
 
+const WORK_STATE_LABEL = {
+  pending: "work-state-pending",
+  running: "work-state-running",
+  done: "work-state-done",
+  failed: "work-state-failed",
+  skipped: "work-state-skipped",
+  flagged: "work-state-flagged",
+};
+
+/**
+ * The run in progress, if there is one.
+ *
+ * Every category is shown, including the ones that did nothing. A run over
+ * forty projects reporting only "done" is one the operator has to audit by
+ * hand, which is the work they were trying to avoid.
+ */
+function renderWorkRun() {
+  const run = state.workRun;
+  const body = $("work-run-body");
+  body.hidden = !run;
+  $("work-pause-button").hidden = !run || run.paused;
+  $("work-resume-button").hidden = !run || !run.paused;
+  $("work-clear-button").hidden = !run;
+  if (!run) return;
+
+  const counts = run.entries.reduce((totals, entry) => {
+    const kind = entry.state.kind;
+    totals[kind] = (totals[kind] ?? 0) + 1;
+    return totals;
+  }, {});
+  const summary = t("work-outcome", {
+    done: counts.done ?? 0,
+    running: counts.running ?? 0,
+    pending: counts.pending ?? 0,
+    flagged: counts.flagged ?? 0,
+    failed: counts.failed ?? 0,
+    skipped: counts.skipped ?? 0,
+  });
+  const rows = run.entries
+    .map((entry) => {
+      const kind = entry.state.kind;
+      const label = t(WORK_STATE_LABEL[kind] ?? "work-state-pending");
+      const detail = workEntryDetail(entry);
+      // Only a flagged entry offers a decision; everything else is a report.
+      const actions =
+        kind === "flagged"
+          ? `<span><button type="button" class="button button-quiet" data-work-approve="${escapeHtml(entry.project)}">${escapeHtml(t("work-approve"))}</button><button type="button" class="button button-quiet" data-work-skip="${escapeHtml(entry.project)}">${escapeHtml(t("work-skip"))}</button></span>`
+          : "<span></span>";
+      return `<div class="work-entry work-entry-${escapeHtml(kind)}"><span title="${escapeHtml(entry.project)}">${escapeHtml(entry.name)}</span><span class="work-entry-state" title="${escapeHtml(detail)}">${escapeHtml(label)}</span>${actions}</div>`;
+    })
+    .join("");
+  body.innerHTML = `<p class="rollup-total">${escapeHtml(run.paused ? `${t("work-run-paused")} · ${summary}` : summary)}</p>${rows}`;
+  for (const button of body.querySelectorAll("[data-work-approve]")) {
+    button.addEventListener("click", () => void workEntryAction("approve_flagged_project", button.dataset.workApprove));
+  }
+  for (const button of body.querySelectorAll("[data-work-skip]")) {
+    button.addEventListener("click", () => void workEntryAction("skip_work_project", button.dataset.workSkip));
+  }
+}
+
+/** Why an entry is in the state it is, for the row's tooltip. */
+function workEntryDetail(entry) {
+  const state = entry.state;
+  if (state.kind === "failed") return state.detail ?? "";
+  if (state.kind === "flagged") {
+    const tree = state.tree ?? {};
+    if (tree.kind === "dirty") return t("work-dirty-detail", { count: tree.files?.length ?? 0 });
+    if (tree.kind === "unknown") return `${t("work-tree-unknown")}: ${tree.detail ?? ""}`;
+  }
+  if (state.kind === "running" || state.kind === "done") return state.session ?? "";
+  return "";
+}
+
+async function workEntryAction(command, path) {
+  try {
+    await invoke(command, { path });
+  } catch (error) {
+    showToast(String(error));
+  }
+  await refreshWorkRun();
+}
+
+async function setWorkRunPaused(paused) {
+  try {
+    await invoke("set_work_run_paused", { paused });
+  } catch (error) {
+    showToast(String(error));
+  }
+  await refreshWorkRun();
+}
+
+async function refreshWorkRun() {
+  try {
+    state.workRun = await invoke("work_run");
+  } catch (error) {
+    state.workRun = null;
+    showToast(String(error));
+  }
+  renderWorkRun();
+}
+
+async function loadStoredPrompts() {
+  try {
+    state.storedPrompts = await invoke("list_stored_prompts");
+  } catch (error) {
+    state.storedPrompts = [];
+    showToast(String(error));
+  }
+  const select = $("work-prompt-select");
+  select.innerHTML = state.storedPrompts
+    .map((prompt) => `<option value="${escapeHtml(prompt.name)}">${escapeHtml(prompt.name)}</option>`)
+    .join("");
+  // With nothing stored there is nothing to run, and a button that always
+  // errors is worse than one that is plainly unavailable.
+  const empty = state.storedPrompts.length === 0;
+  $("work-start-button").disabled = empty;
+  select.disabled = empty;
+  if (empty) {
+    select.innerHTML = `<option value="">${escapeHtml(t("work-no-prompts"))}</option>`;
+  }
+}
+
+/**
+ * Run the chosen prompt across the projects currently listed.
+ *
+ * Deliberately the *listed* projects rather than all known ones: the filter
+ * above the table is how the operator says which they mean, and a button that
+ * ignored it would launch agents in repositories they had just filtered out.
+ */
+async function startWorkRun() {
+  const prompt = $("work-prompt-select").value;
+  if (!prompt) return;
+  const openOnly = $("projects-open-only").checked;
+  const listed = openOnly
+    ? state.scannedProjects.filter((item) => hasOpenWork(item.roadmap))
+    : state.scannedProjects;
+  if (!listed.length) {
+    showToast(t("projects-none-matching"));
+    return;
+  }
+  try {
+    state.workRun = await invoke("start_work_run", {
+      prompt,
+      projects: listed.map((item) => item.path),
+    });
+    showToast(t("work-started", { count: listed.length }), "success");
+  } catch (error) {
+    showToast(String(error));
+  }
+  renderWorkRun();
+}
+
 async function openProjects() {
   const dialog = $("projects-dialog");
   if (!dialog.open) dialog.showModal();
@@ -1626,6 +1780,8 @@ async function openProjects() {
     showToast(String(error));
   }
   renderProjects();
+  await loadStoredPrompts();
+  await refreshWorkRun();
 }
 
 /** The queue button's glyph: the count when there is one, an outline when not. */
@@ -2548,6 +2704,17 @@ function bindEvents() {
   $("projects-toggle").addEventListener("click", () => void openProjects());
   $("close-projects-button").addEventListener("click", () => $("projects-dialog").close());
   $("projects-open-only").addEventListener("change", () => renderProjects());
+  $("work-start-button").addEventListener("click", () => void startWorkRun());
+  $("work-pause-button").addEventListener("click", () => void setWorkRunPaused(true));
+  $("work-resume-button").addEventListener("click", () => void setWorkRunPaused(false));
+  $("work-clear-button").addEventListener("click", async () => {
+    try {
+      await invoke("clear_work_run");
+    } catch (error) {
+      showToast(String(error));
+    }
+    await refreshWorkRun();
+  });
   $("broadcast-toggle").addEventListener("click", () => openBroadcast());
   $("cancel-broadcast-button").addEventListener("click", () => $("broadcast-dialog").close());
   $("send-broadcast-button").addEventListener("click", () => void sendBroadcast());

@@ -105,6 +105,31 @@ fleet-live = live
 fleet-spent = spent
 rollup-title = Fleet spend
 projects-title = Projects
+work-prompt = Run this prompt
+work-start = Run across listed projects
+work-pause = Pause run
+work-resume = Resume run
+work-clear = Clear run
+work-no-prompts = No stored prompts yet — add one in your prompt library
+work-started = Queued { $count } { $count ->
+    [one] project
+   *[other] projects
+  }
+work-outcome = { $done } done · { $running } running · { $pending } waiting · { $flagged } flagged · { $failed } failed · { $skipped } skipped
+work-run-paused = Run paused
+work-state-pending = waiting for a slot
+work-state-running = running
+work-state-done = done
+work-state-failed = failed
+work-state-skipped = skipped
+work-state-flagged = uncommitted changes
+work-approve = Run anyway
+work-skip = Skip
+work-dirty-detail = { $count } uncommitted { $count ->
+    [one] change
+   *[other] changes
+  }
+work-tree-unknown = Git could not read this tree
 label-queue = Prompt queue for this session
 action-queue = Queue prompts for { $name }
 queue-count-title = { $count } queued for { $name }

@@ -94,7 +94,7 @@
         <label class="field field-wide check-field"><input id="projects-open-only" type="checkbox" checked /><span data-i18n="projects-open-only">Only projects with open roadmap items</span></label>
         <div id="projects-body" class="rollup-body"></div>
       </div>
-      <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-projects-button" data-i18n="button-close">Close</button></div></div>
+      <div class="work-run-bar"><label class="field"><span data-i18n="work-prompt">Run this prompt</span><select id="work-prompt-select"></select></label><button type="button" class="button button-primary" id="work-start-button" data-i18n="work-start">Run across listed projects</button></div><div id="work-run-body" class="work-run-body" hidden></div><div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-quiet" id="work-pause-button" data-i18n="work-pause" hidden>Pause run</button><button type="button" class="button button-quiet" id="work-resume-button" data-i18n="work-resume" hidden>Resume run</button><button type="button" class="button button-quiet" id="work-clear-button" data-i18n="work-clear" hidden>Clear run</button><button type="button" class="button button-secondary" id="close-projects-button" data-i18n="button-close">Close</button></div></div>
     </dialog>
 
     <dialog id="broadcast-dialog" class="launcher-dialog broadcast-dialog" aria-label="Broadcast a prompt" data-i18n-aria-label="label-broadcast">

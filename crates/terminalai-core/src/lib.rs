@@ -39,6 +39,7 @@ pub mod tail;
 pub mod store;
 pub mod template;
 pub mod transcript;
+pub mod work_queue;
 pub mod worktree;
 
 pub use agent::{Agent, AgentBinary, ResolveError};
