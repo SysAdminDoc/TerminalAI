@@ -32,5 +32,5 @@ test("neutral toasts use a neutral border and errors keep the error border", () 
   const base = styles.match(/\.toast \{([^}]*)\}/)?.[1] ?? "";
   assert.match(base, /border: 1px solid rgba\(88, 91, 112, \.45\)/);
   assert.doesNotMatch(base, /243, 139, 168/);
-  assert.match(styles, /\.toast-error \{ border-color: rgba\(243, 139, 168, \.4\); \}/);
+  assert.match(styles, /\.toast-error \{\s*border-color: rgba\(243, 139, 168, \.4\);\s*\}/);
 });

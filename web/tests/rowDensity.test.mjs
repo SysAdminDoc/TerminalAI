@@ -96,5 +96,5 @@ test("the fleet row and its column labels share one grid definition", () => {
 test("the hidden attribute actually hides a display-carrying block", () => {
   // Author `display: grid`/`flex` outranks the UA sheet's [hidden] rule, so the
   // wide-meta and reply blocks stayed visible and doubled the row height.
-  assert.match(css, /\[hidden\] \{ display: none !important; \}/);
+  assert.match(css, /\[hidden\] \{\s*display: none !important;\s*\}/);
 });

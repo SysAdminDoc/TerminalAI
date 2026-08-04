@@ -8,7 +8,10 @@ const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 
 test("the narrow status label overrides the compact hide rule", () => {
-  assert.match(styles, /@media \(max-width: 1180px\) \{[\s\S]*?\.row-folder \.row-status-label \{ display: inline; \}/);
+  assert.match(
+    styles,
+    /@media \(max-width: 1180px\) \{[\s\S]*?\.row-folder \.row-status-label \{\s*display: inline;\s*\}/,
+  );
 });
 
 test("the empty state stays hidden until the first snapshot finishes", () => {

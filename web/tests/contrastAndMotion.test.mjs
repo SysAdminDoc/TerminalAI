@@ -18,7 +18,7 @@ test("small UI text does not use decorative contrast tokens", () => {
 
 test("forced colors preserves the xterm surface and maps controls to system colors", () => {
   assert.match(css, /@media \(forced-colors: active\)/);
-  assert.match(css, /\.terminal-host \.xterm \{ forced-color-adjust: none; \}/);
+  assert.match(css, /\.terminal-host \.xterm \{\s*forced-color-adjust: none;\s*\}/);
   assert.match(css, /background: Canvas;/);
   assert.match(css, /color: CanvasText;/);
   assert.match(css, /background: Highlight;/);
@@ -27,8 +27,11 @@ test("forced colors preserves the xterm surface and maps controls to system colo
 
 test("reduced motion disables the remaining spinner and glow effects", () => {
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
-  assert.match(css, /\.fleet-loading::before \{ animation: none !important; \}/);
-  assert.match(css, /\.unread-dot, \.pulse-peach, \.pulse-yellow, \.pulse-mauve, \.pulse-red \{ box-shadow: none !important; \}/);
+  assert.match(css, /\.fleet-loading::before \{\s*animation: none !important;\s*\}/);
+  assert.match(
+    css,
+    /\.unread-dot,\s*\.pulse-peach,\s*\.pulse-yellow,\s*\.pulse-mauve,\s*\.pulse-red \{\s*box-shadow: none !important;\s*\}/,
+  );
 });
 
 test("status metadata has matching tone and pulse classes", () => {

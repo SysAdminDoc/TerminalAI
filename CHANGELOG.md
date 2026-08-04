@@ -7,6 +7,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Changed
 
+- The stylesheet is one declaration per line. `styles.css` shipped as 293 lines whose longest was
+  2,204 characters, with whole rules concatenated onto one line — and a literal `\n` inside one of
+  them had already taken out the Review view's only layout, in a form no review could have caught.
+  It is now 2,835 lines with a longest of 92, verified byte-identical after collapsing whitespace and
+  comments so the reformat provably changed no rule. A new `lineLength.test.mjs` states the limits
+  (100 columns for stylesheets, 120 for frontend modules), rejects a stylesheet line carrying more
+  than one declaration, and holds `main.js` to the long-line count it already has so the remaining
+  debt cannot grow while its renderers are extracted. Five CSS assertions that had hard-coded the
+  one-line rule shape now match the rule regardless of formatting — they were asserting layout where
+  they meant to assert intent.
+
 - The window in which a newly spawned agent is not yet inside its job object is down to a single
   syscall, and is now measured rather than assumed. Containment previously created the job, applied
   its limits and only then assigned the process — three syscalls after `CreateProcessW` returned,
