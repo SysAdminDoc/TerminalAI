@@ -17,6 +17,8 @@ const COMMANDS: &[&str] = &[
     "review_snapshot",
     "external_sessions",
     "mark_reviewed",
+    "admission_config",
+    "set_admission",
     "land_session",
     "preview_launch",
     "resolve_agent",

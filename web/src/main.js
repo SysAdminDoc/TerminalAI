@@ -289,6 +289,72 @@ function renderAuthBanner() {
   $("auth-banner-message").textContent = t("auth-expired-detail", { agents });
 }
 
+/// Read a settings field as an optional number.
+///
+/// Empty means "no limit", which is a different fact from zero: zero would ask
+/// the daemon for a ceiling of nothing, and the daemon treats that as disabled
+/// anyway, so the two would silently agree by accident rather than by intent.
+function optionalNumber(id) {
+  const raw = $(id).value.trim();
+  if (!raw) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+async function openSettings() {
+  try {
+    const settings = await invoke("admission_config");
+    $("settings-max-live").value = settings.max_live_sessions ?? "";
+    $("settings-default-budget").value = settings.default_budget_usd ?? "";
+    $("settings-spend-ceiling").value = settings.spend_ceiling_usd ?? "";
+    $("settings-spend-window").value = settings.spend_window_hours
+      ? Math.round(settings.spend_window_hours)
+      : "";
+    $("settings-memory-budget").value = settings.memory_budget_mb ?? "";
+    $("settings-memory-cap").value = settings.session_memory_cap_mb ?? "";
+    $("settings-max-processes").value = settings.max_processes_per_session ?? "";
+    const fromEnvironment = Array.isArray(settings.from_environment) ? settings.from_environment : [];
+    const note = $("settings-environment-note");
+    note.hidden = fromEnvironment.length === 0;
+    note.textContent = fromEnvironment.length
+      ? t("settings-from-environment", { names: fromEnvironment.join(", ") })
+      : "";
+    $("settings-error").hidden = true;
+    $("settings-dialog").showModal();
+  } catch (error) {
+    showToast(String(error));
+  }
+}
+
+async function saveSettings() {
+  const maxLive = Number($("settings-max-live").value.trim());
+  if (!Number.isInteger(maxLive) || maxLive < 1) {
+    const problem = $("settings-error");
+    problem.textContent = t("settings-max-live") + ": 1+";
+    problem.hidden = false;
+    return;
+  }
+  const settings = {
+    max_live_sessions: maxLive,
+    default_budget_usd: optionalNumber("settings-default-budget"),
+    spend_ceiling_usd: optionalNumber("settings-spend-ceiling"),
+    spend_window_hours: optionalNumber("settings-spend-window") || 24,
+    memory_budget_mb: optionalNumber("settings-memory-budget"),
+    session_memory_cap_mb: optionalNumber("settings-memory-cap"),
+    max_processes_per_session: optionalNumber("settings-max-processes"),
+  };
+  try {
+    await invoke("set_admission", { settings });
+    $("settings-dialog").close();
+    showToast(t("settings-saved"), "success");
+    await loadSnapshot();
+  } catch (error) {
+    const problem = $("settings-error");
+    problem.textContent = String(error);
+    problem.hidden = false;
+  }
+}
+
 function showAttentionToast(notification) {
   if (state.attentionToasts.has(notification.dedup_key)) return;
   const session = state.sessions.find((item) => item.id === notification.session_id);
@@ -3345,6 +3411,9 @@ function bindEvents() {
     await refreshQueue();
   });
   $("explainer-toggle").addEventListener("click", () => openExplainer());
+  $("settings-toggle").addEventListener("click", () => void openSettings());
+  $("save-settings-button").addEventListener("click", () => void saveSettings());
+  $("close-settings-button").addEventListener("click", () => $("settings-dialog").close());
   $("empty-explainer-button").addEventListener("click", () => openExplainer());
   $("close-explainer-button").addEventListener("click", () => $("explainer-dialog").close());
   $("empty-root-button").addEventListener("click", () => void registerProjectRoot());

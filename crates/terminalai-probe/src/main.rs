@@ -87,6 +87,7 @@ fn main() {
         Some("broadcast") => cmd_broadcast(&args[1..]),
         Some("queue") => cmd_queue(&args[1..]),
         Some("status") => cmd_status(&args[1..]),
+        Some("limits") => cmd_limits(&args[1..]),
         Some("shutdown") => cmd_shutdown(&args[1..]),
         Some("exec") => cmd_exec(&args[1..]),
         Some("cpu-idle") => cmd_cpu_idle(&args[1..]),
@@ -260,6 +261,47 @@ fn cmd_queue(args: &[String]) -> i32 {
             println!("queued as {prompt}");
             0
         }
+        Ok(response) => print_control_response(response, machine),
+        Err(error) => print_control_error(error, machine),
+    }
+}
+
+/// Read or set the daemon-wide admission policy over the control pipe.
+///
+/// The dialog cannot be unit-tested against a live daemon, so this drives the
+/// same two requests it does: `limits` reads, `limits --max-live N` writes.
+fn cmd_limits(args: &[String]) -> i32 {
+    let (machine, args) = without_json(args);
+    let mut max_live: Option<usize> = None;
+    let mut iter = args.iter();
+    while let Some(argument) = iter.next() {
+        if argument == "--max-live" {
+            match iter.next().and_then(|value| value.parse::<usize>().ok()) {
+                Some(value) => max_live = Some(value),
+                None => return control_usage("--max-live needs a positive integer"),
+            }
+        }
+    }
+    let request = match max_live {
+        None => Request::AdmissionConfig,
+        Some(max_live_sessions) => {
+            let current = match control_call(Request::AdmissionConfig) {
+                Ok(Response::Admission { admission }) => admission,
+                Ok(other) => return print_control_response(other, machine),
+                Err(error) => return print_control_error(error, machine),
+            };
+            Request::SetAdmission {
+                max_live_sessions,
+                default_budget_usd: current.default_budget_usd,
+                spend_ceiling_usd: current.spend_ceiling_usd,
+                spend_window_hours: Some(current.spend_window_hours),
+                memory_budget_mb: current.memory_budget_mb,
+                session_memory_cap_mb: current.session_memory_cap_mb,
+                max_processes_per_session: current.max_processes_per_session,
+            }
+        }
+    };
+    match control_call(request) {
         Ok(response) => print_control_response(response, machine),
         Err(error) => print_control_error(error, machine),
     }

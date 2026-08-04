@@ -220,6 +220,18 @@ pub enum Request {
     MarkReviewed {
         id: SessionId,
     },
+    /// Read the daemon-wide admission policy.
+    AdmissionConfig,
+    /// Replace it without restarting. Running sessions are untouched.
+    SetAdmission {
+        max_live_sessions: usize,
+        default_budget_usd: Option<f64>,
+        spend_ceiling_usd: Option<f64>,
+        spend_window_hours: Option<f64>,
+        memory_budget_mb: Option<u64>,
+        session_memory_cap_mb: Option<u64>,
+        max_processes_per_session: Option<u32>,
+    },
     /// Land a session's uncommitted work into a target repository, or refuse.
     /// Serialised daemon-side so two landings cannot interleave their
     /// precondition checks — the failure a hand-built merge queue works around.
@@ -361,6 +373,9 @@ pub enum Response {
     Hello {
         protocol: u16,
         daemon_pid: u32,
+    },
+    Admission {
+        admission: AdmissionSettings,
     },
     Ok,
     Pong,
@@ -1031,6 +1046,59 @@ fn refresh_agent_auth(registry: &SessionRegistry) {
     }
 }
 
+/// The daemon-wide policy in the units the settings dialog edits.
+///
+/// Megabytes and hours rather than bytes and durations: the dialog is where an
+/// operator types a number, and converting in one place keeps the two ends from
+/// disagreeing about which unit a field is in.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdmissionSettings {
+    pub max_live_sessions: usize,
+    pub default_budget_usd: Option<f64>,
+    pub spend_ceiling_usd: Option<f64>,
+    pub spend_window_hours: f64,
+    pub memory_budget_mb: Option<u64>,
+    pub session_memory_cap_mb: Option<u64>,
+    pub max_processes_per_session: Option<u32>,
+    /// Environment variables that were set when the daemon started. The dialog
+    /// says so, because a value an operator did not type here came from
+    /// somewhere and silently overriding it would be the confusing half of
+    /// having two sources.
+    pub from_environment: Vec<String>,
+}
+
+/// The environment variables that seed the admission policy at boot.
+const ADMISSION_ENVIRONMENT: &[&str] = &[
+    "TERMINALAI_MAX_LIVE_SESSIONS",
+    "TERMINALAI_DEFAULT_BUDGET_USD",
+    "TERMINALAI_SPEND_CEILING_USD",
+    "TERMINALAI_SPEND_WINDOW_HOURS",
+    "TERMINALAI_MEMORY_BUDGET_MB",
+    "TERMINALAI_SESSION_MEMORY_CAP_MB",
+    "TERMINALAI_MAX_PROCESSES_PER_SESSION",
+];
+
+fn admission_settings(
+    config: &terminalai_core::registry::AdmissionConfig,
+) -> AdmissionSettings {
+    AdmissionSettings {
+        max_live_sessions: config.max_live_sessions,
+        default_budget_usd: config.default_budget_usd,
+        spend_ceiling_usd: config.spend_ceiling_usd,
+        spend_window_hours: config.spend_window.as_secs_f64() / 3600.0,
+        memory_budget_mb: config.memory_budget_bytes.map(|bytes| bytes / (1024 * 1024)),
+        session_memory_cap_mb: config
+            .session_memory_cap_bytes
+            .map(|bytes| bytes / (1024 * 1024)),
+        max_processes_per_session: config.max_processes_per_session,
+        from_environment: ADMISSION_ENVIRONMENT
+            .iter()
+            .filter(|name| std::env::var_os(name).is_some())
+            .map(|name| (*name).to_owned())
+            .collect(),
+    }
+}
+
 fn write_messages(mut send: SendHalf, outgoing: Receiver<WireMessage>) -> Result<(), IpcError> {
     for message in outgoing {
         let mut encoded = serde_json::to_vec(&message)?;
@@ -1156,6 +1224,38 @@ fn dispatch_with_endpoint(
         Request::Land { request } => Response::Land {
             outcome: land_queue().land(&request),
         },
+        Request::AdmissionConfig => Response::Admission {
+            admission: admission_settings(&registry.admission_config()),
+        },
+        Request::SetAdmission {
+            max_live_sessions,
+            default_budget_usd,
+            spend_ceiling_usd,
+            spend_window_hours,
+            memory_budget_mb,
+            session_memory_cap_mb,
+            max_processes_per_session,
+        } => {
+            let config = terminalai_core::registry::AdmissionConfig::new(
+                max_live_sessions,
+                default_budget_usd,
+            )
+            .with_spend_ceiling(
+                spend_ceiling_usd,
+                spend_window_hours
+                    .filter(|hours| hours.is_finite() && *hours > 0.0)
+                    .map(|hours| Duration::from_secs_f64(hours * 3600.0)),
+            )
+            .with_memory_limits(
+                memory_budget_mb.map(|mb| mb.saturating_mul(1024 * 1024)),
+                session_memory_cap_mb.map(|mb| mb.saturating_mul(1024 * 1024)),
+                max_processes_per_session,
+            );
+            registry.set_admission(config);
+            Response::Admission {
+                admission: admission_settings(&registry.admission_config()),
+            }
+        }
         Request::MarkReviewed { id } => match registry.mark_reviewed(&id) {
             Ok(()) => Response::Ok,
             Err(error) => Response::Error {

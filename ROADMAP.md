@@ -31,13 +31,6 @@ item above; where the two touch, the note says so.
 
 ### P1
 
-- [ ] P1 — A settings surface for the knobs that currently require an environment variable and a daemon restart
-  Why: the product thesis is thirty rows and the shipped default admits three, changeable only by setting `TERMINALAI_MAX_LIVE_SESSIONS` before the daemon starts — a default that contradicts the pitch and a control no user will find.
-  Evidence: `DEFAULT_MAX_LIVE_SESSIONS = 3` at `crates/terminalai-core/src/registry.rs:42`; `AdmissionConfig::from_environment` at `:79-107`. `web/index.html` defines six dialogs (launcher, broadcast, projects, queue, rollup, explainer) and no settings dialog; grep for "settings" in that file returns nothing. Distinct from the existing P2 about removing presets and project roots — this is daemon-wide policy, not stored-item CRUD.
-  Touches: `web/index.html`, `web/src/main.js`, `crates/terminalai-app/src/main.rs`, `crates/terminalai-daemon/src/lib.rs`, `crates/terminalai-core/src/registry.rs`
-  Acceptance: admission cap, default session budget, notification thresholds and the new spend ceiling are editable in-app and applied without restarting the daemon; environment variables remain the boot default and the dialog says when a value came from one.
-  Complexity: M
-
 ### P2
 
 - [ ] P2 — Cap the archive vector; it grows forever inside a file rewritten every second

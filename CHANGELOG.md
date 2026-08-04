@@ -43,6 +43,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   operator cannot clear by signing in is worse than no banner. `terminalai-probe auth` runs the same
   path the daemon does.
 
+- A settings surface for the daemon-wide limits. The product is a dense fleet list and the shipped
+  default admits three sessions, which until now could only be changed by setting an environment
+  variable before the daemon started — a default that contradicted the pitch and a control nobody
+  would find. **Limits** in the toolbar edits the admission cap, the default session budget, the
+  spend ceiling and its window, the fleet memory budget, the per-session memory cap and the process
+  count, and applies them to the running daemon: a raised cap admits from the queue immediately, a
+  lowered one simply stops granting, and nothing already running is touched. An empty field means no
+  limit rather than a limit of zero. Environment variables stay the boot default and the dialog
+  names which ones it started from, because a value the operator did not type came from somewhere.
+  `terminalai-probe limits` drives the same requests headlessly.
+
 ### Changed
 
 - The workspace's direct `windows-sys` dependency moved from 0.59 to 0.61, which is the prerequisite

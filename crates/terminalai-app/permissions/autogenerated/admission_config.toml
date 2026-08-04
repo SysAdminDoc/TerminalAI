@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-admission-config"
+description = "Enables the admission_config command without any pre-configured scope."
+commands.allow = ["admission_config"]
+
+[[permission]]
+identifier = "deny-admission-config"
+description = "Denies the admission_config command without any pre-configured scope."
+commands.deny = ["admission_config"]

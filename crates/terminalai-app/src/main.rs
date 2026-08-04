@@ -252,6 +252,44 @@ async fn external_sessions(
     .await
 }
 
+/// Read the daemon-wide admission policy for the settings dialog.
+#[tauri::command]
+fn admission_config(
+    state: State<'_, AppState>,
+) -> Result<terminalai_daemon::AdmissionSettings, String> {
+    let client = daemon_client(&state)?;
+    match daemon_response(&client, Request::AdmissionConfig)? {
+        Response::Admission { admission } => Ok(admission),
+        Response::Error { message } => Err(message),
+        other => Err(format!("unexpected admission response: {other:?}")),
+    }
+}
+
+/// Replace the daemon-wide admission policy without restarting it.
+#[tauri::command]
+fn set_admission(
+    settings: terminalai_daemon::AdmissionSettings,
+    state: State<'_, AppState>,
+) -> Result<terminalai_daemon::AdmissionSettings, String> {
+    let client = daemon_client(&state)?;
+    let request = Request::SetAdmission {
+        max_live_sessions: settings.max_live_sessions,
+        default_budget_usd: settings.default_budget_usd,
+        spend_ceiling_usd: settings.spend_ceiling_usd,
+        spend_window_hours: Some(settings.spend_window_hours),
+        memory_budget_mb: settings.memory_budget_mb,
+        session_memory_cap_mb: settings.session_memory_cap_mb,
+        max_processes_per_session: settings.max_processes_per_session,
+    };
+    // Reported by the daemon, never sent back: the boot environment is not the
+    // dialog's to rewrite.
+    match daemon_response(&client, request)? {
+        Response::Admission { admission } => Ok(admission),
+        Response::Error { message } => Err(message),
+        other => Err(format!("unexpected admission response: {other:?}")),
+    }
+}
+
 #[tauri::command]
 fn mark_reviewed(id: SessionId, state: State<'_, AppState>) -> Result<(), String> {
     let client = daemon_client(&state)?;
@@ -2023,6 +2061,8 @@ fn run_app() -> Result<(), String> {
             review_snapshot,
             external_sessions,
             mark_reviewed,
+            admission_config,
+            set_admission,
             land_session,
             preview_launch,
             resolve_agent,

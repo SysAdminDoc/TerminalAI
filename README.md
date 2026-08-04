@@ -145,7 +145,13 @@ $5 cap could spend $100 with every individual limit reporting itself satisfied.
 `TERMINALAI_SPEND_CEILING_USD` sets a fleet-wide ceiling over a rolling window
 (`TERMINALAI_SPEND_WINDOW_HOURS`, 24 by default); reaching it stops anything new from starting and
 never touches a session that is already running. The ledger is persisted with the session store, so
-restarting the daemon does not clear the window. Because only Claude takes a per-session
+restarting the daemon does not clear the window.
+
+**Limits** in the toolbar edits all of this against the running daemon — live sessions, the default
+session budget, the spend ceiling and window, the fleet memory budget, the per-session memory cap
+and process count — and applies it without a restart. Environment variables remain the boot default,
+and the dialog names the ones it started from. `terminalai-probe limits [--max-live N]` drives the
+same two requests headlessly. Because only Claude takes a per-session
 `--max-budget-usd`, the header says which agents a budget actually binds rather than implying a hard
 stop the whole fleet does not have.
 

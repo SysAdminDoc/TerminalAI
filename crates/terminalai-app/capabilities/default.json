@@ -15,6 +15,8 @@
     "allow-review-snapshot",
     "allow-external-sessions",
     "allow-mark-reviewed",
+    "allow-admission-config",
+    "allow-set-admission",
     "allow-land-session",
     "allow-preview-launch",
     "allow-resolve-agent",

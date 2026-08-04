@@ -729,6 +729,30 @@ impl SessionRegistry {
             .is_some_and(|auth| auth.state == crate::auth::AuthState::Expired)
     }
 
+    /// Replace the daemon-wide admission policy without a restart.
+    ///
+    /// Applies to every later decision, including automatic restarts, because
+    /// the registry is where the gate reads from. Sessions already running are
+    /// untouched: a limit is an admission policy, not a kill switch.
+    pub fn set_admission(&self, admission: AdmissionConfig) {
+        {
+            let mut state = lock_state(&self.inner);
+            let window = admission.spend_window;
+            state.admission = admission;
+            // The window may have shrunk; drop what no longer counts so the
+            // reported figure matches the policy that is now in force.
+            state.spend.prune_at(SystemTime::now(), window);
+        }
+        // A raised cap can admit immediately; a lowered one simply stops
+        // granting. Either way the queue is re-evaluated rather than waiting
+        // for the next unrelated event.
+        self.drain_queue();
+    }
+
+    pub fn admission_config(&self) -> AdmissionConfig {
+        lock_state(&self.inner).admission
+    }
+
     pub fn admission_snapshot(&self) -> AdmissionSnapshot {
         let state = lock_state(&self.inner);
         AdmissionSnapshot {
