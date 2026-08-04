@@ -20,5 +20,7 @@ test("snapshot refreshes replay events that arrived during the fetch", () => {
   assert.ok(snapshotAssignment >= 0 && replay > snapshotAssignment, "buffered events replay after the snapshot");
   assert.match(body, /if \(event\.kind === "session-updated"\) applySessionUpdate\(event\.session, false\);/);
   assert.match(body, /if \(event\.kind === "session-removed"\) applySessionRemoval\(event\.id\);/);
-  assert.match(body, /state\.snapshotLoading = false;\s*renderSnapshotLoading\(\);\s*if \(state\.focused\)/);
+  const loadingDone = body.indexOf("state.snapshotLoading = false;");
+  const focusedAttach = body.indexOf("if (state.focused)", loadingDone);
+  assert.ok(loadingDone >= 0 && focusedAttach > loadingDone, "loading must finish before the focused channel is attached");
 });

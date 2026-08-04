@@ -914,9 +914,13 @@ function renderRows() {
   const sessions = applyFrozenOrder(grouped);
   renderOrderNotice(pendingPriorityMoves);
   const list = $("fleet-list");
-  $("empty-state").classList.toggle("empty-state-hidden", state.sessions.length > 0);
+  $("empty-state").classList.toggle("empty-state-hidden", state.snapshotLoading || state.sessions.length > 0);
   list.classList.toggle("fleet-list-hidden", state.sessions.length === 0);
   list.classList.toggle("fleet-list-wide", state.wideMode);
+  const identityLabel = $("column-identity-label");
+  const identityLabelKey = state.wideMode ? "column-label-wide" : "column-label-compact";
+  identityLabel.setAttribute("data-i18n", identityLabelKey);
+  identityLabel.textContent = t(identityLabelKey);
   const wideToggle = $("wide-toggle");
   const wideTitle = state.wideMode ? "button-hide-model-effort-cost" : "button-show-model-effort-cost";
   wideToggle.setAttribute("aria-pressed", String(state.wideMode));
@@ -1501,13 +1505,13 @@ async function loadSnapshotNow() {
       if (event.kind === "session-updated") applySessionUpdate(event.session, false);
       if (event.kind === "session-removed") applySessionRemoval(event.id);
     }
-    renderStoreQuarantine();
-    renderRows();
-    updateTerminalHeader();
     // Events arriving while the focused channel is reattached belong to this
     // already-reconciled state and must be applied live, not buffered again.
     state.snapshotLoading = false;
     renderSnapshotLoading();
+    renderStoreQuarantine();
+    renderRows();
+    updateTerminalHeader();
     if (state.focused) {
       state.terminal?.reset();
       await attachSessionOutput(state.focused);

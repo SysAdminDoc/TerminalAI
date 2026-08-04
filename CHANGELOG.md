@@ -115,6 +115,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Fleet controls now describe their current action state: Wide can hide the
   extra columns, grouping says that it cycles, and the umbrella filter says
   “Needs attention.” Neutral toasts no longer look like errors.
+- Narrow fleet rows now reveal their status label, the empty state waits for
+  the initial snapshot instead of overlapping its spinner, and the first column
+  header follows the compact/Wide fields actually on screen.
 
 - Persistent attention states suppressed during startup or long-tool grace are now rechecked and
   raised when the grace period ends, even without another status transition.
