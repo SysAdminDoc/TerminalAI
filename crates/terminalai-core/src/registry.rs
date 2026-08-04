@@ -1955,15 +1955,37 @@ impl SessionRegistry {
     }
 
     fn recheck_notifications(&self, now: SystemTime) {
-        let changes = {
+        let (changes, stalled) = {
             let mut state = lock_state(&self.inner);
+            // A stall is the absence of a transition, so nothing pushes it —
+            // this periodic sweep is the only place it can be noticed. The flag
+            // lives on the session so `fleet_order` stays a pure comparator.
+            let mut stalled = Vec::new();
+            for entry in state.entries.values_mut() {
+                let is_stalled = entry.session.is_stalled_at(now);
+                if entry.session.stalled != is_stalled {
+                    entry.session.stalled = is_stalled;
+                    if is_stalled {
+                        tracing::warn!(
+                            parent: &entry.span,
+                            held_for = ?now.duration_since(entry.session.status_since).unwrap_or_default(),
+                            "session has held a working status past the stall threshold"
+                        );
+                    }
+                    stalled.push(entry.session.clone());
+                }
+            }
             let sessions: Vec<_> = state
                 .entries
                 .values()
                 .map(|entry| entry.session.clone())
                 .collect();
-            state.notifications.recheck(&sessions, now)
+            (state.notifications.recheck(&sessions, now), stalled)
         };
+        // Emitted outside the state lock, like every other session update.
+        for session in stalled {
+            self.emit(RegistryEvent::SessionUpdated { session });
+        }
         self.emit_notification_changes(changes);
     }
 

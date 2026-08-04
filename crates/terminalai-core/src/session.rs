@@ -37,6 +37,17 @@ pub const RESTART_BACKOFF_MAX: Duration = Duration::from_secs(30);
 /// between.
 pub const RESTART_WINDOW: Duration = Duration::from_secs(10 * 60);
 
+/// How long a session may sit in one working state before the fleet calls it
+/// stalled rather than busy.
+///
+/// `Working` is the status this file's own comment calls "the long tail where
+/// sessions get stuck", and the dwell timer that measures it was formatted and
+/// never compared against anything. Fifteen minutes is long enough that an
+/// ordinary build, test run or large edit finishes inside it, and short enough
+/// that a wedged session is surfaced while the operator still remembers asking
+/// for it.
+pub const STALL_THRESHOLD: Duration = Duration::from_secs(15 * 60);
+
 /// `STATUS_CONTROL_C_EXIT` — what a Windows console process reports after the
 /// operator pressed Ctrl-C in its pane. It is a deliberate stop by a person,
 /// not a fault, so the supervisor treats it as one.
@@ -291,6 +302,13 @@ pub struct Session {
     pub status: SessionStatus,
     pub phase: SessionPhase,
     pub health: SessionHealth,
+    /// True once the session has held a working status past
+    /// [`STALL_THRESHOLD`]. Computed by the supervisor, which has a clock, and
+    /// stored here so [`fleet_order`] stays a pure comparator over stamped
+    /// values — reading the clock inside a comparator makes the answer change
+    /// during one sort and can violate the total order `sort_by` requires.
+    #[serde(default)]
+    pub stalled: bool,
     pub restarts: u32,
     /// When the current process started, so the restart budget can be scoped to
     /// a window instead of counting for the life of the session. `None` before
@@ -388,6 +406,7 @@ impl Session {
             status: SessionStatus::Starting,
             phase: SessionPhase::Starting,
             health: SessionHealth::Starting,
+            stalled: false,
             restarts: 0,
             process_started_at: None,
             last_exit_code: None,
@@ -634,6 +653,22 @@ impl Session {
         RestartDecision::Backoff(delay)
     }
 
+    /// Whether the session has held a working status past [`STALL_THRESHOLD`].
+    ///
+    /// Only the working states: an idle session is not stuck, it is done, and a
+    /// session waiting on the operator is already at the top of the list for a
+    /// better reason.
+    pub fn is_stalled_at(&self, now: SystemTime) -> bool {
+        if !matches!(
+            self.status,
+            SessionStatus::Working | SessionStatus::Thinking
+        ) {
+            return false;
+        }
+        now.duration_since(self.status_since)
+            .is_ok_and(|held| held >= STALL_THRESHOLD)
+    }
+
     pub fn in_state_for(&self) -> Duration {
         SystemTime::now()
             .duration_since(self.state_since)
@@ -747,7 +782,19 @@ fn jitter(ceiling_millis: u64) -> u64 {
 pub fn fleet_order(a: &Session, b: &Session) -> std::cmp::Ordering {
     b.status
         .cmp(&a.status)
-        .then_with(|| b.status_since.cmp(&a.status_since))
+        // A stalled session outranks a healthy one in the same status. Without
+        // this the ordering within `Working` is newest-first, so the session
+        // stuck longest sorted last — in precisely the status this file calls
+        // the long tail where sessions get stuck.
+        .then_with(|| b.stalled.cmp(&a.stalled))
+        .then_with(|| {
+            if a.stalled && b.stalled {
+                // Among the stuck, longest first: that is the one to look at.
+                a.status_since.cmp(&b.status_since)
+            } else {
+                b.status_since.cmp(&a.status_since)
+            }
+        })
         .then_with(|| a.id.cmp(&b.id))
 }
 
@@ -1120,5 +1167,101 @@ mod tests {
         assert!(delay <= RESTART_BACKOFF_BASE);
         assert_eq!(session.restarts, 1);
         assert_eq!(session.phase, SessionPhase::Backoff);
+    }
+
+    /// The dwell timer was formatted and never compared against anything, and
+    /// the ordering within `Working` was newest-first — so the session stuck
+    /// longest sorted last, in the status this file calls the long tail.
+    #[test]
+    fn a_stalled_session_sorts_above_healthy_working_rows() {
+        let spec = spec_for(Agent::Claude, Path::new("."));
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(100_000);
+
+        let mut fresh = Session::new(SessionId::new(1), &spec);
+        fresh.status = SessionStatus::Working;
+        fresh.status_since = now - Duration::from_secs(30);
+
+        let mut stuck = Session::new(SessionId::new(2), &spec);
+        stuck.status = SessionStatus::Working;
+        stuck.status_since = now - STALL_THRESHOLD - Duration::from_secs(60);
+
+        let mut worse = Session::new(SessionId::new(3), &spec);
+        worse.status = SessionStatus::Working;
+        worse.status_since = now - STALL_THRESHOLD * 4;
+
+        assert!(!fresh.is_stalled_at(now));
+        assert!(stuck.is_stalled_at(now));
+        assert!(worse.is_stalled_at(now));
+        for session in [&mut fresh, &mut stuck, &mut worse] {
+            session.stalled = session.is_stalled_at(now);
+        }
+
+        let mut rows = [fresh.clone(), stuck.clone(), worse.clone()];
+        rows.sort_by(fleet_order);
+        assert_eq!(
+            rows.iter().map(|row| row.id.0.as_str()).collect::<Vec<_>>(),
+            // Longest-stuck first, then the other stalled row, then the healthy
+            // one — the exact reverse of what the old ordering produced.
+            vec!["s0003", "s0002", "s0001"]
+        );
+    }
+
+    #[test]
+    fn only_a_working_session_can_stall() {
+        let spec = spec_for(Agent::Codex, Path::new("."));
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(100_000);
+        for status in [
+            SessionStatus::Idle,
+            SessionStatus::NeedsYou,
+            SessionStatus::Exited,
+            SessionStatus::RateLimited,
+        ] {
+            let mut session = Session::new(SessionId::new(4), &spec);
+            session.status = status;
+            session.status_since = now - STALL_THRESHOLD * 10;
+            assert!(
+                !session.is_stalled_at(now),
+                "{status:?} was called stalled; it is not stuck, it is waiting"
+            );
+        }
+    }
+
+    /// Ordering must stay a total order: `sort_by` may compare any two rows, and
+    /// an inconsistent comparator can panic or silently scramble the list.
+    #[test]
+    fn the_stall_aware_order_is_still_a_total_order() {
+        let spec = spec_for(Agent::Claude, Path::new("."));
+        let base = SystemTime::UNIX_EPOCH + Duration::from_secs(100_000);
+        let mut rows = Vec::new();
+        for (index, (status, stalled, offset)) in [
+            (SessionStatus::Working, true, 5),
+            (SessionStatus::Working, false, 5),
+            (SessionStatus::Working, true, 900),
+            (SessionStatus::NeedsYou, false, 1),
+            (SessionStatus::Idle, false, 400),
+            (SessionStatus::Thinking, true, 60),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut session = Session::new(SessionId::new(index as u64), &spec);
+            session.status = status;
+            session.stalled = stalled;
+            session.status_since = base - Duration::from_secs(offset);
+            rows.push(session);
+        }
+        for a in &rows {
+            for b in &rows {
+                assert_eq!(
+                    fleet_order(a, b),
+                    fleet_order(b, a).reverse(),
+                    "{} vs {} is not antisymmetric",
+                    a.id,
+                    b.id
+                );
+            }
+        }
+        rows.sort_by(fleet_order);
+        assert_eq!(rows.len(), 6);
     }
 }

@@ -51,6 +51,11 @@ pub struct AttentionNotification {
     pub session_id: SessionId,
     pub status: SessionStatus,
     pub created_at: SystemTime,
+    /// Raised because the session stopped making progress, not because the
+    /// agent asked for anything. The status is a working one, so without this
+    /// the notification would be indistinguishable from a busy session.
+    #[serde(default)]
+    pub stalled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -206,6 +211,22 @@ impl NotificationCenter {
                 .insert(notification.dedup_key.clone(), notification.clone());
             changes.push(NotificationChange::Raised(notification));
         }
+
+        // A stall is the absence of a transition, so it can only be noticed
+        // here. One notification per stalled session, retracted by the ordinary
+        // path as soon as the session moves to any other status.
+        for session in sessions {
+            if !session.stalled {
+                continue;
+            }
+            let notification = AttentionNotification::stalled(session, now);
+            if self.active.contains_key(&notification.dedup_key) {
+                continue;
+            }
+            self.active
+                .insert(notification.dedup_key.clone(), notification.clone());
+            changes.push(NotificationChange::Raised(notification));
+        }
         changes
     }
 
@@ -240,6 +261,24 @@ impl AttentionNotification {
             session_id: session.id.clone(),
             status,
             created_at: now,
+            stalled: false,
+        }
+    }
+
+    /// A stall notification for a session that is still nominally working.
+    ///
+    /// Its own dedup key, so it is raised once and survives alongside nothing
+    /// else: the session leaving the working status retracts it through the
+    /// ordinary path, because the key is scoped to the session.
+    fn stalled(session: &Session, now: SystemTime) -> Self {
+        let group_key = repo_group_key(&session.cwd);
+        Self {
+            dedup_key: format!("repo={group_key};session={};status=stalled", session.id),
+            group_key,
+            session_id: session.id.clone(),
+            status: session.status,
+            created_at: now,
+            stalled: true,
         }
     }
 }

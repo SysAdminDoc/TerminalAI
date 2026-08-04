@@ -91,7 +91,7 @@ pub use review::{collect_review, ReviewItem, MAX_REVIEW_DIFF_BYTES, REVIEW_REPOS
 pub use session::{
     classify_exit, ExitClass, RestartDecision, Session, SessionHealth, SessionId, SessionPhase,
     SessionStatus, ToolProgress, MAX_RESTARTS, RESTART_BACKOFF_BASE, RESTART_BACKOFF_MAX,
-    RESTART_WINDOW, STATUS_CONTROL_C_EXIT,
+    RESTART_WINDOW, STALL_THRESHOLD, STATUS_CONTROL_C_EXIT,
 };
 pub use store::{
     ArchivedSession, SessionStoreError, SessionStoreSnapshot, StoredSession,

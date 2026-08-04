@@ -72,8 +72,17 @@ function lastActivity(session) {
   return session?.last_line || t("empty-no-output");
 }
 
+/// How long a working session may dwell before the supervisor calls it stalled.
+/// Mirrors `STALL_THRESHOLD` in `crates/terminalai-core/src/session.rs`; the
+/// flag itself is computed there, and this is only used to say the threshold out
+/// loud so the mark is not an unexplained badge.
+const STALL_THRESHOLD_MINUTES = 15;
+
 function lifecycleLabel(session) {
   if (session?.phase === "preparing") return t("status-preparing");
+  // Still nominally working, but for long enough that busy and wedged are no
+  // longer the same thing. The supervisor decides this; the row says it.
+  if (session?.stalled) return t("status-stalled", { status: statusLabel(session?.status) });
   if (session?.phase === "tearing-down") return t("status-tearing-down");
   // A session the supervisor gave up on and one that ended its own work both
   // used to read "Exited — The process has ended", which is true of a crash
@@ -97,6 +106,7 @@ function restartCount(session) {
 /// Only the terminal phases carry one: everything else already says what it is
 /// in its own label.
 function lifecycleDetail(session) {
+  if (session?.stalled) return t("status-stalled-detail", { minutes: STALL_THRESHOLD_MINUTES });
   if (session?.phase === "failed") {
     const code = session?.last_exit_code;
     return Number.isInteger(Number(code))
@@ -114,6 +124,9 @@ function lifecycleDetail(session) {
 /// look like a job that completed.
 function lifecycleTone(session, meta) {
   if (session?.phase === "failed") return "red";
+  // Louder than the yellow a healthy working row gets: the whole point is that
+  // it no longer looks like one.
+  if (session?.stalled) return "peach";
   if (session?.phase === "finished") return "green";
   return meta.tone;
 }

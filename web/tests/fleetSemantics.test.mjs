@@ -105,3 +105,15 @@ test("a session the supervisor gave up on does not read like one that finished",
   // The reason reaches the row, not only the diagnostics drawer.
   assert.match(main, /class="row-status-label" title="\$\{escapeHtml\(detail \|\| label\)\}"/);
 });
+
+test("a stalled session is marked, explained, and sorted above healthy working rows", () => {
+  const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
+  // The dwell timer was formatted and never thresholded, so the session stuck
+  // longest sorted last within Working.
+  assert.match(main, /session\?\.stalled\) return t\("status-stalled"/);
+  assert.match(main, /const STALL_THRESHOLD_MINUTES = 15;/);
+  // The mark carries its own threshold; an unexplained badge is not a signal.
+  assert.match(main, /status-stalled-detail", \{ minutes: STALL_THRESHOLD_MINUTES \}/);
+  assert.match(ftl, /^status-stalled = /m);
+  assert.match(ftl, /^status-stalled-detail = .*\{ \$minutes \}/m);
+});

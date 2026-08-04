@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Stalled sessions are detected, marked, and sorted to the top. The dwell timer was formatted and
+  never compared against anything, and the ordering within `Working` was newest-first — so the
+  session stuck longest sorted *last*, in the status the code's own comment calls "the long tail
+  where sessions get stuck". A session holding a working status past fifteen minutes is now marked
+  stalled by the supervisor, sorts above healthy working rows with the longest-stuck first, and
+  raises one attention notification that retracts as soon as it moves. The row states the threshold
+  rather than showing an unexplained badge. The flag is computed where there is a clock and stored
+  on the session, so the fleet comparator stays a pure function of stamped values — a comparator
+  that reads the clock can change its answer mid-sort and break the total order `sort_by` requires.
+
 - A work run gives up on entries that have waited too long for a fleet slot. There was no deadline
   at all, so an entry queued hours ago launched whenever a slot happened to free — against a tree
   that had usually moved, a prompt that had been superseded, or work the operator had since done by
