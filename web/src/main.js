@@ -2130,6 +2130,7 @@ function readSpec() {
 }
 
 function writeSpec(spec) {
+  clearFolderValidation();
   $("agent-input").value = spec.agent ?? "claude";
   $("name-input").value = spec.name ?? "";
   // A built-in preset names no folder: which configuration and which project
@@ -2155,6 +2156,26 @@ function writeSpec(spec) {
   $("extra-dirs-input").value = state.extraDirs.join("; ");
   syncAgentFields();
   schedulePreview();
+}
+
+function clearFolderValidation() {
+  const input = $("cwd-input");
+  input.removeAttribute("aria-invalid");
+  input.setCustomValidity("");
+  const message = $("cwd-error");
+  message.hidden = true;
+  message.textContent = "";
+}
+
+function showFolderValidation() {
+  const input = $("cwd-input");
+  const message = $("cwd-error");
+  const text = t("launcher-folder-required");
+  input.setAttribute("aria-invalid", "true");
+  input.setCustomValidity(text);
+  message.textContent = text;
+  message.hidden = false;
+  input.focus();
 }
 
 function capabilityForAgent(agent = $("agent-input").value) {
@@ -2243,9 +2264,10 @@ async function updatePreview() {
 async function launchCurrentSpec() {
   const spec = readSpec();
   if (!spec.cwd) {
-    showToast("Choose a project folder first");
+    showFolderValidation();
     return false;
   }
+  clearFolderValidation();
   try {
     const receipt = await invoke("launch_session", invokeArgs(spec));
     $("launcher-dialog").close();
@@ -2713,10 +2735,12 @@ function bindEvents() {
   });
   ["cwd-input", "model-input", "name-input", "effort-input", "permission-input", "sandbox-input", "profile-input", "resume-input", "resume-id-input", "budget-input", "port-base-input", "port-count-input", "setup-hook-input", "teardown-hook-input", "prompt-input", "search-input"].forEach((id) => {
     $(id).addEventListener("input", () => {
+      if (id === "cwd-input") clearFolderValidation();
       if (id === "resume-input" || id === "model-input" || id === "effort-input") syncAgentFields();
       schedulePreview();
     });
     $(id).addEventListener("change", () => {
+      if (id === "cwd-input") clearFolderValidation();
       if (id === "resume-input" || id === "model-input" || id === "effort-input") syncAgentFields();
       schedulePreview();
     });
@@ -2725,6 +2749,7 @@ function bindEvents() {
     const folder = await invoke("pick_folder");
     if (folder) {
       $("cwd-input").value = folder;
+      clearFolderValidation();
       schedulePreview();
       void loadProjectTemplates();
     }
@@ -2736,6 +2761,7 @@ function bindEvents() {
     const path = $("project-select").value;
     if (!path) return;
     $("cwd-input").value = path;
+    clearFolderValidation();
     schedulePreview();
     // The chosen project may declare its own templates; the folder changed
     // without the input's change event firing.

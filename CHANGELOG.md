@@ -89,6 +89,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- The launcher now names its dialog for assistive technology and keeps empty-folder
+  validation beside the field with focus, aria-invalid and a correctly rendered Windows path placeholder.
 - Fleet and queue row actions now use 24×24px hit boxes while preserving the compact fleet row pitch.
 
 - The Presets selector now keeps a visible keyboard focus indicator in both themes.

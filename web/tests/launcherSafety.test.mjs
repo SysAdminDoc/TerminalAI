@@ -6,11 +6,39 @@ import { JSDOM } from "jsdom";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 
 function launcherForm() {
   const dom = new JSDOM(html);
   return { dom, form: dom.window.document.getElementById("launcher-form") };
 }
+
+test("the launcher has an accessible name and anchored folder validation", () => {
+  const { dom } = launcherForm();
+  const dialog = dom.window.document.getElementById("launcher-dialog");
+  const input = dom.window.document.getElementById("cwd-input");
+  const error = dom.window.document.getElementById("cwd-error");
+  assert.equal(dialog.getAttribute("aria-label"), "Launch an agent");
+  assert.equal(dialog.getAttribute("data-i18n-aria-label"), "launcher-title");
+  assert.equal(input.getAttribute("aria-describedby"), "cwd-error");
+  assert.equal(error.getAttribute("role"), "alert");
+  assert.equal(error.hidden, true);
+  assert.match(html, /placeholder="C:\\Users\\me\\repos\\project"/);
+  assert.doesNotMatch(html, /placeholder="C:\\\\Users\\me\\repos\\project"/);
+  assert.match(ftl, /^launcher-title = /m);
+  assert.match(ftl, /^launcher-folder-required = /m);
+});
+
+test("an empty folder focuses the field and keeps the failure beside it", () => {
+  const launch = main.slice(main.indexOf("async function launchCurrentSpec"), main.indexOf("async function loadPresets"));
+  assert.match(launch, /showFolderValidation\(\)/);
+  assert.doesNotMatch(launch, /showToast\("Choose a project folder first"\)/);
+  assert.match(main, /input\.setAttribute\("aria-invalid", "true"\)/);
+  assert.match(main, /message\.hidden = false;/);
+  assert.match(main, /input\.focus\(\);/);
+  assert.match(main, /input\.setCustomValidity\(text\)/);
+  assert.match(main, /if \(id === "cwd-input"\) clearFolderValidation\(\)/);
+});
 
 // Launching an agent is unrecoverable: it costs tokens and may write to a repository
 // the operator never chose. Nothing in the dialog may reach it except the launch button.

@@ -47,7 +47,9 @@ label-first-run-check = FIRST-RUN CHECK
 label-pending-review-eyebrow = PENDING REVIEW
 label-elsewhere = ELSEWHERE ON THIS MACHINE
 label-new-controlled-session = NEW CONTROLLED SESSION
+launcher-title = Launch an agent
 label-what-will-run = WHAT WILL RUN
+launcher-folder-required = Choose a project folder before launching.
 
 status-needs-approval = Needs approval
 status-awaiting-input = Awaiting input
