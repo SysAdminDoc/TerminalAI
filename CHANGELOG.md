@@ -89,6 +89,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- The Presets selector now keeps a visible keyboard focus indicator in both themes.
+
 - Project discovery, prompt queue and review failures now stay visible as explicit error panels with
   escaped details and Retry controls instead of masquerading as empty results.
 

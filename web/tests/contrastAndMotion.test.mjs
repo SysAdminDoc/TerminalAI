@@ -81,6 +81,20 @@ test("dialog content shares the action footer inset", () => {
   assert.equal(actionRule.style.padding, "15px 26px 19px");
 });
 
+test("the preset selector keeps a visible keyboard focus indicator", () => {
+  assert.match(html, /class="preset-control"[^>]*>.*id="preset-select"/s);
+  assert.doesNotMatch(css, /\.preset-control select \{[^}]*outline\s*:/);
+  const dom = new JSDOM(`<style>${css}</style>`);
+  const rule = [...dom.window.document.styleSheets[0].cssRules].find(
+    (candidate) => candidate.selectorText === ".preset-control:focus-within",
+  );
+  assert.ok(rule, "preset control must style its focused state");
+  assert.equal(rule.style.borderColor, "var(--mauve)");
+  assert.equal(rule.style.outline, "2px solid var(--blue)");
+  assert.match(css, /--mauve: #cba6f7;/);
+  assert.match(css, /--mauve: #6f2dbd;/);
+});
+
 test("light mode keeps interactive surfaces readable", () => {
   const lightStart = css.indexOf("@media (prefers-color-scheme: light)");
   const lightEnd = css.indexOf("\n}", lightStart);
