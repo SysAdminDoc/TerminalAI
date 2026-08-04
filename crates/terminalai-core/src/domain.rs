@@ -34,6 +34,9 @@ pub trait AgentSession: Send + Sync {
     fn set_background(&self, _background: bool) -> Result<(), DomainError> {
         Ok(())
     }
+    /// Tell a local session that the focused terminal renderer is consuming
+    /// its output. Remote domains may leave this as a no-op.
+    fn set_renderer_attached(&self, _attached: bool) {}
 }
 
 /// Creates and supervises sessions in one execution domain.
@@ -92,6 +95,10 @@ impl AgentSession for PtySession {
 
     fn set_background(&self, background: bool) -> Result<(), DomainError> {
         PtySession::set_background(self, background).map_err(DomainError::from)
+    }
+
+    fn set_renderer_attached(&self, attached: bool) {
+        PtySession::set_renderer_attached(self, attached);
     }
 }
 

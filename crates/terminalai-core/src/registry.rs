@@ -891,6 +891,7 @@ impl SessionRegistry {
             return Err(RegistryError::NotRunning(id.clone()));
         }
         self.focus(Some(id.clone()))?;
+        pty.set_renderer_attached(true);
         self.scrollback(id)
     }
 
@@ -1449,10 +1450,20 @@ impl SessionRegistry {
         if let Some(id) = &id {
             self.require(id)?;
         }
-        let priorities = {
+        let (renderer_to_detach, priorities) = {
             let mut state = lock_state(&self.inner);
             let previous = state.focused.clone();
             state.focused = id.clone();
+            let renderer_to_detach = if previous.as_ref() != id.as_ref() {
+                previous.as_ref().and_then(|previous| {
+                    state
+                        .entries
+                        .get(previous)
+                        .and_then(|entry| entry.pty.clone())
+                })
+            } else {
+                None
+            };
             if let Some(id) = &id {
                 if let Some(entry) = state.entries.get_mut(id) {
                     entry.session.unread = false;
@@ -1467,7 +1478,7 @@ impl SessionRegistry {
                     candidates.push(id);
                 }
             }
-            candidates
+            let priorities = candidates
                 .into_iter()
                 .filter_map(|candidate| {
                     let entry = state.entries.get(&candidate)?;
@@ -1476,8 +1487,12 @@ impl SessionRegistry {
                         state.focused.as_ref() != Some(&candidate) && !entry.session.pinned;
                     Some((pty, background))
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            (renderer_to_detach, priorities)
         };
+        if let Some(pty) = renderer_to_detach {
+            pty.set_renderer_attached(false);
+        }
         for (pty, background) in priorities {
             if let Err(error) = pty.set_background(background) {
                 tracing::warn!(

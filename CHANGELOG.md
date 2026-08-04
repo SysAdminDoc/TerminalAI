@@ -91,6 +91,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- The pty's headless cursor-position fallback now answers every startup query
+  in a burst exactly once, then stops when the renderer is attached or the
+  startup handshake has been answered. This prevents the focused xterm from
+  receiving a second, incorrect `1;1` response.
+
 - Persistent attention states suppressed during startup or long-tool grace are now rechecked and
   raised when the grace period ends, even without another status transition.
 - Scrollback cleanup now waits for a full writer queue instead of losing a session's delete

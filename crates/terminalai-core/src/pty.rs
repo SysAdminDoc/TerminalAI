@@ -44,6 +44,10 @@ pub struct PtySession {
     child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     running: Arc<AtomicBool>,
+    /// The browser's xterm renderer answers cursor-position reports itself.
+    /// Until it is attached, the reader supplies the one-shot headless conhost
+    /// startup fallback instead.
+    renderer_attached: Arc<AtomicBool>,
     /// A private duplicate of the child's process handle, waited on directly so
     /// supervision costs no periodic wakeups. Owned separately from `child` so
     /// the blocking wait never holds the lock that `pid` and `kill` need.
@@ -180,6 +184,8 @@ impl PtySession {
         let running = Arc::new(AtomicBool::new(true));
         let flag = running.clone();
         let answerer = writer.clone();
+        let renderer_attached = Arc::new(AtomicBool::new(false));
+        let renderer_state = renderer_attached.clone();
         std::thread::Builder::new()
             .name("terminalai-pty-reader".into())
             .spawn(move || {
@@ -187,20 +193,31 @@ impl PtySession {
                 // Carry the last few bytes so a query split across two reads is
                 // still recognised.
                 let mut tail: Vec<u8> = Vec::with_capacity(8);
+                // ConPTY's cursor query is a startup handshake in headless
+                // mode, not a terminal protocol this reader should emulate
+                // for the life of a session.
+                let mut synthetic_dsr_active = true;
                 loop {
                     match reader.read(&mut buf) {
                         Ok(0) | Err(_) => break,
                         Ok(n) => {
                             let chunk = &buf[..n];
-                            tail.extend_from_slice(chunk);
-                            if contains(&tail, DSR_CURSOR_QUERY) {
+                            let replies = dsr_reply_count(
+                                &mut tail,
+                                chunk,
+                                renderer_state.load(Ordering::Acquire),
+                                &mut synthetic_dsr_active,
+                            );
+                            if replies > 0 {
                                 if let Ok(mut w) = answerer.lock() {
-                                    let _ = w.write_all(DSR_CURSOR_REPLY);
+                                    for _ in 0..replies {
+                                        if w.write_all(DSR_CURSOR_REPLY).is_err() {
+                                            break;
+                                        }
+                                    }
                                     let _ = w.flush();
                                 }
                             }
-                            let keep = tail.len().saturating_sub(DSR_CURSOR_QUERY.len() - 1);
-                            tail.drain(..keep);
                             on_output(chunk);
                         }
                     }
@@ -214,6 +231,7 @@ impl PtySession {
             child: Arc::new(Mutex::new(child)),
             writer,
             running,
+            renderer_attached,
             #[cfg(windows)]
             exit_signal,
             #[cfg(windows)]
@@ -230,6 +248,12 @@ impl PtySession {
         w.write_all(bytes)?;
         w.flush()?;
         Ok(())
+    }
+
+    /// Switch the cursor-query workaround off once a real terminal renderer is
+    /// consuming the pty output and sending its own position reply.
+    pub fn set_renderer_attached(&self, attached: bool) {
+        self.renderer_attached.store(attached, Ordering::Release);
     }
 
     /// Resize the console. Both CLIs redraw on SIGWINCH-equivalent, so this is
@@ -355,8 +379,38 @@ impl std::fmt::Debug for PtySession {
     }
 }
 
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack.windows(needle.len()).any(|w| w == needle)
+fn count_occurrences(haystack: &[u8], needle: &[u8]) -> usize {
+    if needle.is_empty() {
+        return 0;
+    }
+    haystack
+        .windows(needle.len())
+        .filter(|window| *window == needle)
+        .count()
+}
+
+fn dsr_reply_count(
+    tail: &mut Vec<u8>,
+    chunk: &[u8],
+    renderer_attached: bool,
+    synthetic_dsr_active: &mut bool,
+) -> usize {
+    tail.extend_from_slice(chunk);
+    let query_count = count_occurrences(tail, DSR_CURSOR_QUERY);
+    let replies = if renderer_attached || !*synthetic_dsr_active {
+        0
+    } else {
+        query_count
+    };
+    // Seeing the renderer, or answering the first startup query, ends the
+    // fallback. Count the whole chunk before disabling it so a burst gets one
+    // response per query rather than one response per read.
+    if renderer_attached || query_count > 0 {
+        *synthetic_dsr_active = false;
+    }
+    let keep = tail.len().saturating_sub(DSR_CURSOR_QUERY.len() - 1);
+    tail.drain(..keep);
+    replies
 }
 
 /// A sensible default console size for a background session — big enough that
@@ -377,6 +431,40 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn dsr_fallback_replies_once_per_query_in_a_burst() {
+        let mut burst = b"before".to_vec();
+        burst.extend_from_slice(DSR_CURSOR_QUERY);
+        burst.extend_from_slice(b"middle");
+        burst.extend_from_slice(DSR_CURSOR_QUERY);
+        let mut tail = Vec::new();
+        let mut active = true;
+
+        assert_eq!(
+            dsr_reply_count(&mut tail, &burst, false, &mut active),
+            2,
+            "every query in one read must receive a fallback reply"
+        );
+        assert!(!active, "the startup fallback is one-shot");
+        assert_eq!(
+            dsr_reply_count(&mut tail, DSR_CURSOR_QUERY, false, &mut active),
+            0,
+            "later queries must not revive the synthetic responder"
+        );
+    }
+
+    #[test]
+    fn dsr_fallback_is_silent_while_renderer_is_attached() {
+        let mut tail = Vec::new();
+        let mut active = true;
+
+        assert_eq!(
+            dsr_reply_count(&mut tail, DSR_CURSOR_QUERY, true, &mut active),
+            0
+        );
+        assert!(!active, "renderer attachment permanently disables fallback");
+    }
 
     #[test]
     fn environment_allowlist_has_no_secret_wildcards() {
