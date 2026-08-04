@@ -169,6 +169,16 @@ struct PreflightReport {
 const APP_USER_MODEL_ID: &str = "com.sysadmindoc.terminalai";
 const PREFLIGHT_DAEMON_TIMEOUT: Duration = Duration::from_millis(500);
 
+async fn run_blocking<T, F>(label: &'static str, task: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|error| format!("{label} background task failed: {error}"))?
+}
+
 #[tauri::command]
 fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -228,15 +238,18 @@ fn review_snapshot(state: State<'_, AppState>) -> Result<ReviewSnapshot, String>
 /// Sessions running outside this supervisor. Read-only by construction: the
 /// response carries no handle the UI could act on.
 #[tauri::command]
-fn external_sessions(
+async fn external_sessions(
     state: State<'_, AppState>,
 ) -> Result<Vec<terminalai_core::ExternalSession>, String> {
     let client = daemon_client(&state)?;
-    match daemon_response(&client, Request::ExternalSessions)? {
-        Response::ExternalSessions { sessions } => Ok(sessions),
-        Response::Error { message } => Err(message),
-        other => Err(format!("unexpected external-session response: {other:?}")),
-    }
+    run_blocking("external_sessions", move || {
+        match daemon_response(&client, Request::ExternalSessions)? {
+            Response::ExternalSessions { sessions } => Ok(sessions),
+            Response::Error { message } => Err(message),
+            other => Err(format!("unexpected external-session response: {other:?}")),
+        }
+    })
+    .await
 }
 
 #[tauri::command]
@@ -251,21 +264,24 @@ fn mark_reviewed(id: SessionId, state: State<'_, AppState>) -> Result<(), String
 /// The daemon serialises these, so this command blocks while another landing is
 /// in flight — that wait is the feature, not an oversight.
 #[tauri::command]
-fn land_session(
+async fn land_session(
     request: terminalai_core::land::LandRequest,
     state: State<'_, AppState>,
 ) -> Result<terminalai_core::land::LandOutcome, String> {
     let client = daemon_client(&state)?;
-    match daemon_response(
-        &client,
-        Request::Land {
-            request: Box::new(request),
-        },
-    )? {
-        Response::Land { outcome } => Ok(outcome),
-        Response::Error { message } => Err(message),
-        other => Err(format!("unexpected land response: {other:?}")),
-    }
+    run_blocking("land_session", move || {
+        match daemon_response(
+            &client,
+            Request::Land {
+                request: Box::new(request),
+            },
+        )? {
+            Response::Land { outcome } => Ok(outcome),
+            Response::Error { message } => Err(message),
+            other => Err(format!("unexpected land response: {other:?}")),
+        }
+    })
+    .await
 }
 
 /// The parsed terminal state for a pinned pane.
@@ -686,12 +702,28 @@ fn work_run(state: State<'_, AppState>) -> Result<Option<WorkQueue>, String> {
 /// Replaces any previous run: two at once would compete for the same fleet
 /// slots, and neither report would describe what actually happened.
 #[tauri::command]
-fn start_work_run(
+async fn start_work_run(
     prompt: String,
     projects: Vec<PathBuf>,
     state: State<'_, AppState>,
 ) -> Result<Option<WorkQueue>, String> {
-    if state.prompts.get(&prompt)?.is_none() {
+    let client = daemon_client(&state)?;
+    let prompts = state.prompts.clone();
+    let work_run_store = state.work_run_store.clone();
+    run_blocking("start_work_run", move || {
+        start_work_run_with(prompt, projects, client, work_run_store, prompts)
+    })
+    .await
+}
+
+fn start_work_run_with(
+    prompt: String,
+    projects: Vec<PathBuf>,
+    client: DaemonClient,
+    work_run_store: work::WorkRunStore,
+    prompts: work::PromptLibrary,
+) -> Result<Option<WorkQueue>, String> {
+    if prompts.get(&prompt)?.is_none() {
         return Err(format!("no stored prompt named {prompt}"));
     }
     let named: Vec<(String, PathBuf)> = projects
@@ -705,39 +737,59 @@ fn start_work_run(
         })
         .collect();
     let queue = WorkQueue::new(&prompt, &named).map_err(|error| error.to_string())?;
-    state.work_run_store.set(Some(queue))?;
-    drive_work_run(&state)?;
-    state.work_run_store.get()
+    work_run_store.set(Some(queue))?;
+    drive_work_run_with(&client, &work_run_store, &prompts)?;
+    work_run_store.get()
 }
 
 /// Accept the risk on a project flagged for a dirty tree.
 #[tauri::command]
-fn approve_flagged_project(path: PathBuf, state: State<'_, AppState>) -> Result<(), String> {
-    state
-        .work_run_store
-        .update(|queue| queue.approve_flagged(&path))?
-        .transpose()
-        .map_err(|error| error.to_string())?;
-    drive_work_run(&state)
+async fn approve_flagged_project(path: PathBuf, state: State<'_, AppState>) -> Result<(), String> {
+    let client = daemon_client(&state)?;
+    let prompts = state.prompts.clone();
+    let work_run_store = state.work_run_store.clone();
+    run_blocking("approve_flagged_project", move || {
+        work_run_store
+            .update(|queue| queue.approve_flagged(&path))?
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        drive_work_run_with(&client, &work_run_store, &prompts)
+    })
+    .await
 }
 
 #[tauri::command]
-fn skip_work_project(path: PathBuf, state: State<'_, AppState>) -> Result<(), String> {
-    state
-        .work_run_store
-        .update(|queue| queue.set_state(&path, EntryState::Skipped))?
-        .transpose()
-        .map_err(|error| error.to_string())?;
-    drive_work_run(&state)
+async fn skip_work_project(path: PathBuf, state: State<'_, AppState>) -> Result<(), String> {
+    let client = daemon_client(&state)?;
+    let prompts = state.prompts.clone();
+    let work_run_store = state.work_run_store.clone();
+    run_blocking("skip_work_project", move || {
+        work_run_store
+            .update(|queue| queue.set_state(&path, EntryState::Skipped))?
+            .transpose()
+            .map_err(|error| error.to_string())?;
+        drive_work_run_with(&client, &work_run_store, &prompts)
+    })
+    .await
 }
 
 #[tauri::command]
-fn set_work_run_paused(paused: bool, state: State<'_, AppState>) -> Result<(), String> {
-    state.work_run_store.update(|queue| queue.paused = paused)?;
-    if !paused {
-        drive_work_run(&state)?;
-    }
-    Ok(())
+async fn set_work_run_paused(paused: bool, state: State<'_, AppState>) -> Result<(), String> {
+    let client = if paused {
+        None
+    } else {
+        Some(daemon_client(&state)?)
+    };
+    let prompts = state.prompts.clone();
+    let work_run_store = state.work_run_store.clone();
+    run_blocking("set_work_run_paused", move || {
+        work_run_store.update(|queue| queue.paused = paused)?;
+        if let Some(client) = client {
+            drive_work_run_with(&client, &work_run_store, &prompts)?;
+        }
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -750,11 +802,6 @@ fn clear_work_run(state: State<'_, AppState>) -> Result<(), String> {
 /// Admission is the fleet's decision, not the queue's: this asks for one slot at
 /// a time and stops when the answer is no. Deciding here how many agents the
 /// machine can run would duplicate a budget that already exists, and drift.
-fn drive_work_run(state: &State<'_, AppState>) -> Result<(), String> {
-    let client = daemon_client(state)?;
-    drive_work_run_with(&client, &state.work_run_store, &state.prompts)
-}
-
 fn drive_work_run_with(
     client: &DaemonClient,
     work_run_store: &work::WorkRunStore,
@@ -885,10 +932,11 @@ fn finish_work_run_session(
 /// current, and a cache would need invalidation nobody would remember to
 /// trigger when a repository is cloned.
 #[tauri::command]
-fn list_projects(
+async fn list_projects(
     state: State<'_, AppState>,
 ) -> Result<Vec<terminalai_core::project::Project>, String> {
-    state.project_roots.projects()
+    let project_roots = state.project_roots.clone();
+    run_blocking("list_projects", move || project_roots.projects()).await
 }
 
 /// Every project with what its roadmap says.
@@ -896,8 +944,11 @@ fn list_projects(
 /// Separate from `list_projects` because it costs a file read per project, and
 /// the launcher's folder dropdown does not need it.
 #[tauri::command]
-fn scan_projects(state: State<'_, AppState>) -> Result<Vec<projects::ScannedProject>, String> {
-    state.project_roots.scanned()
+async fn scan_projects(
+    state: State<'_, AppState>,
+) -> Result<Vec<projects::ScannedProject>, String> {
+    let project_roots = state.project_roots.clone();
+    run_blocking("scan_projects", move || project_roots.scanned()).await
 }
 
 #[tauri::command]
@@ -985,16 +1036,19 @@ fn open_external_url(url: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn preflight_report() -> PreflightReport {
-    PreflightReport {
-        checks: vec![
-            preflight_agent(Agent::Claude),
-            preflight_agent(Agent::Codex),
-            preflight_hooks(),
-            preflight_daemon(),
-            preflight_shortcut(),
-        ],
-    }
+async fn preflight_report() -> Result<PreflightReport, String> {
+    run_blocking("preflight_report", || {
+        Ok(PreflightReport {
+            checks: vec![
+                preflight_agent(Agent::Claude),
+                preflight_agent(Agent::Codex),
+                preflight_hooks(),
+                preflight_daemon(),
+                preflight_shortcut(),
+            ],
+        })
+    })
+    .await
 }
 
 #[tauri::command]

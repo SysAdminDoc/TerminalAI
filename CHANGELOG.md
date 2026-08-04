@@ -101,6 +101,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   timestamp consumers decode serde objects plus numeric seconds or milliseconds consistently.
 - Cargo-deny now checks the workspace's explicit license allowlist, duplicate-version policy, wildcard
   dependencies, and registry/source provenance in addition to advisories.
+- Land, external-session discovery, work-run admission, preflight probing, and project discovery now
+  run through Tauri's blocking executor, so daemon waits, CLI probes, and repository walks do not
+  occupy the window's command thread. The store handles are cloned into those tasks and retain their
+  mutex across each load-modify-save operation.
 
 - The pty's headless cursor-position fallback now answers every startup query
   in a burst exactly once, then stops when the renderer is attached or the
