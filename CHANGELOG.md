@@ -91,6 +91,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Corrupt Claude registry timestamps now skip only the invalid external session instead of
+  overflowing the system clock and panicking the reader.
 - The web update fallback now uses the package manifest version injected by Vite, so failed native
   version lookups cannot report a stale release.
 - The web shell now applies Fluent placeholders, routes update and action feedback through the

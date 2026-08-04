@@ -117,7 +117,9 @@ pub fn claude_sessions(
         let Ok(raw) = serde_json::from_str::<RawClaudeSession>(&text) else {
             continue;
         };
-        sessions.push(to_session(raw, is_running));
+        if let Some(session) = to_session(raw, is_running) {
+            sessions.push(session);
+        }
     }
     sessions.sort_by_key(|session| session.pid);
     sessions
@@ -126,13 +128,17 @@ pub fn claude_sessions(
 fn to_session(
     raw: RawClaudeSession,
     is_running: &dyn Fn(u32) -> Option<bool>,
-) -> ExternalSession {
+) -> Option<ExternalSession> {
+    let started_at = match raw.started_at {
+        Some(millis) => Some(UNIX_EPOCH.checked_add(Duration::from_millis(millis))?),
+        None => None,
+    };
     let state = match is_running(raw.pid) {
         Some(true) => ExternalState::Live,
         Some(false) => ExternalState::Ended,
         None => ExternalState::Unknown,
     };
-    ExternalSession {
+    Some(ExternalSession {
         agent: Agent::Claude,
         pid: raw.pid,
         // The stamp's encoding is the vendor's business; it is used only as an
@@ -147,11 +153,9 @@ fn to_session(
         kind: raw.kind,
         entrypoint: raw.entrypoint,
         version: raw.version,
-        started_at: raw
-            .started_at
-            .map(|millis| UNIX_EPOCH + Duration::from_millis(millis)),
+        started_at,
         state,
-    }
+    })
 }
 
 /// Whether a PID names a live process.
@@ -226,7 +230,7 @@ pub fn enumerate_via_cli(binary: &Path) -> Option<Vec<ExternalSession>> {
     let raw: Vec<RawClaudeSession> = serde_json::from_slice(&output.stdout).ok()?;
     Some(
         raw.into_iter()
-            .map(|session| to_session(session, &process_is_running))
+            .filter_map(|session| to_session(session, &process_is_running))
             .collect(),
     )
 }
@@ -333,6 +337,24 @@ mod tests {
         assert_eq!(sessions[0].pid, 2);
         // A file without procStart still yields a usable, if weaker, identity.
         assert_eq!(sessions[0].identity(), "claude:2");
+        std::fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn an_unrepresentable_started_at_skips_the_registry_entry() {
+        let home = scratch("started-at-overflow");
+        let dir = home.join(CLAUDE_SESSION_DIR);
+        write_registry(
+            &dir,
+            9999,
+            r#"{"pid":9999,"cwd":"C:\\Users\\me","startedAt":9999999999999999}"#,
+        );
+        write_registry(&dir, 10000, r#"{"pid":10000,"cwd":"C:\\Users\\me"}"#);
+
+        let sessions = claude_sessions(&home, &|_| Some(true));
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].pid, 10000);
         std::fs::remove_dir_all(home).ok();
     }
 
