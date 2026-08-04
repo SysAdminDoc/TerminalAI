@@ -54,6 +54,24 @@ fn claude_record(request: &str, text: &str, input: u64, output: u64) -> String {
     )
 }
 
+/// The first record in a Codex rollout identifies the directory that owns it.
+fn codex_session_meta(cwd: &Path) -> String {
+    serde_json::json!({
+        "type": "session_meta",
+        "payload": {"cwd": cwd.to_string_lossy()},
+    })
+    .to_string()
+}
+
+fn codex_usage_record(thread_id: &str, input: u64) -> String {
+    serde_json::json!({
+        "type": "event_msg",
+        "thread_id": thread_id,
+        "payload": {"usage": {"input_tokens": input, "output_tokens": 0}},
+    })
+    .to_string()
+}
+
 #[test]
 fn the_claude_project_slug_matches_the_documented_shape() {
     // Verified 2026-08-02 against a real ~/.claude/projects directory.
@@ -196,9 +214,15 @@ fn a_cumulative_counter_replaces_rather_than_accumulates() {
             r#"{{"type":"event_msg","thread_id":"codex-thread-9","payload":{{"model":"gpt-5","usage":{{"input_tokens":{input},"output_tokens":{output}}}}}}}"#
         )
     };
+    let meta = codex_session_meta(cwd);
     append(
         &file,
-        &[&cumulative(1000, 100), &cumulative(2500, 300), &cumulative(4000, 700)],
+        &[
+            &meta,
+            &cumulative(1000, 100),
+            &cumulative(2500, 300),
+            &cumulative(4000, 700),
+        ],
     );
 
     let mut tail = TranscriptTail::new(Agent::Codex);
@@ -223,7 +247,8 @@ fn a_cumulative_counter_never_walks_backwards() {
     let cumulative = |input: u64| {
         format!(r#"{{"type":"event_msg","payload":{{"usage":{{"input_tokens":{input},"output_tokens":0}}}}}}"#)
     };
-    append(&file, &[&cumulative(5000), &cumulative(10)]);
+    let meta = codex_session_meta(cwd);
+    append(&file, &[&meta, &cumulative(5000), &cumulative(10)]);
 
     let mut tail = TranscriptTail::new(Agent::Codex);
     let update = tail.poll(&home.0, cwd, SystemTime::UNIX_EPOCH);
@@ -458,6 +483,7 @@ fn an_invalid_utf8_line_is_skipped_rather_than_wedging_the_tail() {
 #[test]
 fn codex_rollouts_are_found_under_the_dated_tree() {
     let home = scratch("codex-discovery");
+    let cwd = Path::new(r"C:\repos\shop");
     let file = home
         .0
         .join(".codex")
@@ -466,11 +492,56 @@ fn codex_rollouts_are_found_under_the_dated_tree() {
         .join("08")
         .join("03")
         .join("rollout-2026-08-03T10-00-00-abc.jsonl");
-    append(&file, &["{}"]);
+    let meta = codex_session_meta(cwd);
+    append(&file, &[&meta]);
     assert_eq!(
-        newest_transcript(Agent::Codex, &home.0, Path::new(r"C:\repos\shop")).as_deref(),
+        newest_transcript(Agent::Codex, &home.0, cwd).as_deref(),
         Some(file.as_path())
     );
+}
+
+#[test]
+fn codex_rollouts_are_bound_to_their_declared_cwd() {
+    let home = scratch("codex-cwd");
+    let alpha_cwd = Path::new(r"C:\repos\alpha");
+    let beta_cwd = Path::new(r"C:\repos\beta");
+    let directory = home
+        .0
+        .join(".codex")
+        .join("sessions")
+        .join("2026")
+        .join("08")
+        .join("03");
+    let alpha = directory.join("rollout-alpha.jsonl");
+    let beta = directory.join("rollout-beta.jsonl");
+
+    let alpha_meta = codex_session_meta(alpha_cwd);
+    let alpha_usage = codex_usage_record("codex-alpha", 10);
+    append(&alpha, &[&alpha_meta, &alpha_usage]);
+    std::thread::sleep(Duration::from_millis(250));
+
+    let beta_meta = codex_session_meta(beta_cwd);
+    let beta_usage = codex_usage_record("codex-beta", 20);
+    append(&beta, &[&beta_meta, &beta_usage]);
+    std::thread::sleep(Duration::from_millis(250));
+
+    // Keep alpha active after beta is created. Discovery must still use the
+    // creation stamp and cwd, rather than letting either tail adopt the newest
+    // file or the file with the newest modification time.
+    let alpha_usage_after_beta = codex_usage_record("codex-alpha", 30);
+    append(&alpha, &[&alpha_usage_after_beta]);
+
+    let mut alpha_tail = TranscriptTail::new(Agent::Codex);
+    let mut beta_tail = TranscriptTail::new(Agent::Codex);
+    let alpha_update = alpha_tail.poll(&home.0, alpha_cwd, SystemTime::UNIX_EPOCH);
+    let beta_update = beta_tail.poll(&home.0, beta_cwd, SystemTime::UNIX_EPOCH);
+
+    assert_eq!(alpha_tail.path(), Some(alpha.as_path()));
+    assert_eq!(beta_tail.path(), Some(beta.as_path()));
+    assert_eq!(alpha_update.native_session_id.as_deref(), Some("codex-alpha"));
+    assert_eq!(beta_update.native_session_id.as_deref(), Some("codex-beta"));
+    assert_eq!(alpha_update.totals.input_tokens, 30);
+    assert_eq!(beta_update.totals.input_tokens, 20);
 }
 
 #[test]

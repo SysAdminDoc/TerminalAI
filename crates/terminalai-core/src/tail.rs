@@ -110,6 +110,54 @@ fn read_bounded_line(
     }
 }
 
+/// Whether a Codex rollout's first record declares the session's working
+/// directory. A rollout is not eligible for discovery until that record is
+/// complete; binding to a file before its session metadata arrives recreates
+/// the cross-project adoption this check is meant to prevent.
+fn codex_rollout_matches_cwd(path: &Path, cwd: &Path) -> bool {
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut reader = BufReader::new(file);
+    let Ok(BoundedLine::Complete {
+        bytes,
+        oversized: false,
+        ..
+    }) = read_bounded_line(&mut reader, MAX_LINE_BYTES)
+    else {
+        return false;
+    };
+    let Ok(line) = std::str::from_utf8(&bytes) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+        return false;
+    };
+    if value.get("type").and_then(serde_json::Value::as_str) != Some("session_meta") {
+        return false;
+    }
+    let declared_cwd = value
+        .get("payload")
+        .and_then(|payload| payload.get("cwd"))
+        .or_else(|| value.get("cwd"))
+        .and_then(serde_json::Value::as_str);
+    let Some(declared_cwd) = declared_cwd else {
+        return false;
+    };
+    normalized_cwd(declared_cwd) == normalized_cwd(&cwd.to_string_lossy())
+}
+
+/// Compare Windows working directories without requiring the test path to
+/// exist. Codex may write either slash style, and Windows paths are
+/// case-insensitive even when the host running the unit test is not.
+fn normalized_cwd(cwd: &str) -> String {
+    let mut normalized = cwd.trim().replace('/', "\\").to_ascii_lowercase();
+    while normalized.len() > 3 && normalized.ends_with('\\') {
+        normalized.pop();
+    }
+    normalized
+}
+
 /// Follows one session's transcript.
 #[derive(Debug)]
 pub struct TranscriptTail {
@@ -159,7 +207,9 @@ impl TranscriptTail {
     /// this row — worse than showing none.
     pub fn poll(&mut self, home: &Path, cwd: &Path, not_before: SystemTime) -> TranscriptUpdate {
         if self.path.is_none() {
-            self.path = newest_transcript_after(self.agent, home, cwd, not_before);
+            if let Some(path) = newest_transcript_after(self.agent, home, cwd, not_before) {
+                self.follow(path);
+            }
         }
         let Some(path) = self.path.clone() else {
             return self.snapshot(false);
@@ -317,11 +367,16 @@ pub fn newest_transcript_after(
             "jsonl",
             not_before,
         ),
-        // Codex rollouts are filed by date rather than by project, so the
-        // newest across the tree is the best available match. A rollout that
-        // belongs to another directory is filtered out by `cwd` once its first
-        // record names one.
-        Agent::Codex => newest_under(&home.join(".codex").join("sessions"), "jsonl", 4, not_before),
+        // Codex rollouts are filed by date rather than by project. Candidates
+        // are opened and filtered by their first session-meta record before the
+        // newest matching rollout is selected.
+        Agent::Codex => newest_codex_under(
+            &home.join(".codex").join("sessions"),
+            "jsonl",
+            4,
+            cwd,
+            not_before,
+        ),
     }
 }
 
@@ -381,35 +436,46 @@ fn newest_in(directory: &Path, extension: &str, not_before: SystemTime) -> Optio
 }
 
 /// Bounded recursive search. Codex nests rollouts `YYYY/MM/DD/`, so the depth
-/// limit is the shape of that tree plus one, not a guess.
-fn newest_under(
+/// limit is the shape of that tree plus one, not a guess. Each candidate is
+/// checked before it can win, so a newer rollout from another directory does
+/// not hide the newest rollout that belongs to this session.
+fn newest_codex_under(
     root: &Path,
     extension: &str,
     max_depth: usize,
+    cwd: &Path,
     not_before: SystemTime,
 ) -> Option<PathBuf> {
+    let floor = not_before.checked_sub(BIRTH_GRACE).unwrap_or(not_before);
     let mut best: Option<(SystemTime, PathBuf)> = None;
     let mut queue = vec![(root.to_path_buf(), 0usize)];
     while let Some((directory, depth)) = queue.pop() {
         if depth > max_depth {
             continue;
         }
-        if let Some(candidate) = newest_in(&directory, extension, not_before) {
-            if let Some(born) = std::fs::metadata(&candidate).ok().as_ref().and_then(birth_time) {
-                let better = best
-                    .as_ref()
-                    .is_none_or(|(seen, kept)| born > *seen || (born == *seen && candidate > *kept));
-                if better {
-                    best = Some((born, candidate));
-                }
-            }
-        }
         let Ok(entries) = std::fs::read_dir(&directory) else {
             continue;
         };
         for entry in entries.flatten() {
-            if entry.path().is_dir() {
+            let path = entry.path();
+            if path.is_dir() {
                 queue.push((entry.path(), depth + 1));
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some(extension) {
+                continue;
+            }
+            let Some(born) = entry.metadata().ok().as_ref().and_then(birth_time) else {
+                continue;
+            };
+            if born < floor || !codex_rollout_matches_cwd(&path, cwd) {
+                continue;
+            }
+            let better = best
+                .as_ref()
+                .is_none_or(|(seen, kept)| born > *seen || (born == *seen && path > *kept));
+            if better {
+                best = Some((born, path));
             }
         }
     }

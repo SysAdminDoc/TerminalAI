@@ -89,6 +89,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Codex transcript discovery now reads each rollout's first `session_meta` record and binds only
+  to a rollout whose declared working directory matches the session. Incomplete metadata is
+  deferred, concurrent projects cannot cross-adopt cost or resume ids, and transcript binding
+  goes through the tail's reset-aware `follow` path.
 - Resume IDs from hooks and transcripts are now validated before storage and again before argv
   construction, so flag-like values cannot alter a revived Claude or Codex launch.
 - Environment leases now reject escaping compose files, canonicalize accepted paths inside the
