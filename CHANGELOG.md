@@ -91,6 +91,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- The unaudited-surface pass now has explicit evidence for the VT/grid, MCP, runtime-capability,
+  app-server, and installer-build surfaces; non-Windows execution, live-agent round trips, fresh
+  load measurements, and installer execution remain tracked as named blocked evidence rather than
+  being implied by passing unit tests.
 - Daemon accept retries now back off after persistent listener errors, the optional Codex app-server
   transport rejects oversized frames, and session-store quarantine moves cannot replace a same-name
   file. App and daemon logs now have distinct prefixes, while the app's notification diagnostic no

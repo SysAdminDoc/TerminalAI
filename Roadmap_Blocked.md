@@ -57,3 +57,37 @@ the exact fourth virtual display; do not use a physical monitor or an interactiv
 Update 2026-08-03 (later session): `ensure` succeeds again — `\\.\DISPLAY5` 1920x1080 at (5360,0)
 attached, and `launch` placed the release app on it with placement proof. The display blocker is
 gone; the WebDriver/EdgeDriver failures above are unretested since and are now the open question.
+
+## P3 unaudited-surface pass residuals — 2026-08-03
+
+The catch-all testing row was audited on Windows 11 26100 and removed from `ROADMAP.md`.
+
+- **VT/grid:** closed for in-process and recorded-stream coverage. `cargo test -p terminalai-core
+  --all-features grid` passed 14 tests, including the arbitrary-byte property test, and
+  `cargo test -p terminalai-core --all-features --test grid_ref` passed the recorded Claude/Codex
+  streams across parser chunks.
+- **MCP and runtime capabilities:** closed for the boundary and parser layers. The MCP integration
+  suite passed 18 tests, and the capability suite passed 4 tests covering model catalogs, Claude
+  init capabilities, runtime feature output, and unknown-value warnings. A live vendor-binary probe
+  is part of the external-agent limitation below.
+- **Opt-in `codex-app-server`:** the feature-gated daemon suite passed 3 tests for typed requests,
+  initialization, and the frame limit. An end-to-end handshake with a real Codex app-server was not
+  run: the installed `codex.ps1` launcher is present, but there is no authenticated disposable
+  agent session available for this pass.
+- **Non-Windows paths:** static `cfg` and target-dependency review covered the Unix and Windows
+  branches, and the Windows workspace suites passed. macOS/Linux compilation and execution cannot
+  be performed from this Windows host; keep a cross-host CI or host run as the closure for those
+  branches.
+- **NSIS/MSI payloads:** a fresh `cargo tauri build --ci --no-sign --bundles nsis,msi` succeeded.
+  The generated WiX source contains the main executable and both declared sidecars, and the MSI
+  contains their component names. The compressed NSIS payload was not extracted because no local
+  archive extractor is installed. The install-and-launch gate remains under R-56: running the
+  existing verifier as-is would start its installer on the interactive desktop before its later
+  isolated application launch.
+- **Real load and memory claims:** the frontend contract suite still covers the declared 28px row,
+  measured-window documentation, and 29-row target, but no fresh browser measurement or live-agent
+  RSS/load run was performed in this pass. The 2026-08-02/2026-08-03 measurements remain historical
+  evidence rather than a new load result.
+- **Agent-level round trip:** no authenticated Claude or Codex session exists on this machine, so
+  launching a real prompt, hook, capability probe, or app-server conversation would be speculative.
+  Close this residual with an operator-owned authenticated run using the isolated UI path.

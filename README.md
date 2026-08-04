@@ -101,8 +101,7 @@ Working today (`terminalai-probe`, headless):
   machine and the work queue's dirty-tree refusal; 413 with the opt-in app-server transport
   enabled, plus 195 frontend tests (`npm --prefix web test`)
 
-The roadmap is currently drained; `Roadmap_Blocked.md` records what is waiting on something
-external. The experimental
+`Roadmap_Blocked.md` records what is waiting on something external. The experimental
 Codex app-server adapter is available only when the daemon is built with the explicit
 `codex-app-server` feature; the default daemon continues to use hooks and the PTY path. The named-pipe
 daemon keeps live sessions independent of the window; see
