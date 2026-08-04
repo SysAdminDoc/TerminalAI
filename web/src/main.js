@@ -2657,7 +2657,13 @@ async function loadKnownProjects() {
  * the difference only shows up later as an empty dropdown.
  */
 async function registerProjectRoot() {
-  const root = await invoke("pick_folder");
+  let root;
+  try {
+    root = await invoke("pick_folder");
+  } catch (error) {
+    showToast(String(error));
+    return;
+  }
   if (!root) return;
   try {
     await invoke("add_project_root", { path: root });
@@ -3018,7 +3024,13 @@ function bindEvents() {
     });
   });
   $("pick-folder-button").addEventListener("click", async () => {
-    const folder = await invoke("pick_folder");
+    let folder;
+    try {
+      folder = await invoke("pick_folder");
+    } catch (error) {
+      showToast(String(error));
+      return;
+    }
     if (folder) {
       $("cwd-input").value = folder;
       clearFolderValidation();
@@ -3046,7 +3058,13 @@ function bindEvents() {
   });
   $("template-select").addEventListener("change", () => applyProjectTemplate());
   $("pick-extra-button").addEventListener("click", async () => {
-    const folders = await invoke("pick_extra_dirs");
+    let folders;
+    try {
+      folders = await invoke("pick_extra_dirs");
+    } catch (error) {
+      showToast(String(error));
+      return;
+    }
     if (folders?.length) {
       state.extraDirs = folders;
       $("extra-dirs-input").value = folders.join("; ");

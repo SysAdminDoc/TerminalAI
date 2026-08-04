@@ -53,6 +53,25 @@ test("registering a root reports how many projects it found", () => {
   }
 });
 
+test("folder-picker failures surface instead of becoming unhandled rejections", () => {
+  assert.match(
+    register,
+    /let root;\s*try \{\s*root = await invoke\("pick_folder"\);[\s\S]*?catch \(error\) \{\s*showToast\(String\(error\)\);\s*return;/,
+  );
+  const pickers = main.slice(
+    main.indexOf('$("pick-folder-button")'),
+    main.indexOf('$("save-preset-button")'),
+  );
+  assert.match(
+    pickers,
+    /pick-folder-button"\)\.addEventListener\("click", async \(\) => \{\s*let folder;\s*try \{\s*folder = await invoke\("pick_folder"\);[\s\S]*?catch \(error\) \{\s*showToast\(String\(error\)\);\s*return;/,
+  );
+  assert.match(
+    pickers,
+    /pick-extra-button"\)\.addEventListener\("click", async \(\) => \{\s*let folders;\s*try \{\s*folders = await invoke\("pick_extra_dirs"\);[\s\S]*?catch \(error\) \{\s*showToast\(String\(error\)\);\s*return;/,
+  );
+});
+
 test("a refused root is reported and does not clear the list", () => {
   // The backend refuses a root already covered by another; swallowing that
   // would look like a silent no-op.
