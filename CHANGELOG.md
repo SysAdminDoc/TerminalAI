@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- "Elsewhere on this machine" rows show what the agent said about itself. The panel already ran the
+  command that returns Claude Code's own status vocabulary and then collapsed the answer to process
+  liveness, so a row read "Running" while the agent had reported it was blocked on a permission
+  prompt. `state` and `waitingFor` now reach the row verbatim, beside — not instead of — the
+  liveness we determined ourselves. A blank or absent field stays absent rather than becoming an
+  idle-looking row, and the rows remain actionless: this changes fidelity, not ownership.
+
 - The fleet header shows quota headroom, so the fleet can warn before a window closes rather than
   only reporting that it has. Codex publishes a quota table continuously; the parser read
   `used_percent` out of it, correctly decided the window was not blocking, and then threw the whole

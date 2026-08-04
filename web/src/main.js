@@ -1369,6 +1369,20 @@ const EXTERNAL_STATE_LABEL = {
   unknown: { label: "external-unknown", tone: "overlay0" },
 };
 
+/// What the agent said about itself, kept in its own words.
+///
+/// `claude agents --json` returns `state` (working | blocked | done | failed |
+/// stopped) and, when blocked, `waitingFor`. The panel already ran that command
+/// and threw both away, so a row said "Running" while the agent had reported it
+/// was waiting on a permission prompt. Returns "" when the agent said nothing,
+/// which leaves the row showing process liveness alone — never idle.
+function externalReportedLabel(session) {
+  const state = String(session?.reported_state ?? "").trim();
+  if (!state) return "";
+  const waiting = String(session?.waiting_for ?? "").trim();
+  return waiting ? t("external-blocked-on", { state, waiting }) : state;
+}
+
 // Rows for sessions this supervisor did not start. Deliberately actionless: we
 // do not own their pty, so offering Stop or Focus would promise something the
 // daemon cannot deliver.
@@ -1396,11 +1410,16 @@ function renderExternal() {
       const alsoHere = supervised.has(String(session.cwd ?? "").toLowerCase())
         ? '<span class="external-overlap" title="' + escapeHtml(t("external-same-folder")) + '">' + escapeHtml(t("external-same-folder-short")) + "</span>"
         : "";
-      const externalAriaLabel = `${label}, ${metaLabel(meta)}, ${countMessage("count-external", 1)}`;
+      // The agent's own vocabulary, not ours. Process liveness says the thing is
+      // running; only this says whether it is blocked on a permission prompt,
+      // and collapsing the two made every live row read "Running".
+      const reported = externalReportedLabel(session);
+      const stateText = reported ? `${metaLabel(meta)} · ${reported}` : metaLabel(meta);
+      const externalAriaLabel = `${label}, ${stateText}, ${countMessage("count-external", 1)}`;
       return `<article class="external-row" role="listitem" aria-label="${escapeHtml(externalAriaLabel)}">
         <span class="status-glyph tone-${escapeHtml(meta.tone)}" aria-hidden="true">◦</span>
         <div class="external-identity"><div class="external-name">${escapeHtml(label)}</div><div class="external-meta"><span title="${escapeHtml(String(session.cwd ?? ""))}">${escapeHtml(folderLabel(session.cwd))}</span><span>${escapeHtml(where)}</span>${session.version ? `<span>v${escapeHtml(session.version)}</span>` : ""}</div></div>
-        <span class="external-state">${escapeHtml(metaLabel(meta))}</span>
+        <span class="external-state"${reported ? ` title="${escapeHtml(t("external-reported-by-agent"))}"` : ""}>${escapeHtml(stateText)}</span>
         <span class="external-pid" title="${escapeHtml(t("external-process-id"))}">${escapeHtml(String(session.pid))}</span>
         ${alsoHere}
       </article>`;

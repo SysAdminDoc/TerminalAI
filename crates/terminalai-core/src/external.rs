@@ -54,6 +54,22 @@ pub struct ExternalSession {
     pub version: Option<String>,
     pub started_at: Option<SystemTime>,
     pub state: ExternalState,
+    /// The agent's own word for what it is doing — `working`, `blocked`,
+    /// `done`, `failed`, `stopped`. Kept verbatim rather than mapped onto this
+    /// project's status vocabulary: it is a different vendor's model, and
+    /// translating it would invent a precision the mapping does not have.
+    ///
+    /// Distinct from [`ExternalSession::state`], which is process liveness we
+    /// determined ourselves. A row can be `Live` and `blocked` at once, and
+    /// collapsing the two is what made these rows read "running" while the
+    /// agent had said it was waiting on a permission prompt.
+    #[serde(default)]
+    pub reported_state: Option<String>,
+    /// What a blocked agent is waiting for — `permission prompt`, `input
+    /// needed`, `sandbox request`, `worker request`, `dialog open`. Absent
+    /// unless the agent said.
+    #[serde(default)]
+    pub waiting_for: Option<String>,
 }
 
 impl ExternalSession {
@@ -88,6 +104,13 @@ struct RawClaudeSession {
     /// Milliseconds since the Unix epoch.
     #[serde(default, rename = "startedAt")]
     started_at: Option<u64>,
+    /// `working | blocked | done | failed | stopped`, per the agent-view docs.
+    /// Typed as a free string so a value the vendor adds later reaches the row
+    /// instead of failing the whole file's parse.
+    #[serde(default)]
+    state: Option<String>,
+    #[serde(default, rename = "waitingFor")]
+    waiting_for: Option<String>,
 }
 
 /// Read every session Claude Code has registered on this machine.
@@ -154,6 +177,10 @@ fn to_session(
         version: raw.version,
         started_at,
         state,
+        // Empty is the same as absent: a field present but blank tells the
+        // operator nothing, and rendering it would look like a reported state.
+        reported_state: raw.state.filter(|value| !value.trim().is_empty()),
+        waiting_for: raw.waiting_for.filter(|value| !value.trim().is_empty()),
     })
 }
 
@@ -324,6 +351,8 @@ mod tests {
             version: None,
             started_at: None,
             state: ExternalState::Live,
+            reported_state: None,
+            waiting_for: None,
         };
         let recycled = ExternalSession {
             proc_start: Some("bbb".into()),
@@ -440,5 +469,51 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The agent's own status vocabulary reaches the row. Collapsing it to
+    /// process liveness is what made a blocked session read as running.
+    #[test]
+    fn the_agents_reported_state_survives_the_parse() {
+        let home = std::env::temp_dir().join(format!(
+            "terminalai-external-state-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let dir = home.join(CLAUDE_SESSION_DIR);
+        std::fs::create_dir_all(&dir).expect("registry directory");
+        std::fs::write(
+            dir.join("4242.json"),
+            r#"{"pid":4242,"cwd":"C:/repo","state":"blocked","waitingFor":"permission prompt"}"#,
+        )
+        .expect("blocked session");
+        std::fs::write(
+            dir.join("4243.json"),
+            r#"{"pid":4243,"cwd":"C:/repo","state":"  "}"#,
+        )
+        .expect("blank session");
+        std::fs::write(dir.join("4244.json"), r#"{"pid":4244,"cwd":"C:/repo"}"#)
+            .expect("silent session");
+
+        let sessions = claude_sessions(&home, &|_| Some(true)).expect("registry read");
+        std::fs::remove_dir_all(&home).ok();
+
+        let blocked = sessions.iter().find(|s| s.pid == 4242).expect("blocked row");
+        assert_eq!(blocked.state, ExternalState::Live, "liveness is still ours");
+        assert_eq!(blocked.reported_state.as_deref(), Some("blocked"));
+        assert_eq!(blocked.waiting_for.as_deref(), Some("permission prompt"));
+
+        // A blank field is the same as no field: rendering it would look like a
+        // reported state and say nothing.
+        let blank = sessions.iter().find(|s| s.pid == 4243).expect("blank row");
+        assert_eq!(blank.reported_state, None);
+
+        // Silence stays silence, and never becomes idle.
+        let silent = sessions.iter().find(|s| s.pid == 4244).expect("silent row");
+        assert_eq!(silent.reported_state, None);
+        assert_eq!(silent.waiting_for, None);
     }
 }

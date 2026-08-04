@@ -50,3 +50,25 @@ test("ended sessions are dropped and unknown ones are counted, not hidden", () =
   assert.match(renderer, /session\.state === "unknown"/);
   assert.match(renderer, /unknown/);
 });
+
+test("an external row shows the agent's own state, not just process liveness", () => {
+  // The panel already runs `claude agents --json`, which returns the agent's own
+  // status vocabulary, and used to collapse it to "is the pid alive" - so a row
+  // read "Running" while the agent had said it was blocked on a permission
+  // prompt.
+  assert.match(main, /function externalReportedLabel\(/);
+  assert.match(main, /session\?\.reported_state/);
+  assert.match(main, /session\?\.waiting_for/);
+  assert.match(main, /const stateText = reported \? `\$\{metaLabel\(meta\)\} · \$\{reported\}` : metaLabel\(meta\)/);
+
+  // Silence stays silence: no reported state leaves process liveness alone
+  // rather than inventing an idle row.
+  const start = main.indexOf("function externalReportedLabel(");
+  const body = main.slice(start, main.indexOf("\n}", start));
+  assert.match(body, /if \(!state\) return "";/);
+
+  const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
+  for (const key of ["external-blocked-on", "external-reported-by-agent"]) {
+    assert.ok(new RegExp(`^${key} =`, "m").test(ftl), `${key} missing from terminalai.ftl`);
+  }
+});

@@ -102,6 +102,8 @@ external-process-id = Process id
 external-same-folder = TerminalAI also supervises a session in this folder
 external-same-folder-short = same folder
 external-load-error = Could not read external sessions: { $error }
+external-reported-by-agent = Reported by the agent itself, in its own words
+external-blocked-on = { $state } on { $waiting }
 
 count-session-one = { $count } session
 count-session-other = { $count } sessions
