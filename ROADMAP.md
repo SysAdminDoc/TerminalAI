@@ -223,20 +223,6 @@ additions; where they touch, the note says so.
   Acceptance: progress signals (pty output, transcript growth, hook events) extend a per-session deadline; missing it repeatedly marks the session unhealthy without restarting it, and only a proven-dead process restarts. Pairs with the "Detect a stalled session" item from 2026-08-03, which surfaces this to the operator — this item is the supervisor-side verdict that item displays.
   Complexity: M
 
-- [ ] P2 — Publish a winget manifest
-  Why: it is the highest-leverage distribution change available and it costs nothing in policy terms — unsigned installers are explicitly accepted, and installing through winget bypasses the browser download that attaches Mark-of-the-Web in the first place.
-  Evidence: signing is required only for MSIX; verbatim in the schema docs — https://github.com/microsoft/winget-pkgs/blob/master/doc/manifest/schema/1.12.0/installer.md . Unsigned-installer packages are live in the community repo (`wez.wezterm`, `yt-dlp.yt-dlp`, `Neovim.Neovim`). Current schema is 1.12.0; validation failures are AV/PUA scans, non-silent install, non-HTTPS or redirected URLs, and incomplete uninstall — never the absence of a signature: https://learn.microsoft.com/en-us/windows/package-manager/package/winget-validation
-  Touches: a new release step; manifests live in the upstream `microsoft/winget-pkgs` repo, not here
-  Acceptance: `winget install SysAdminDoc.TerminalAI` installs and `winget upgrade` moves versions; the manifest declares `Silent: /S` for NSIS and `/quiet` for MSI, `UpgradeBehavior`, and `AppsAndFeaturesEntries` carrying the MSI `UpgradeCode`. Depends on the NSIS sidecar fix — do not publish an installer whose upgrade path is known broken.
-  Complexity: M
-
-- [ ] P2 — Publish checksums and a detached signature with each release
-  Why: nothing currently lets anyone verify a downloaded artifact is the one that was built, and a certificate-free detached signature is the only integrity mechanism available under the no-signing policy.
-  Evidence: minisign is Ed25519 with no CA and no PKI — https://jedisct1.github.io/minisign/ — so it is not code signing and does not conflict with the policy. Syncthing publishes a checksum file plus an independent signature its updater verifies (https://docs.syncthing.net/dev/release-signing.html); yt-dlp publishes `SHA2-256SUMS` plus GPG signatures. Of five unsigned Windows projects surveyed, two publish nothing usable.
-  Touches: the release process and `scripts/`, `README.md`
-  Acceptance: every release carries `SHA256SUMS` and a detached signature over it, the public key is in the README, and a `verify-release.ps1` checks both. Note honestly that this protects the transport only — per Microsoft's own documentation it changes nothing about SmartScreen or Smart App Control.
-  Complexity: S
-
 ### P3
 
 - [ ] P3 — Snapshot-test the golden argv and grid renders

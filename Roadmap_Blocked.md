@@ -114,3 +114,29 @@ policy. A server-managed or policy-helper result delivered only inside a Claude 
 observable before that session starts, so this local preflight cannot claim to detect those remote
 sources. An operator-owned run with `disableAllHooks: true` in an approved managed source can
 confirm the full banner against a real Claude installation.
+
+## Publish a winget manifest
+
+Blocked 2026-08-04: the manifest lives in `microsoft/winget-pkgs`, not here, and submission needs a
+published GitHub Release whose asset URLs and SHA256 are already fixed. Neither exists to point at
+yet, and opening a PR against a third-party repository is an outward-facing action for the operator.
+
+The research behind it is settled and does not need redoing: signing is required only for MSIX, so an
+unsigned NSIS/EXE passes validation — `wez.wezterm`, `yt-dlp.yt-dlp` and `Neovim.Neovim` are live
+proof. Schema 1.12.0. Declare `Silent: /S` for NSIS and `/quiet` for MSI, `UpgradeBehavior`, and
+`AppsAndFeaturesEntries` carrying the MSI `UpgradeCode`.
+
+Unblocks the moment a release is published. Do not submit before the NSIS sidecar-lock fix ships:
+publishing an installer whose upgrade path is known broken is worse than not being in winget.
+
+## Publish checksums and a detached signature with each release
+
+Blocked 2026-08-04: the signature needs a private key the operator holds, which this agent must
+never generate or store. `SHA256SUMS` alone is a partial answer and would advertise a verification
+the signature half does not back.
+
+What closes it: the operator generates a minisign keypair once (`minisign -G`, or `tauri signer
+generate`), keeps the secret key out of the repository, and publishes the public key in `README.md`.
+The release step then emits `SHA256SUMS` plus `SHA256SUMS.minisig`. Minisign is Ed25519 with no CA
+and no PKI, so this is not code signing and does not touch the no-signing rule — and it changes
+nothing about SmartScreen, which reads signatures and per-hash download volume only.
