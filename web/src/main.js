@@ -670,7 +670,7 @@ function renderSummary() {
   const live = state.sessions.filter((session) => !["exited", "queued", "rate-limited"].includes(session.status)).length;
   const limited = state.sessions.filter((session) => session.status === "rate-limited");
   const queued = state.sessions.filter((session) => session.status === "queued").length;
-  const needsYou = state.sessions.filter((session) => ["needs-you", "needs-approval", "awaiting-input"].includes(session.status)).length;
+  const needsAttention = state.sessions.filter((session) => ["needs-you", "needs-approval", "awaiting-input"].includes(session.status)).length;
   const working = state.sessions.filter((session) => ["working", "thinking"].includes(session.status)).length;
   const reporting = state.sessions.filter((session) => session.cost_usd !== null && session.cost_usd !== undefined);
   const spend = reporting.reduce((total, session) => total + (Number(session.cost_usd) || 0), 0);
@@ -688,7 +688,7 @@ function renderSummary() {
   const summaryMarkup =
     '<span class="summary-item"><b>' + live + "/" + maxLive + "</b> " + escapeHtml(t("fleet-live")) + "</span>" +
     '<span class="summary-separator">/</span><span class="summary-item">' + escapeHtml(countMessage("count-queued", queued)) + "</span>" +
-    '<span class="summary-separator">/</span><span class="summary-item summary-attention">' + escapeHtml(countMessage("count-needs-you", needsYou)) + "</span>" +
+    '<span class="summary-separator">/</span><span class="summary-item summary-attention">' + escapeHtml(countMessage("count-needs-attention", needsAttention)) + "</span>" +
     '<span class="summary-separator">/</span><span class="summary-item">' + escapeHtml(countMessage("count-active", working)) + "</span>" +
     limitedSummary +
     '<span class="summary-separator">/</span><button type="button" class="summary-item summary-spend" id="fleet-spend" title="' + escapeHtml(spendTitle) + '" aria-label="' + escapeHtml(t("button-open-rollup")) + '"><b>' + spendLabel + "</b> " + escapeHtml(t("fleet-spent")) + "</button>";
@@ -917,9 +917,13 @@ function renderRows() {
   $("empty-state").classList.toggle("empty-state-hidden", state.sessions.length > 0);
   list.classList.toggle("fleet-list-hidden", state.sessions.length === 0);
   list.classList.toggle("fleet-list-wide", state.wideMode);
-  $("wide-toggle").setAttribute("aria-pressed", String(state.wideMode));
-  $("wide-toggle").textContent = state.wideMode ? t("button-compact") : t("button-wide");
-  $("wide-toggle").classList.toggle("wide-toggle-active", state.wideMode);
+  const wideToggle = $("wide-toggle");
+  const wideTitle = state.wideMode ? "button-hide-model-effort-cost" : "button-show-model-effort-cost";
+  wideToggle.setAttribute("aria-pressed", String(state.wideMode));
+  wideToggle.textContent = state.wideMode ? t("button-compact") : t("button-wide");
+  wideToggle.setAttribute("data-i18n-title", wideTitle);
+  wideToggle.title = t(wideTitle);
+  wideToggle.classList.toggle("wide-toggle-active", state.wideMode);
   const rovingId = sessions.find((session) => session.id === state.focused)?.id ?? sessions[0]?.id ?? null;
   reconcileKeyedRows(
     list,
