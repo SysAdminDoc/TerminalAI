@@ -35,6 +35,14 @@ pub const MAX_POLL_BYTES: u64 = 8 * 1024 * 1024;
 /// Longest last-message text retained for the row.
 pub const MAX_SUMMARY_CHARS: usize = 400;
 
+/// How a transcript reader chose its file. Kept visible in diagnostics so an
+/// operator can tell an exact provider id from the compatibility heuristic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TranscriptBinding {
+    ExplicitSessionId,
+    Heuristic,
+}
+
 /// What one poll learned.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TranscriptUpdate {
@@ -163,6 +171,8 @@ fn normalized_cwd(cwd: &str) -> String {
 pub struct TranscriptTail {
     agent: Agent,
     path: Option<PathBuf>,
+    expected_session_id: Option<String>,
+    binding: Option<TranscriptBinding>,
     offset: u64,
     accumulator: TranscriptAccumulator,
     native_session_id: Option<String>,
@@ -171,9 +181,15 @@ pub struct TranscriptTail {
 
 impl TranscriptTail {
     pub fn new(agent: Agent) -> Self {
+        Self::with_session_id(agent, None)
+    }
+
+    pub fn with_session_id(agent: Agent, expected_session_id: Option<String>) -> Self {
         Self {
             agent,
             path: None,
+            expected_session_id,
+            binding: None,
             offset: 0,
             accumulator: TranscriptAccumulator::with_vendored_pricing(),
             native_session_id: None,
@@ -185,10 +201,15 @@ impl TranscriptTail {
         self.path.as_deref()
     }
 
+    pub fn binding(&self) -> Option<TranscriptBinding> {
+        self.binding
+    }
+
     /// Bind this tail to a specific file, skipping discovery.
     pub fn follow(&mut self, path: PathBuf) {
         if self.path.as_ref() != Some(&path) {
             self.path = Some(path);
+            self.binding = None;
             self.reset();
         }
     }
@@ -207,8 +228,37 @@ impl TranscriptTail {
     /// this row — worse than showing none.
     pub fn poll(&mut self, home: &Path, cwd: &Path, not_before: SystemTime) -> TranscriptUpdate {
         if self.path.is_none() {
-            if let Some(path) = newest_transcript_after(self.agent, home, cwd, not_before) {
+            let explicit = self
+                .expected_session_id
+                .as_deref()
+                .and_then(|id| transcript_for_session_id(self.agent, home, cwd, id));
+            let used_explicit = explicit.is_some();
+            let discovered = explicit.or_else(|| {
+                (!supports_explicit_session_id(self.agent) || self.expected_session_id.is_none())
+                    .then(|| newest_transcript_after(self.agent, home, cwd, not_before))
+                    .flatten()
+            });
+            if let Some(path) = discovered {
+                self.binding = Some(if used_explicit {
+                    TranscriptBinding::ExplicitSessionId
+                } else {
+                    TranscriptBinding::Heuristic
+                });
+                tracing::debug!(
+                    agent = ?self.agent,
+                    path = %path.display(),
+                    expected_session_id = ?self.expected_session_id,
+                    binding = ?self.binding,
+                    "bound transcript"
+                );
                 self.follow(path);
+                // `follow` is a public explicit-path escape hatch and clears the
+                // marker when it changes files; restore the discovery strategy.
+                self.binding = Some(if used_explicit {
+                    TranscriptBinding::ExplicitSessionId
+                } else {
+                    TranscriptBinding::Heuristic
+                });
             }
         }
         let Some(path) = self.path.clone() else {
@@ -380,6 +430,33 @@ pub fn newest_transcript_after(
     }
 }
 
+fn supports_explicit_session_id(agent: Agent) -> bool {
+    matches!(agent, Agent::Claude)
+}
+
+/// Claude's documented `--session-id` is also the JSONL filename. This path is
+/// deliberately checked before any directory ranking; a same-folder session
+/// cannot steal it by being newer or more recently modified.
+fn transcript_for_session_id(
+    agent: Agent,
+    home: &Path,
+    cwd: &Path,
+    session_id: &str,
+) -> Option<PathBuf> {
+    if !is_valid_resume_id(session_id) {
+        return None;
+    }
+    let path = match agent {
+        Agent::Claude => home
+            .join(".claude")
+            .join("projects")
+            .join(claude_project_slug(cwd))
+            .join(format!("{session_id}.jsonl")),
+        Agent::Codex => return None,
+    };
+    path.is_file().then_some(path)
+}
+
 /// Slack allowed below the birth-time floor.
 ///
 /// A file's creation stamp comes from the coarse system clock — ~15.6 ms on
@@ -479,6 +556,7 @@ fn newest_codex_under(
             }
         }
     }
+
     best.map(|(_, path)| path)
 }
 
@@ -562,10 +640,16 @@ impl TranscriptTails {
         home: &Path,
         cwd: &Path,
         not_before: SystemTime,
+        expected_session_id: Option<&str>,
     ) -> TranscriptUpdate {
         self.tails
             .entry(session_id.to_owned())
-            .or_insert_with(|| TranscriptTail::new(agent))
+            .or_insert_with(|| {
+                TranscriptTail::with_session_id(
+                    agent,
+                    expected_session_id.map(str::to_owned),
+                )
+            })
             .poll(home, cwd, not_before)
     }
 

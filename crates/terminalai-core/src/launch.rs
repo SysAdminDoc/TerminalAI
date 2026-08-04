@@ -156,6 +156,11 @@ pub struct LaunchSpec {
     /// Codex only — layers `$CODEX_HOME/<name>.config.toml`.
     pub profile: Option<String>,
     pub add_dirs: Vec<PathBuf>,
+    /// Provider-native id for a new session. Claude accepts this as
+    /// `--session-id`, which lets transcript tailing bind by name instead of
+    /// guessing from filesystem timestamps. Older stored specs leave it empty.
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub resume: Resume,
     /// Claude only.
     pub max_budget_usd: Option<f64>,
@@ -234,6 +239,13 @@ impl LaunchSpec {
         {
             return Err(LaunchError::InvalidResumeId);
         }
+        if self
+            .session_id
+            .as_deref()
+            .is_some_and(|id| !is_valid_resume_id(id))
+        {
+            return Err(LaunchError::InvalidResumeId);
+        }
         self.environment.validate()?;
         let args = match self.agent {
             Agent::Claude => self.claude_args()?,
@@ -292,6 +304,12 @@ impl LaunchSpec {
         if let Some(n) = &self.name {
             a.push("--name".into());
             a.push(n.clone());
+        }
+        if matches!(self.resume, Resume::New) {
+            if let Some(id) = &self.session_id {
+                a.push("--session-id".into());
+                a.push(id.clone());
+            }
         }
         for d in &self.add_dirs {
             a.push("--add-dir".into());
@@ -460,6 +478,27 @@ mod tests {
                 "5"
             ]
         );
+    }
+
+    #[test]
+    fn claude_new_session_id_is_passed_but_resume_ids_are_not_repeated() {
+        let s = LaunchSpec {
+            session_id: Some("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee".into()),
+            ..spec(Agent::Claude)
+        };
+        let c = s.resolve(&binary(Agent::Claude)).unwrap();
+        assert_eq!(c.args, [
+            "--session-id",
+            "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+        ]);
+
+        let s = LaunchSpec {
+            session_id: Some("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee".into()),
+            resume: Resume::Session("old-session".into()),
+            ..spec(Agent::Claude)
+        };
+        let c = s.resolve(&binary(Agent::Claude)).unwrap();
+        assert_eq!(c.args, ["--resume", "old-session"]);
     }
 
     #[test]

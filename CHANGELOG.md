@@ -95,6 +95,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   app-server, and installer-build surfaces; non-Windows execution, live-agent round trips, fresh
   load measurements, and installer execution remain tracked as named blocked evidence rather than
   being implied by passing unit tests.
+- New Claude launches receive a generated UUID through `--session-id`; transcript tailing follows
+  that named JSONL file directly and leaves timestamp ranking only for agents without the explicit
+  binding capability.
 - Daemon accept retries now back off after persistent listener errors, the optional Codex app-server
   transport rejects oversized frames, and session-store quarantine moves cannot replace a same-name
   file. App and daemon logs now have distinct prefixes, while the app's notification diagnostic no

@@ -91,3 +91,16 @@ The catch-all testing row was audited on Windows 11 26100 and removed from `ROAD
 - **Agent-level round trip:** no authenticated Claude or Codex session exists on this machine, so
   launching a real prompt, hook, capability probe, or app-server conversation would be speculative.
   Close this residual with an operator-owned authenticated run using the isolated UI path.
+
+## P0 live Claude transcript filename validation — 2026-08-04
+
+The caller-supplied session binding is implemented and covered by the full Windows workspace
+suite. New Claude launches now receive a generated UUID through `--session-id`; the tail checks
+`%USERPROFILE%\\.claude\\projects\\<slug>\\<uuid>.jsonl` directly and records whether it used the
+explicit binding or the compatibility heuristic.
+
+Live vendor validation remains open because this machine has no authenticated Claude session. The
+documented flag and filename convention were not exercised against a real Claude process, so this
+does not claim that external acceptance. Close it with an operator-owned isolated launch that
+confirms the generated id creates the expected JSONL path and that two same-folder sessions each
+remain attached to their own transcript.

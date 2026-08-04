@@ -27,8 +27,8 @@ use crate::pty::PtySize;
 use crate::review::{collect_reviews, ReviewItem};
 use crate::scrollback::ScrollbackSpool;
 use crate::session::{
-    fleet_order, fresh_hook_token, RateLimit, RestartDecision, Session, SessionId, SessionPhase,
-    SessionStatus,
+    fleet_order, fresh_hook_token, fresh_native_session_id, RateLimit, RestartDecision, Session,
+    SessionId, SessionPhase, SessionStatus,
 };
 use crate::store::{ArchivedSession, SessionStoreSnapshot, StoredSession};
 
@@ -633,6 +633,12 @@ impl SessionRegistry {
         let admission = lock_state(&self.inner).admission;
         if spec.agent == crate::agent::Agent::Claude && spec.max_budget_usd.is_none() {
             spec.max_budget_usd = admission.default_budget_usd;
+        }
+        if spec.agent == crate::agent::Agent::Claude
+            && spec.session_id.is_none()
+            && matches!(spec.resume, Resume::New)
+        {
+            spec.session_id = fresh_native_session_id();
         }
         let command = spec.resolve(&binary)?;
         // Read before the lock: this shells out to Git. Resolving here rather
@@ -2178,7 +2184,13 @@ impl SessionRegistry {
     pub fn poll_transcripts(&self, home: &std::path::Path) -> usize {
         // Snapshot the work under the lock, then read files without holding it:
         // a slow disk must not stall status ingestion.
-        let targets: Vec<(SessionId, crate::Agent, std::path::PathBuf, SystemTime)> = {
+        let targets: Vec<(
+            SessionId,
+            crate::Agent,
+            std::path::PathBuf,
+            SystemTime,
+            Option<String>,
+        )> = {
             let state = lock_state(&self.inner);
             state
                 .entries
@@ -2190,6 +2202,7 @@ impl SessionRegistry {
                         entry.session.agent,
                         entry.session.cwd.clone(),
                         entry.session.started_at,
+                        entry.spec.session_id.clone(),
                     )
                 })
                 .collect()
@@ -2209,8 +2222,15 @@ impl SessionRegistry {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             targets
                 .into_iter()
-                .map(|(id, agent, cwd, started_at)| {
-                    let update = tails.poll(&id.0, agent, home, &cwd, started_at);
+                .map(|(id, agent, cwd, started_at, session_id)| {
+                    let update = tails.poll(
+                        &id.0,
+                        agent,
+                        home,
+                        &cwd,
+                        started_at,
+                        session_id.as_deref(),
+                    );
                     (id, update)
                 })
                 .collect::<Vec<_>>()
@@ -3097,6 +3117,7 @@ mod tests {
 
     struct RecordingDomain {
         spawns: Arc<AtomicUsize>,
+        commands: Arc<Mutex<Vec<ResolvedCommand>>>,
     }
 
     struct ExitedSession;
@@ -3130,12 +3151,13 @@ mod tests {
     impl AgentDomain for RecordingDomain {
         fn spawn(
             &self,
-            _command: &ResolvedCommand,
+            command: &ResolvedCommand,
             _size: PtySize,
             _environment: &[(String, String)],
             _on_output: OutputHandler,
         ) -> Result<Arc<dyn AgentSession>, DomainError> {
             self.spawns.fetch_add(1, Ordering::Relaxed);
+            self.commands.lock().unwrap().push(command.clone());
             Ok(Arc::new(ExitedSession))
         }
     }
@@ -3143,8 +3165,10 @@ mod tests {
     #[test]
     fn registry_launch_uses_an_injected_domain_without_local_process_access() {
         let spawns = Arc::new(AtomicUsize::new(0));
+        let commands = Arc::new(Mutex::new(Vec::new()));
         let registry = SessionRegistry::with_domain(Arc::new(RecordingDomain {
             spawns: spawns.clone(),
+            commands: commands.clone(),
         }));
         let cwd = std::env::current_dir().expect("cwd");
         let spec = spec_for(Agent::Claude, &cwd);
@@ -3164,6 +3188,14 @@ mod tests {
             std::thread::yield_now();
         }
         assert_eq!(spawns.load(Ordering::Relaxed), 1);
+        let commands = commands.lock().unwrap();
+        let session_id = commands[0]
+            .args
+            .windows(2)
+            .find(|window| window[0] == "--session-id")
+            .map(|window| window[1].as_str())
+            .expect("new Claude launches carry an explicit transcript id");
+        assert!(crate::launch::is_valid_resume_id(session_id));
     }
 
     #[test]

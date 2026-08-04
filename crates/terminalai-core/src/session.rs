@@ -573,6 +573,41 @@ pub(crate) fn fresh_hook_token() -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+/// Mint the UUID that Claude writes into its transcript filename when the
+/// launcher supplies `--session-id`. Returning `None` keeps the launch usable
+/// if the OS random source is unavailable; transcript discovery then uses the
+/// documented heuristic fallback.
+pub(crate) fn fresh_native_session_id() -> Option<String> {
+    let mut bytes = [0u8; 16];
+    if let Err(error) = getrandom::fill(&mut bytes) {
+        tracing::error!(%error, "could not generate provider session id");
+        return None;
+    }
+    // RFC 4122 version 4 / variant 1 bits. The value is still accepted by the
+    // narrower resume-id validator used at every process boundary.
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    Some(format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0],
+        bytes[1],
+        bytes[2],
+        bytes[3],
+        bytes[4],
+        bytes[5],
+        bytes[6],
+        bytes[7],
+        bytes[8],
+        bytes[9],
+        bytes[10],
+        bytes[11],
+        bytes[12],
+        bytes[13],
+        bytes[14],
+        bytes[15]
+    ))
+}
+
 fn restart_backoff(attempt: u32) -> Duration {
     let exponent = attempt.saturating_sub(1).min(63);
     let multiplier = 1u128 << exponent;
@@ -638,6 +673,19 @@ mod tests {
         let mut s = Session::new(SessionId::new(1), &spec);
         s.status = status;
         s
+    }
+
+    #[test]
+    fn fresh_native_session_ids_are_uuid_shaped_and_unique() {
+        let first = fresh_native_session_id().expect("OS random source");
+        let second = fresh_native_session_id().expect("OS random source");
+        assert_eq!(first.len(), 36);
+        assert_eq!(second.len(), 36);
+        assert!(crate::launch::is_valid_resume_id(&first));
+        assert!(crate::launch::is_valid_resume_id(&second));
+        assert_ne!(first, second);
+        assert_eq!(&first[14..15], "4");
+        assert!(matches!(first.as_bytes()[19], b'8'..=b'b'));
     }
 
     #[test]

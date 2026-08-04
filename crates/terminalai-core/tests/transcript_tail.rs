@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 use terminalai_core::agent::Agent;
 use std::time::{Duration, SystemTime};
 
-use terminalai_core::tail::{claude_project_slug, newest_transcript, TranscriptTail, MAX_LINE_BYTES};
+use terminalai_core::tail::{
+    claude_project_slug, newest_transcript, TranscriptBinding, TranscriptTail, MAX_LINE_BYTES,
+};
 
 struct Scratch(PathBuf);
 
@@ -581,6 +583,42 @@ fn a_new_session_does_not_adopt_an_earlier_run_s_transcript() {
     let update = tail.poll(&home.0, cwd, started_at);
     assert_eq!(update.last_message.as_deref(), Some("Mine"));
     assert_eq!(update.totals.input_tokens, 5);
+}
+
+#[test]
+fn an_explicit_claude_session_id_binds_without_directory_ranking() {
+    let home = scratch("explicit-session-id");
+    let cwd = Path::new(r"C:\repos\shop");
+    let directory = home
+        .0
+        .join(".claude")
+        .join("projects")
+        .join(claude_project_slug(cwd));
+    let expected = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    let other = "ffffffff-1111-4222-8333-444444444444";
+    let other_file = directory.join(format!("{other}.jsonl"));
+    let expected_file = directory.join(format!("{expected}.jsonl"));
+    // The competing file is created first and named later lexically. A
+    // birth-time or path ranking implementation must not decide this test.
+    append(&other_file, &[&claude_record("other", "Wrong run", 9000, 9000)]);
+    let expected_record = serde_json::json!({
+        "type": "assistant",
+        "sessionId": expected,
+        "requestId": "mine",
+        "message": {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Right run"}]
+        }
+    })
+    .to_string();
+    append(&expected_file, &[expected_record.as_str()]);
+
+    let mut tail = TranscriptTail::with_session_id(Agent::Claude, Some(expected.into()));
+    let update = tail.poll(&home.0, cwd, SystemTime::UNIX_EPOCH);
+    assert_eq!(tail.path(), Some(expected_file.as_path()));
+    assert_eq!(tail.binding(), Some(TranscriptBinding::ExplicitSessionId));
+    assert_eq!(update.native_session_id.as_deref(), Some(expected));
+    assert_eq!(update.last_message.as_deref(), Some("Right run"));
 }
 
 #[test]
