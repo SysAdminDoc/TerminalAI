@@ -2536,7 +2536,7 @@ impl SessionRegistry {
                     StatusSource::ProcessExit,
                 ) {
                     RestartDecision::Backoff(delay) => Some((entry.generation, delay)),
-                    RestartDecision::Failed => None,
+                    RestartDecision::Failed | RestartDecision::Finished => None,
                 }
             };
             let teardown = if entry.teardown_done {
@@ -2779,7 +2779,7 @@ impl SessionRegistry {
                     .schedule_restart_at_from(None, now, StatusSource::Supervisor)
                 {
                     RestartDecision::Backoff(delay) => Some((entry.generation, delay)),
-                    RestartDecision::Failed => None,
+                    RestartDecision::Failed | RestartDecision::Finished => None,
                 };
             let session = entry.session.clone();
             let notifications =
@@ -4238,6 +4238,69 @@ mod tests {
         panic!("admission-blocked restart did not consume its budget");
     }
 
+    /// The exit code was captured and never consulted, so an agent that finished
+    /// its work was brought back up to five times, billing quota each time.
+    #[test]
+    fn a_session_that_exits_cleanly_stays_stopped() {
+        for (exit_code, expected_phase, expected_restarts) in [
+            (0u32, SessionPhase::Finished, 0u32),
+            (crate::session::STATUS_CONTROL_C_EXIT, SessionPhase::Finished, 0),
+            (1, SessionPhase::Backoff, 1),
+        ] {
+            let registry = SessionRegistry::new();
+            let cwd = Path::new(".").to_path_buf();
+            let spec = spec_for(Agent::Claude, &cwd);
+            let id = SessionId::new(1);
+            let mut session = Session::new(id.clone(), &spec);
+            session.set_status(SessionStatus::Working);
+            {
+                let mut state = lock_state(&registry.inner);
+                state.entries.insert(
+                    id.clone(),
+                    Entry {
+                        session,
+                        command: ResolvedCommand {
+                            program: PathBuf::from("agent.exe"),
+                            args: Vec::new(),
+                            cwd: cwd.clone(),
+                        },
+                        spec: spec.clone(),
+                        pty: None,
+                        scrollback: RingBuffer::default(),
+                        grid: TerminalGrid::default(),
+                        queue: crate::queue::PromptQueue::default(),
+                        generation: 1,
+                        stop_requested: false,
+                        branch_checked: None,
+                        teardown_done: true,
+                        span: tracing::Span::none(),
+                    },
+                );
+            }
+
+            registry.mark_process_exit(&id, 1, Some(exit_code));
+
+            let row = registry
+                .snapshot()
+                .into_iter()
+                .find(|session| session.id == id)
+                .expect("row survives its process");
+            assert_eq!(row.status, SessionStatus::Exited);
+            assert_eq!(
+                row.phase, expected_phase,
+                "exit code {exit_code:#x} took the wrong branch"
+            );
+            assert_eq!(row.restarts, expected_restarts);
+            assert_eq!(row.last_exit_code, Some(exit_code));
+            if expected_phase == SessionPhase::Finished {
+                assert_eq!(row.backoff_until, None, "a finished session is scheduled");
+            } else {
+                assert!(row.backoff_until.is_some(), "a crash was not rescheduled");
+            }
+            registry.shutdown();
+        }
+    }
+
     #[cfg(windows)]
     #[test]
     fn shutdown_runs_teardown_for_active_sessions() {
@@ -4269,11 +4332,19 @@ mod tests {
             .expect("spawn teardown test process");
 
         registry.shutdown();
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
-        while std::time::Instant::now() < deadline && !marker.exists() {
+        // Wait for content, not for existence: `echo > file` creates the file
+        // before it writes a byte into it, so a machine under load reads an
+        // empty marker and reports a teardown that in fact ran correctly.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut teardown = String::new();
+        while std::time::Instant::now() < deadline {
+            teardown = std::fs::read_to_string(&marker).unwrap_or_default();
+            if !teardown.trim().is_empty() {
+                break;
+            }
             std::thread::sleep(Duration::from_millis(25));
         }
-        let teardown = std::fs::read_to_string(&marker).expect("teardown marker");
+        assert!(!teardown.trim().is_empty(), "teardown marker never written");
         assert!(
             teardown.contains(&id.0),
             "teardown omitted session id: {teardown:?}"

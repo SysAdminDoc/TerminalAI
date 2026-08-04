@@ -23,6 +23,38 @@ pub const MAX_RESTARTS: u32 = 5;
 pub const RESTART_BACKOFF_BASE: Duration = Duration::from_millis(250);
 pub const RESTART_BACKOFF_MAX: Duration = Duration::from_secs(30);
 
+/// `STATUS_CONTROL_C_EXIT` — what a Windows console process reports after the
+/// operator pressed Ctrl-C in its pane. It is a deliberate stop by a person,
+/// not a fault, so the supervisor treats it as one.
+pub const STATUS_CONTROL_C_EXIT: u32 = 0xC000_013A;
+
+/// Whether an exit is something to recover from.
+///
+/// Every mature supervisor draws this line: OTP calls it the `transient`
+/// restart type and systemd calls it `Restart=on-abnormal`, and both restart a
+/// child only when it ended abnormally. Restarting an agent that finished its
+/// work re-runs work nobody asked for and bills quota for it, up to
+/// [`MAX_RESTARTS`] times.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitClass {
+    /// The agent ended on purpose. There is nothing to recover.
+    Finished,
+    /// The agent died, or died in a way we could not read. Bring it back.
+    Abnormal,
+}
+
+/// Classify one process exit.
+///
+/// An unreadable exit code is abnormal: the supervisor cannot prove the agent
+/// meant to stop, and the cost of a spurious restart is lower than the cost of
+/// silently abandoning a crashed session.
+pub fn classify_exit(exit_code: Option<u32>) -> ExitClass {
+    match exit_code {
+        Some(0) | Some(STATUS_CONTROL_C_EXIT) => ExitClass::Finished,
+        _ => ExitClass::Abnormal,
+    }
+}
+
 #[derive(
     Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
@@ -127,6 +159,9 @@ pub enum SessionPhase {
     Backoff,
     Failed,
     Resurrectable,
+    /// The agent exited on purpose and the supervisor will not bring it back.
+    /// Distinct from `Failed`, which is the supervisor giving up.
+    Finished,
 }
 
 /// Health of the process and its supervision boundary.
@@ -138,6 +173,8 @@ pub enum SessionHealth {
     Healthy,
     Degraded,
     Failed,
+    /// Ended by design. Not degraded — there is nothing wrong with it.
+    Finished,
 }
 
 /// Optional progress reported by an agent while it is carrying out a tool
@@ -192,6 +229,9 @@ impl RateLimit {
 pub enum RestartDecision {
     Backoff(Duration),
     Failed,
+    /// The agent exited cleanly. No restart is scheduled and none ever will be
+    /// without an explicit operator action.
+    Finished,
 }
 
 /// One row of the fleet list.
@@ -525,6 +565,16 @@ impl Session {
         if exit_code.is_some() {
             self.last_exit_code = exit_code;
         }
+        // Classify before counting. An agent that finished its work is not
+        // spending a restart from the budget, and it is not coming back on its
+        // own — it is done, and the row says so.
+        if classify_exit(exit_code) == ExitClass::Finished {
+            self.backoff_until = None;
+            self.set_status_at(SessionStatus::Exited, now, source, true);
+            self.phase = SessionPhase::Finished;
+            self.health = SessionHealth::Finished;
+            return RestartDecision::Finished;
+        }
         if self.restarts >= MAX_RESTARTS {
             self.backoff_until = None;
             self.set_status_at(SessionStatus::Exited, now, source, true);
@@ -854,5 +904,65 @@ mod tests {
         assert_eq!(session.pid, None);
         assert_eq!(session.last_exit_code, Some(3));
         assert_eq!(session.restarts, 0);
+    }
+
+    #[test]
+    fn a_clean_exit_is_finished_rather_than_restarted() {
+        let spec = spec_for(Agent::Claude, Path::new("."));
+        let mut session = Session::new(SessionId::new(6), &spec);
+        session.mark_spawned_at(Some(11), SystemTime::UNIX_EPOCH);
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(5);
+        assert_eq!(
+            session.schedule_restart_at(Some(0), now),
+            RestartDecision::Finished
+        );
+        assert_eq!(session.status, SessionStatus::Exited);
+        assert_eq!(session.phase, SessionPhase::Finished);
+        assert_eq!(session.health, SessionHealth::Finished);
+        assert_eq!(session.last_exit_code, Some(0));
+        assert_eq!(session.backoff_until, None);
+        // The budget is untouched: finishing is not a failure, so a later crash
+        // still gets its full five attempts.
+        assert_eq!(session.restarts, 0);
+    }
+
+    #[test]
+    fn a_clean_exit_never_becomes_a_restart_no_matter_how_often_it_happens() {
+        let spec = spec_for(Agent::Codex, Path::new("."));
+        let mut session = Session::new(SessionId::new(7), &spec);
+        let mut now = SystemTime::UNIX_EPOCH;
+        for _ in 0..(MAX_RESTARTS + 3) {
+            assert_eq!(
+                session.schedule_restart_at(Some(0), now),
+                RestartDecision::Finished
+            );
+            now += Duration::from_secs(1);
+        }
+        assert_eq!(session.restarts, 0);
+        assert_eq!(session.phase, SessionPhase::Finished);
+    }
+
+    #[test]
+    fn exit_classification_covers_ctrl_c_and_the_unreadable_case() {
+        assert_eq!(classify_exit(Some(0)), ExitClass::Finished);
+        // The operator pressed Ctrl-C in the pane. Deliberate, not a fault.
+        assert_eq!(classify_exit(Some(STATUS_CONTROL_C_EXIT)), ExitClass::Finished);
+        assert_eq!(classify_exit(Some(1)), ExitClass::Abnormal);
+        assert_eq!(classify_exit(Some(0xC000_0005)), ExitClass::Abnormal);
+        // Unknown is abnormal: a spurious restart costs less than silently
+        // abandoning a session that crashed.
+        assert_eq!(classify_exit(None), ExitClass::Abnormal);
+    }
+
+    #[test]
+    fn an_abnormal_exit_still_restarts() {
+        let spec = spec_for(Agent::Claude, Path::new("."));
+        let mut session = Session::new(SessionId::new(8), &spec);
+        assert_eq!(
+            session.schedule_restart_at(Some(1), SystemTime::UNIX_EPOCH),
+            RestartDecision::Backoff(RESTART_BACKOFF_BASE)
+        );
+        assert_eq!(session.restarts, 1);
+        assert_eq!(session.phase, SessionPhase::Backoff);
     }
 }

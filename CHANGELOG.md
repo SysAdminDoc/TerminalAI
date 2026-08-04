@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- A session that exits cleanly is no longer restarted like one that crashed. The exit code was
+  captured and never consulted, so an agent that finished its work — or an operator who quit one
+  inside its own pane — was brought back up to five times, billing quota on each. Classification is
+  now one named function following the line every mature supervisor draws (OTP's `transient`,
+  systemd's `Restart=on-abnormal`): exit 0 and `STATUS_CONTROL_C_EXIT` are finished, everything
+  else including an unreadable code is abnormal and still restarts, because a spurious restart
+  costs less than silently abandoning a crashed session. A finished session reports a new
+  `finished` phase and health rather than the supervisor's `failed`, and it spends nothing from the
+  restart budget, so a later crash still gets its full five attempts.
+
 - Upgrading over an existing install no longer fails on the running daemon. Tauri's NSIS template
   stops the main binary and nothing else, and this app's daemon is deliberately designed to outlive
   its window — so at upgrade time it was still running, still holding its named pipe, and still

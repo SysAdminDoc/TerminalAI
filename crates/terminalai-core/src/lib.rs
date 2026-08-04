@@ -88,8 +88,9 @@ pub use registry::{
 };
 pub use review::{collect_review, ReviewItem, MAX_REVIEW_DIFF_BYTES, REVIEW_REPOSITORY_TIMEOUT};
 pub use session::{
-    RestartDecision, Session, SessionHealth, SessionId, SessionPhase, SessionStatus, ToolProgress,
-    MAX_RESTARTS, RESTART_BACKOFF_BASE, RESTART_BACKOFF_MAX,
+    classify_exit, ExitClass, RestartDecision, Session, SessionHealth, SessionId, SessionPhase,
+    SessionStatus, ToolProgress, MAX_RESTARTS, RESTART_BACKOFF_BASE, RESTART_BACKOFF_MAX,
+    STATUS_CONTROL_C_EXIT,
 };
 pub use store::{
     ArchivedSession, SessionStoreError, SessionStoreSnapshot, StoredSession,
