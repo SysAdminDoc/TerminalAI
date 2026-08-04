@@ -84,5 +84,7 @@ test("compact rows keep localized status words out of the fixed-height line", ()
   const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
   assert.match(css, /\.fleet-row \{[^}]*min-height: 28px/);
   assert.match(css, /\.row-folder \.row-status-label[^}]*display: none/);
-  assert.match(main, /title="\$\{escapeHtml\(label\)\}"/);
+  // The status word lives in a tooltip on the compact row, carrying the reason
+  // when the phase has one.
+  assert.match(main, /title="\$\{escapeHtml\(detail \|\| label\)\}"/);
 });

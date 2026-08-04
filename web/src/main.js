@@ -75,10 +75,47 @@ function lastActivity(session) {
 function lifecycleLabel(session) {
   if (session?.phase === "preparing") return t("status-preparing");
   if (session?.phase === "tearing-down") return t("status-tearing-down");
+  // A session the supervisor gave up on and one that ended its own work both
+  // used to read "Exited — The process has ended", which is true of a crash
+  // loop and of a finished job alike and tells the operator nothing about
+  // which they are looking at.
+  if (session?.phase === "failed") return t("status-failed", { restarts: restartCount(session) });
+  if (session?.phase === "finished") return t("status-finished");
   // Carries which quota tripped and when it reopens, so the row says why the
   // session is going nowhere rather than only that it is.
   if (session?.status === "rate-limited") return rateLimitedLabel(session, t);
   return statusLabel(session?.status);
+}
+
+function restartCount(session) {
+  const restarts = Number(session?.restarts);
+  return Number.isInteger(restarts) ? restarts : 0;
+}
+
+/// Why a session ended, when "it ended" is not the whole story.
+///
+/// Only the terminal phases carry one: everything else already says what it is
+/// in its own label.
+function lifecycleDetail(session) {
+  if (session?.phase === "failed") {
+    const code = session?.last_exit_code;
+    return Number.isInteger(Number(code))
+      ? t("status-failed-detail-code", { restarts: restartCount(session), code: Number(code) })
+      : t("status-failed-detail", { restarts: restartCount(session) });
+  }
+  if (session?.phase === "finished") return t("status-finished-detail");
+  return "";
+}
+
+/// The colour a row's glyph takes.
+///
+/// Phase overrides status here, and only for the two terminal phases: an exited
+/// session is grey, but one the supervisor gave up on is a failure and must not
+/// look like a job that completed.
+function lifecycleTone(session, meta) {
+  if (session?.phase === "failed") return "red";
+  if (session?.phase === "finished") return "green";
+  return meta.tone;
 }
 
 function statusLabel(status) {
@@ -366,11 +403,14 @@ function renderDiagnostics() {
     if (headingName && headingPath && glyph && currentStatus && currentDetail) {
       headingName.textContent = session.name;
       headingPath.textContent = session.cwd;
-      glyph.className = "status-glyph tone-" + meta.tone;
+      glyph.className = "status-glyph tone-" + lifecycleTone(session, meta);
       glyph.title = label;
       glyph.textContent = meta.glyph;
       currentStatus.textContent = label;
-      currentDetail.textContent = t("diagnostics-for", { dwell: dwell(session.status_since) }) + " · " + t("diagnostics-source", { source });
+      // The terminal phases carry a reason; everything else says it in its label.
+      const detail = lifecycleDetail(session);
+      currentDetail.textContent = (detail ? detail + " · " : "")
+        + t("diagnostics-for", { dwell: dwell(session.status_since) }) + " · " + t("diagnostics-source", { source });
       return;
     }
   }
@@ -384,8 +424,8 @@ function renderDiagnostics() {
     }).join("")
     : '<li class="diagnostics-empty">' + escapeHtml(t("empty-no-transition-history")) + "</li>";
   host.innerHTML =
-    '<div class="diagnostics-heading"><div><span class="eyebrow">' + escapeHtml(t("diagnostics-why-this-state")) + '</span><h2>' + escapeHtml(session.name) + '</h2><p>' + escapeHtml(session.cwd) + '</p></div><div class="diagnostics-heading-actions"><button type="button" class="button button-quiet" data-diagnostics-action="preflight">' + escapeHtml(t("button-preflight")) + '</button><span class="status-glyph tone-' + meta.tone + '" title="' + escapeHtml(label) + '" aria-hidden="true">' + meta.glyph + '</span></div></div>' +
-    '<div class="diagnostics-current"><span>' + escapeHtml(t("diagnostics-current-status")) + '</span><b>' + escapeHtml(label) + '</b><span>' + escapeHtml(t("diagnostics-for", { dwell: dwell(session.status_since) })) + ' · ' + escapeHtml(t("diagnostics-source", { source })) + '</span></div>' +
+    '<div class="diagnostics-heading"><div><span class="eyebrow">' + escapeHtml(t("diagnostics-why-this-state")) + '</span><h2>' + escapeHtml(session.name) + '</h2><p>' + escapeHtml(session.cwd) + '</p></div><div class="diagnostics-heading-actions"><button type="button" class="button button-quiet" data-diagnostics-action="preflight">' + escapeHtml(t("button-preflight")) + '</button><span class="status-glyph tone-' + lifecycleTone(session, meta) + '" title="' + escapeHtml(label) + '" aria-hidden="true">' + meta.glyph + '</span></div></div>' +
+    '<div class="diagnostics-current"><span>' + escapeHtml(t("diagnostics-current-status")) + '</span><b>' + escapeHtml(label) + '</b><span>' + escapeHtml((lifecycleDetail(session) ? lifecycleDetail(session) + ' · ' : '') + t("diagnostics-for", { dwell: dwell(session.status_since) }) + ' · ' + t("diagnostics-source", { source })) + '</span></div>' +
     '<ol class="diagnostics-timeline">' + timeline + "</ol>";
   host.dataset.diagnosticsStructure = structure;
 }
@@ -1073,6 +1113,7 @@ function moveFleetRow(row, direction) {
 function updateFleetRow(row, session, position = 1, setSize = 1, rovingId = state.focused) {
   const meta = STATUS_META[session.status] ?? STATUS_META.exited;
   const label = lifecycleLabel(session);
+  const detail = lifecycleDetail(session);
   const active = session.id === state.focused;
   const unread = Boolean(session.unread);
   const agentLabel = session.agent === "codex" ? "CX" : "CC";
@@ -1095,8 +1136,8 @@ function updateFleetRow(row, session, position = 1, setSize = 1, rovingId = stat
   row.tabIndex = session.id === rovingId ? 0 : -1;
 
   const glyph = row.querySelector(".status-glyph");
-  glyph.className = `status-glyph tone-${meta.tone}`;
-  glyph.title = label;
+  glyph.className = `status-glyph tone-${lifecycleTone(session, meta)}`;
+  glyph.title = detail ? `${label} — ${detail}` : label;
   glyph.textContent = meta.glyph;
 
   row.querySelector(".row-name-text").textContent = session.name;
@@ -1111,7 +1152,9 @@ function updateFleetRow(row, session, position = 1, setSize = 1, rovingId = stat
   }
   row.querySelector(".row-repo").textContent = repo;
   row.querySelector(".row-branch").textContent = branch;
-  row.querySelector(".row-status-label").textContent = label;
+  const statusLabelNode = row.querySelector(".row-status-label");
+  statusLabelNode.textContent = label;
+  statusLabelNode.title = detail || label;
   const portBadge = row.querySelector(".row-ports");
   portBadge.textContent = `${t("action-allocated-ports")} ${ports(session.ports)}`;
   reconcileGroupChip(
@@ -1207,6 +1250,7 @@ function flushAnnouncements() {
 function renderRow(session) {
   const meta = STATUS_META[session.status] ?? STATUS_META.exited;
   const label = lifecycleLabel(session);
+  const detail = lifecycleDetail(session);
   const active = session.id === state.focused ? " row-focused" : "";
   const unread = session.unread ? " row-unread" : "";
   const agentLabel = session.agent === "codex" ? "CX" : "CC";
@@ -1227,7 +1271,7 @@ function renderRow(session) {
   const portsLabel = ports(session.ports);
   const accessibleLabel = `${session.name}, ${label}, ${repo}, ${branch}, ${t("action-tool-progress")} ${progress}, ${restartCount} ${t("action-restart-count")}, ${t("action-allocated-ports")} ${portsLabel}`;
   return `<article class="fleet-row${escapeHtml(active)}${escapeHtml(unread)}" data-id="${escapeHtml(session.id)}" role="option" tabindex="-1" aria-posinset="1" aria-setsize="1" aria-selected="false" aria-keyshortcuts="Enter Space ArrowUp ArrowDown Home End" aria-label="${escapeHtml(accessibleLabel)}">
-    <div class="row-identity"><span class="status-glyph tone-${escapeHtml(meta.tone)}" title="${escapeHtml(label)}" aria-hidden="true">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name"><span class="row-name-text">${escapeHtml(session.name)}</span>${session.unread ? `<span class="unread-dot" title="${escapeHtml(t("action-unread-attention"))}"></span>` : ""}</div><div class="row-folder"><span class="row-repo" title="${escapeHtml(t("action-repository"))}">${escapeHtml(repo)}</span><span class="row-branch" title="${escapeHtml(t("action-branch"))}">${escapeHtml(branch)}</span><span class="row-status-label">${escapeHtml(label)}</span>${groupChip(session)}<span class="row-ports" title="${escapeHtml(t("action-allocated-ports"))}">${escapeHtml(t("action-allocated-ports"))} ${escapeHtml(portsLabel)}</span></div></div></div>
+    <div class="row-identity"><span class="status-glyph tone-${escapeHtml(lifecycleTone(session, meta))}" title="${escapeHtml(detail ? `${label} — ${detail}` : label)}" aria-hidden="true">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name"><span class="row-name-text">${escapeHtml(session.name)}</span>${session.unread ? `<span class="unread-dot" title="${escapeHtml(t("action-unread-attention"))}"></span>` : ""}</div><div class="row-folder"><span class="row-repo" title="${escapeHtml(t("action-repository"))}">${escapeHtml(repo)}</span><span class="row-branch" title="${escapeHtml(t("action-branch"))}">${escapeHtml(branch)}</span><span class="row-status-label" title="${escapeHtml(detail || label)}">${escapeHtml(label)}</span>${groupChip(session)}<span class="row-ports" title="${escapeHtml(t("action-allocated-ports"))}">${escapeHtml(t("action-allocated-ports"))} ${escapeHtml(portsLabel)}</span></div></div></div>
     <div class="row-metrics"><span class="agent-badge agent-${escapeHtml(session.agent)}" title="${session.agent === "codex" ? "Codex" : "Claude Code"}" aria-label="${session.agent === "codex" ? "Codex" : "Claude Code"}">${agentLabel}</span><span class="row-progress" title="${escapeHtml(t("action-tool-progress"))}"><small>PROG</small><b>${escapeHtml(progress)}</b></span><span class="row-restarts" title="${escapeHtml(t("action-restart-count"))}">↻ ${restartCount}</span></div>
     <div class="row-dwell"><span title="${escapeHtml(t("dwell-explained"))}">${dwell(session.status_since)}</span><small class="row-last-line" title="${escapeHtml(lastLine)}">${escapeHtml(lastLine)}</small></div>
     <div class="row-actions"><button type="button" data-action="pin" class="row-action ${session.pinned ? "row-action-active" : ""}" title="${escapeHtml(pinLabel)}" aria-label="${escapeHtml(pinLabel)} ${escapeHtml(session.name)}">${session.pinned ? "◆" : "◇"}</button><button type="button" data-action="focus" class="row-action" title="${escapeHtml(t("action-focus-terminal"))}" aria-label="${escapeHtml(t("action-focus-session", { name: session.name }))}">↗</button><button type="button" data-action="revive" class="row-action" title="${escapeHtml(t("action-revive", { name: session.name }))}" aria-label="${escapeHtml(t("action-revive", { name: session.name }))}"${reviveHidden}>↻</button><button type="button" data-action="archive" class="row-action" title="${escapeHtml(t("action-archive-stopped"))}" aria-label="${escapeHtml(t("action-archive", { name: session.name }))}"${archiveHidden}>▣</button><button type="button" data-action="queue" class="row-action row-action-queue" title="${escapeHtml(t("action-queue", { name: session.name }))}" aria-label="${escapeHtml(t("action-queue", { name: session.name }))}">${escapeHtml(queueGlyph(session))}</button><button type="button" data-action="kill" class="row-action row-action-danger" title="${escapeHtml(stopLabel)}" aria-label="${escapeHtml(stopLabel)}"${stopHidden}>×</button></div>

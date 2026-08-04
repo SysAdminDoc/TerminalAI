@@ -19,6 +19,8 @@ test("diagnostics update dwell and status in place while the timeline is stable"
   assert.match(diagnostics, /const structure = JSON\.stringify\(\[session\.id, history\]\);/);
   assert.match(diagnostics, /if \(host\.dataset\.diagnosticsStructure === structure\)/);
   assert.match(diagnostics, /currentDetail\.textContent =/);
-  assert.match(diagnostics, /glyph\.className = "status-glyph tone-" \+ meta\.tone;/);
+  // The tone comes from lifecycleTone, not straight from the status: a session
+  // the supervisor gave up on must not be the same grey as one that finished.
+  assert.match(diagnostics, /glyph\.className = "status-glyph tone-" \+ lifecycleTone\(session, meta\);/);
   assert.match(diagnostics, /host\.innerHTML =/);
 });

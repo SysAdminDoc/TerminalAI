@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- A session the supervisor gave up on no longer reads exactly like one that finished. Both arrive as
+  status "exited", and the row rendered only the status — so a crash loop that had exhausted its
+  restart budget and a job that completed both said "Exited — The process has ended". The row now
+  consults the phase: a failed session is red and states how many restarts were spent and the last
+  exit code, a finished one is green and says the agent ended its own session, and both carry the
+  reason in the compact row's tooltip as well as the diagnostics drawer.
+
 - The grid no longer gives zero-width characters a cell of their own. Combining marks, zero-width
   joiners and variation selectors were forced to width 1, so `e` + U+0301 occupied two columns here
   and one in every real terminal — and this grid is what the pinned split view draws. They now

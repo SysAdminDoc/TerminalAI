@@ -78,6 +78,11 @@ status-unknown = State unknown
 status-exited = Exited
 status-preparing = Preparing environment
 status-tearing-down = Tearing down environment
+status-finished = Finished
+status-failed = Failed after { $restarts } restarts
+status-finished-detail = The agent ended its own session; it will not be restarted
+status-failed-detail = The supervisor gave up after { $restarts } restarts and will not try again
+status-failed-detail-code = The supervisor gave up after { $restarts } restarts; last exit code { $code }
 
 preflight-ready = Ready
 preflight-needs-attention = Needs attention

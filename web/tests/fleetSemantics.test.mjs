@@ -73,3 +73,35 @@ test("visibility synchronizers reference elements that exist in the shell", () =
     }
   }
 });
+
+test("a session the supervisor gave up on does not read like one that finished", () => {
+  const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
+
+  // Both terminal phases arrive as status "exited", so the row has to consult
+  // the phase; without this it renders one label for a crash loop and a
+  // completed job alike.
+  assert.match(main, /session\?\.phase === "failed"/);
+  assert.match(main, /session\?\.phase === "finished"/);
+  assert.match(main, /function lifecycleTone\(/);
+  assert.match(main, /function lifecycleDetail\(/);
+
+  // The failure is coloured as one. Grey would say "nothing to see here".
+  const tone = main.slice(main.indexOf("function lifecycleTone("));
+  assert.match(tone.slice(0, tone.indexOf("\n}")), /phase === "failed"\) return "red"/);
+
+  // Every key the two paths reach exists, with the arguments they pass.
+  for (const key of [
+    "status-failed",
+    "status-finished",
+    "status-failed-detail",
+    "status-failed-detail-code",
+    "status-finished-detail",
+  ]) {
+    assert.match(ftl, new RegExp(`^${key} =`, "m"), `catalog is missing ${key}`);
+  }
+  assert.match(ftl, /^status-failed = .*\{ \$restarts \}/m);
+  assert.match(ftl, /^status-failed-detail-code = .*\{ \$code \}/m);
+
+  // The reason reaches the row, not only the diagnostics drawer.
+  assert.match(main, /class="row-status-label" title="\$\{escapeHtml\(detail \|\| label\)\}"/);
+});
