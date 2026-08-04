@@ -89,6 +89,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Fleet and queue row actions now use 24×24px hit boxes while preserving the compact fleet row pitch.
+
 - The Presets selector now keeps a visible keyboard focus indicator in both themes.
 
 - Project discovery, prompt queue and review failures now stay visible as explicit error panels with

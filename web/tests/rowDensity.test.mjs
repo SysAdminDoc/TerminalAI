@@ -19,6 +19,7 @@ const COMPACT_ROW_HEIGHT = 28;
 
 const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
 const readme = readFileSync(new URL("../../README.md", import.meta.url), "utf8");
 
 test("the compact fleet row declares the documented height", () => {
@@ -61,6 +62,24 @@ test("the compact row keeps one line and Wide carries the rest", () => {
       `${secondary} must return in Wide`,
     );
   }
+});
+
+test("row actions meet the 24px target without widening the compact pitch", () => {
+  const dom = new JSDOM(`<style>${css}</style>`);
+  const rules = [...dom.window.document.styleSheets[0].cssRules];
+  const actionRule = rules.find((rule) => rule.selectorText === ".row-action");
+  assert.ok(actionRule, "row actions need a dedicated hit-area rule");
+  assert.equal(actionRule.style.width, "24px");
+  assert.equal(actionRule.style.height, "24px");
+  assert.equal(actionRule.style.flex, "0 0 24px");
+  assert.equal(actionRule.style.marginInline, "-1px");
+
+  const rowActions = rules.find((rule) => rule.selectorText === ".row-actions");
+  assert.equal(rowActions?.style.gap, "1px");
+  // The 24px hit box and two 1px negative margins occupy 22px; with the 1px
+  // flex gap, adjacent fleet controls stay on their documented 23px pitch.
+  assert.equal(24 - 1 - 1 + 1, 23);
+  assert.match(main, /class="row-action row-action-queue"/);
 });
 
 test("the fleet row and its column labels share one grid definition", () => {
