@@ -89,6 +89,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Scrollback gaps are now tracked per session, disk append failures are retained as pending gaps,
+  and rate-limited warnings explain when the durable log falls behind. Markers are emitted into the
+  session that lost the bytes, with regressions covering cross-session attribution and recovery.
 - Transcript polling now keeps its readers behind a separate mutex, so file reads and recursive
   transcript discovery cannot hold the fleet state lock while PTY output and hook events arrive.
 - Claude HTTP hooks now downgrade to the existing command transport when the app shuts down, so

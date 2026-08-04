@@ -29,10 +29,10 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use crate::session::SessionId;
 
@@ -68,8 +68,9 @@ enum Message {
 /// stops the thread after it drains what it was given.
 pub struct ScrollbackSpool {
     sender: SyncSender<Message>,
-    /// Bytes the queue refused, awaiting a gap marker in the log.
-    dropped: Arc<AtomicU64>,
+    /// Bytes the queue or disk refused, awaiting a gap marker in the matching
+    /// session's log.
+    dropped: Arc<Mutex<HashMap<SessionId, u64>>>,
     directory: PathBuf,
     worker: Option<JoinHandle<()>>,
 }
@@ -79,7 +80,7 @@ impl std::fmt::Debug for ScrollbackSpool {
         formatter
             .debug_struct("ScrollbackSpool")
             .field("directory", &self.directory)
-            .field("dropped", &self.dropped.load(Ordering::Relaxed))
+            .field("dropped", &self.dropped_bytes())
             .finish()
     }
 }
@@ -90,7 +91,7 @@ impl ScrollbackSpool {
         let directory = directory.into();
         std::fs::create_dir_all(&directory)?;
         let (sender, receiver) = sync_channel(QUEUE_CAPACITY);
-        let dropped = Arc::new(AtomicU64::new(0));
+        let dropped = Arc::new(Mutex::new(HashMap::new()));
         let worker = std::thread::Builder::new()
             .name("terminalai-scrollback".into())
             .spawn({
@@ -126,7 +127,7 @@ impl ScrollbackSpool {
         match self.sender.try_send(message) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
-                self.dropped.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                self.record_drop(id, bytes.len() as u64);
             }
         }
     }
@@ -134,6 +135,10 @@ impl ScrollbackSpool {
     /// Delete one session's history. Called when a session is removed, so a
     /// closed session does not keep paying for disk.
     pub fn forget(&self, id: &SessionId) {
+        self.dropped
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(id);
         let _ = self.sender.try_send(Message::Forget { id: id.clone() });
     }
 
@@ -159,10 +164,20 @@ impl ScrollbackSpool {
         read_history(&self.directory, id, max_bytes)
     }
 
-    /// Bytes dropped because the writer could not keep up, since the process
-    /// started. Non-zero means the log has at least one gap marker in it.
+    /// Bytes dropped because the writer could not keep up or the disk rejected
+    /// them, since the process started. Non-zero means a gap is pending or has
+    /// not yet been announced by a later successful append.
     pub fn dropped_bytes(&self) -> u64 {
-        self.dropped.load(Ordering::Relaxed)
+        self.dropped
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .values()
+            .copied()
+            .sum()
+    }
+
+    fn record_drop(&self, id: &SessionId, bytes: u64) {
+        record_drop(&self.dropped, id, bytes);
     }
 }
 
@@ -182,8 +197,15 @@ impl Drop for ScrollbackSpool {
     }
 }
 
-fn run_writer(directory: &Path, receiver: Receiver<Message>, dropped: &AtomicU64) {
+const DISK_WARNING_INTERVAL: Duration = Duration::from_secs(60);
+
+fn run_writer(
+    directory: &Path,
+    receiver: Receiver<Message>,
+    dropped: &Mutex<HashMap<SessionId, u64>>,
+) {
     let mut logs: HashMap<SessionId, ScrollbackLog> = HashMap::new();
+    let mut last_warning = None;
     while let Ok(message) = receiver.recv() {
         match message {
             Message::Append { id, bytes } => {
@@ -193,13 +215,25 @@ fn run_writer(directory: &Path, receiver: Receiver<Message>, dropped: &AtomicU64
                 // Read-and-clear: whatever was dropped before this chunk is
                 // announced immediately before it, so the marker sits at the
                 // point in the stream where the bytes are actually missing.
-                let missing = dropped.swap(0, Ordering::Relaxed);
+                let missing = take_dropped(dropped, &id);
                 if missing > 0 {
-                    let _ = log.append(gap_marker(missing).as_bytes());
+                    if let Err(error) = log.append(gap_marker(missing).as_bytes()) {
+                        record_drop(dropped, &id, missing);
+                        record_drop(dropped, &id, bytes.len() as u64);
+                        warn_append_error(&mut last_warning, &id, &error);
+                        continue;
+                    }
                 }
-                let _ = log.append(&bytes);
+                if let Err(error) = log.append(&bytes) {
+                    record_drop(dropped, &id, bytes.len() as u64);
+                    warn_append_error(&mut last_warning, &id, &error);
+                }
             }
             Message::Forget { id } => {
+                dropped
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .remove(&id);
                 logs.remove(&id);
                 remove_segments(directory, &id);
             }
@@ -210,6 +244,36 @@ fn run_writer(directory: &Path, receiver: Receiver<Message>, dropped: &AtomicU64
                 let _ = ack.send(());
             }
         }
+    }
+}
+
+fn record_drop(dropped: &Mutex<HashMap<SessionId, u64>>, id: &SessionId, bytes: u64) {
+    let mut dropped = dropped
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let entry = dropped.entry(id.clone()).or_default();
+    *entry = entry.saturating_add(bytes);
+}
+
+fn take_dropped(dropped: &Mutex<HashMap<SessionId, u64>>, id: &SessionId) -> u64 {
+    dropped
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(id)
+        .unwrap_or_default()
+}
+
+fn warn_append_error(
+    last_warning: &mut Option<Instant>,
+    id: &SessionId,
+    error: &std::io::Error,
+) {
+    let now = Instant::now();
+    if last_warning.is_none_or(|last| {
+        now.duration_since(last) >= DISK_WARNING_INTERVAL
+    }) {
+        tracing::warn!(session = %id, error = %error, "could not append scrollback; output is marked as dropped");
+        *last_warning = Some(now);
     }
 }
 
@@ -456,7 +520,7 @@ mod tests {
         let id = SessionId::new(1);
         spool.append(&id, b"before\n");
         spool.flush();
-        spool.dropped.fetch_add(4096, Ordering::Relaxed);
+        spool.record_drop(&id, 4096);
         spool.append(&id, b"after\n");
         spool.flush();
         let text = String::from_utf8_lossy(&spool.history(&id, 4096)).into_owned();
@@ -464,6 +528,44 @@ mod tests {
         let before = text.find("before").expect("before");
         let after = text.find("after").expect("after");
         assert!(before < gap && gap < after, "marker misplaced: {text}");
+        assert_eq!(spool.dropped_bytes(), 0, "counter not cleared");
+    }
+
+    #[test]
+    fn dropped_bytes_are_marked_in_the_session_that_lost_them() {
+        let dir = scratch("per-session-gap");
+        let spool = ScrollbackSpool::new(&dir.0).expect("spool");
+        let owner = SessionId::new(1);
+        let other = SessionId::new(2);
+        spool.record_drop(&owner, 4096);
+        spool.append(&other, b"other\n");
+        spool.append(&owner, b"owner\n");
+        spool.flush();
+
+        let owner_text = String::from_utf8_lossy(&spool.history(&owner, 4096)).into_owned();
+        let other_text = String::from_utf8_lossy(&spool.history(&other, 4096)).into_owned();
+        assert!(owner_text.contains("4096 bytes of scrollback dropped"));
+        assert!(!other_text.contains("scrollback dropped"), "{other_text}");
+    }
+
+    #[test]
+    fn an_append_error_is_marked_when_the_disk_recovers() {
+        let dir = scratch("append-error");
+        let spool = ScrollbackSpool::new(&dir.0).expect("spool");
+        let id = SessionId::new(1);
+        let (active, _) = segment_paths(&dir.0, &id);
+        std::fs::create_dir(&active).expect("block the active log path");
+        spool.append(&id, b"lost");
+        spool.flush();
+        assert_eq!(spool.dropped_bytes(), 4, "failed append was not retained");
+
+        std::fs::remove_dir(&active).expect("unblock the active log path");
+        spool.append(&id, b"recovered");
+        spool.flush();
+        let text = String::from_utf8_lossy(&spool.history(&id, 4096)).into_owned();
+        let gap = text.find("4 bytes of scrollback dropped").expect("marker");
+        let recovered = text.find("recovered").expect("recovered output");
+        assert!(gap < recovered, "marker misplaced: {text}");
         assert_eq!(spool.dropped_bytes(), 0, "counter not cleared");
     }
 
