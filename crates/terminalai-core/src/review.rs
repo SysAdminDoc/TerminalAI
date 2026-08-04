@@ -204,24 +204,43 @@ pub(crate) fn collect_reviews(sessions: Vec<Session>) -> Vec<ReviewItem> {
     let (result_sender, result_receiver) = mpsc::channel();
     let mut workers = Vec::with_capacity(worker_count);
 
-    for _ in 0..worker_count {
+    for index in 0..worker_count {
         let job_receiver = Arc::clone(&job_receiver);
         let result_sender = result_sender.clone();
-        workers.push(thread::spawn(move || loop {
-            let session = {
-                let receiver = job_receiver.lock().expect("review worker queue lock");
-                receiver.recv().ok()
-            };
-            let Some(session) = session else {
-                break;
-            };
-            let item = collect_review(&session);
-            if result_sender.send(item).is_err() {
+        // `thread::Builder::spawn` where the workspace uses it everywhere else:
+        // `std::thread::spawn` panics on the one condition this pool can
+        // actually hit — thread exhaustion on a fleet whose every session
+        // already owns a reader, a writer, a monitor and a timer.
+        let worker = thread::Builder::new()
+            .name(format!("terminalai-review-{index}"))
+            .spawn(move || loop {
+                let session = {
+                    let receiver = job_receiver.lock().expect("review worker queue lock");
+                    receiver.recv().ok()
+                };
+                let Some(session) = session else {
+                    break;
+                };
+                let item = collect_review(&session);
+                if result_sender.send(item).is_err() {
+                    break;
+                }
+            });
+        match worker {
+            Ok(worker) => workers.push(worker),
+            Err(error) => {
+                tracing::warn!(%error, "could not start a review worker; continuing with fewer");
                 break;
             }
-        }));
+        }
     }
     drop(result_sender);
+    if workers.is_empty() {
+        // Nothing will drain the queue, and the collector below would block on a
+        // channel no worker is feeding. Say so rather than hang the caller.
+        tracing::error!("no review workers could be started; reporting no reviews");
+        return Vec::new();
+    }
 
     for session in sessions {
         if job_sender.send(session).is_err() {
@@ -389,8 +408,29 @@ fn run_git_program(
             )));
         }
     };
-    let stdout_reader = spawn_capture(stdout);
-    let stderr_reader = spawn_capture(stderr);
+    // A capture thread that cannot start would leave the child writing into a
+    // pipe nobody drains, which deadlocks once it fills. Refuse the run instead.
+    let stdout_reader = match spawn_capture("stdout", stdout) {
+        Ok(reader) => reader,
+        Err(error) => {
+            #[cfg(windows)]
+            terminate_child(&mut child, &job);
+            #[cfg(not(windows))]
+            terminate_child(&mut child);
+            return Err(ReviewError::Spawn(error));
+        }
+    };
+    let stderr_reader = match spawn_capture("stderr", stderr) {
+        Ok(reader) => reader,
+        Err(error) => {
+            #[cfg(windows)]
+            terminate_child(&mut child, &job);
+            #[cfg(not(windows))]
+            terminate_child(&mut child);
+            let _ = join_capture(stdout_reader);
+            return Err(ReviewError::Spawn(error));
+        }
+    };
 
     let status = loop {
         match child.try_wait() {
@@ -448,11 +488,13 @@ fn run_git_program(
     Ok(GitOutcome::Completed(output))
 }
 
-fn spawn_capture<R>(mut reader: R) -> JoinHandle<CappedOutput>
+fn spawn_capture<R>(stream: &str, mut reader: R) -> std::io::Result<JoinHandle<CappedOutput>>
 where
     R: Read + Send + 'static,
 {
-    thread::spawn(move || {
+    thread::Builder::new()
+        .name(format!("terminalai-review-capture-{stream}"))
+        .spawn(move || {
         let mut output = CappedOutput {
             bytes: Vec::with_capacity(REVIEW_COMMAND_OUTPUT_BYTES.min(8 * 1024)),
             truncated: false,
@@ -589,7 +631,7 @@ mod tests {
     #[test]
     fn command_capture_caps_output_while_draining_the_pipe() {
         let reader = std::io::Cursor::new(vec![b'x'; MAX_REVIEW_DIFF_BYTES + 1]);
-        let captured = join_capture(spawn_capture(reader));
+        let captured = join_capture(spawn_capture("test", reader).expect("capture thread"));
         assert_eq!(captured.bytes.len(), MAX_REVIEW_DIFF_BYTES);
         assert!(captured.truncated);
     }

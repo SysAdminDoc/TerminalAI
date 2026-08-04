@@ -1789,7 +1789,12 @@ fn spawn_toast_activation_listener(
     app: tauri::AppHandle,
     activations: std::sync::mpsc::Receiver<toast::ToastActivation>,
 ) {
-    thread::spawn(move || {
+    // `thread::Builder::spawn`, like every other spawn in the workspace: the
+    // bare form panics where this returns an error, and a toast listener is not
+    // worth taking the window process down for.
+    let listener = thread::Builder::new()
+        .name("terminalai-toast-activation".into())
+        .spawn(move || {
         // The WinRT handler only sends on this channel; everything that touches
         // Tauri happens here, on a thread the runtime knows about.
         while let Ok(toast::ToastActivation::Focus(id)) = activations.recv() {
@@ -1801,6 +1806,13 @@ fn spawn_toast_activation_listener(
             let _ = app.emit("terminalai:focus-session", id);
         }
     });
+    if let Err(error) = listener {
+        // Toasts still fire; clicking one just will not focus its session.
+        eprintln!(
+            "terminalai: toast activations will not focus their session ({error}); \
+             could not start the listener thread"
+        );
+    }
 }
 
 fn is_waiting_session(session: &Session) -> bool {

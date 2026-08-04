@@ -199,10 +199,23 @@ fn collect_cli_output(mut child: Child) -> Option<Vec<u8>> {
     let mut stdout = child.stdout.take()?;
     // Drain while the parent watches the deadline. Waiting first would let a
     // sufficiently large JSON response fill the pipe and deadlock the child.
-    let reader = std::thread::spawn(move || {
-        let mut output = Vec::new();
-        stdout.read_to_end(&mut output).map(|_| output)
-    });
+    let reader = std::thread::Builder::new()
+        .name("terminalai-external-enumerate".into())
+        .spawn(move || {
+            let mut output = Vec::new();
+            stdout.read_to_end(&mut output).map(|_| output)
+        });
+    let reader = match reader {
+        Ok(reader) => reader,
+        Err(_) => {
+            // Nothing will drain the pipe, so the child would block once it
+            // filled. The panel degrades to "no external sessions", which is
+            // what an unreadable response already means here.
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+    };
     let deadline = std::time::Instant::now() + ENUMERATION_TIMEOUT;
     loop {
         match child.try_wait() {

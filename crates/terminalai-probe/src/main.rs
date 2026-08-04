@@ -977,7 +977,9 @@ fn cmd_cpu_idle(args: &[String]) -> i32 {
     for session in &live {
         let session = session.clone();
         let watching = watching.clone();
-        watchers.push(std::thread::spawn(move || {
+        let watcher = std::thread::Builder::new()
+            .name(format!("terminalai-probe-watch-{}", watchers.len()))
+            .spawn(move || {
             if poll {
                 // The pre-2026-08-03 supervision loop, kept for comparison only.
                 while watching.load(std::sync::atomic::Ordering::Relaxed) {
@@ -990,7 +992,14 @@ fn cmd_cpu_idle(args: &[String]) -> i32 {
             } else {
                 let _ = session.wait_for_exit();
             }
-        }));
+        });
+        match watcher {
+            Ok(watcher) => watchers.push(watcher),
+            Err(error) => {
+                eprintln!("could not start a session watcher: {error}");
+                return 3;
+            }
+        }
     }
 
     // Let the children finish drawing before sampling.
@@ -1299,16 +1308,19 @@ fn spawn_terminal_launch() -> Result<TerminalLaunch, String> {
         .take()
         .ok_or_else(|| "terminal baseline did not expose stdout".to_string())?;
     let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut buffer = [0u8; 8192];
-        loop {
-            match stdout.read(&mut buffer) {
-                Ok(0) | Err(_) => break,
-                Ok(size) if tx.send(buffer[..size].to_vec()).is_err() => break,
-                Ok(_) => {}
+    std::thread::Builder::new()
+        .name("terminalai-probe-baseline-reader".into())
+        .spawn(move || {
+            let mut buffer = [0u8; 8192];
+            loop {
+                match stdout.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(size) if tx.send(buffer[..size].to_vec()).is_err() => break,
+                    Ok(_) => {}
+                }
             }
-        }
-    });
+        })
+        .map_err(|error| format!("could not start the terminal baseline reader: {error}"))?;
     Ok(TerminalLaunch { child, stdin, rx })
 }
 

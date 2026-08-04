@@ -479,15 +479,59 @@ pub(crate) fn run_program(
         // otherwise deadlock against a child that is not reading yet.
         if let Some(mut pipe) = child.stdin.take() {
             let input = input.to_owned();
-            thread::spawn(move || {
-                let _ = pipe.write_all(input.as_bytes());
-                let _ = pipe.flush();
-            });
+            // `thread::Builder::spawn` because `std::thread::spawn` panics on
+            // the one condition a fleet actually reaches: thread exhaustion.
+            let writer = thread::Builder::new()
+                .name(format!("terminalai-land-stdin-{program}"))
+                .spawn(move || {
+                    let _ = pipe.write_all(input.as_bytes());
+                    let _ = pipe.flush();
+                });
+            if let Err(error) = writer {
+                // The pipe was dropped with the closure, so the child sees EOF
+                // rather than blocking forever on input that will never arrive.
+                // Refuse anyway: a `git apply` that read no patch has not landed
+                // anything, and reporting its exit code would say it had.
+                let _ = child.kill();
+                #[cfg(windows)]
+                let _ = job.terminate();
+                let _ = child.wait();
+                return ProcessRun::Failed {
+                    detail: format!("could not start the input writer for {program}: {error}"),
+                };
+            }
         }
     }
 
-    let stdout = child.stdout.take().map(spawn_capture);
-    let stderr = child.stderr.take().map(spawn_capture);
+    // A capture thread that cannot start leaves the child writing into a pipe
+    // nobody drains, which deadlocks as soon as it fills.
+    let stdout = match child.stdout.take().map(|pipe| spawn_capture("stdout", pipe)) {
+        Some(Ok(reader)) => Some(reader),
+        None => None,
+        Some(Err(error)) => {
+            let _ = child.kill();
+            #[cfg(windows)]
+            let _ = job.terminate();
+            let _ = child.wait();
+            return ProcessRun::Failed {
+                detail: format!("could not capture stdout of {program}: {error}"),
+            };
+        }
+    };
+    let stderr = match child.stderr.take().map(|pipe| spawn_capture("stderr", pipe)) {
+        Some(Ok(reader)) => Some(reader),
+        None => None,
+        Some(Err(error)) => {
+            let _ = child.kill();
+            #[cfg(windows)]
+            let _ = job.terminate();
+            let _ = child.wait();
+            drop(stdout.map(join_capture));
+            return ProcessRun::Failed {
+                detail: format!("could not capture stderr of {program}: {error}"),
+            };
+        }
+    };
 
     let status = loop {
         match child.try_wait() {
@@ -527,8 +571,13 @@ pub(crate) fn run_program(
     }
 }
 
-fn spawn_capture<R: Read + Send + 'static>(mut reader: R) -> thread::JoinHandle<String> {
-    thread::spawn(move || {
+fn spawn_capture<R: Read + Send + 'static>(
+    stream: &str,
+    mut reader: R,
+) -> std::io::Result<thread::JoinHandle<String>> {
+    thread::Builder::new()
+        .name(format!("terminalai-land-capture-{stream}"))
+        .spawn(move || {
         let mut buffer = Vec::new();
         let mut chunk = [0u8; 8192];
         loop {

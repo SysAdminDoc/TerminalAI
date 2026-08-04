@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Every production thread now starts through `thread::Builder` and degrades instead of panicking.
+  The workspace standardised on the builder because `std::thread::spawn` panics exactly where the
+  builder returns an error — thread exhaustion, which is what a thirty-session fleet with a reader,
+  a writer, a monitor and a timer per session produces — and eight sites had been missed. A review
+  that cannot start a worker runs with fewer and says so; one that cannot start any reports no
+  reviews rather than blocking on a queue nothing drains; a land or review command that cannot
+  capture its output refuses by name rather than deadlocking against a pipe nobody reads; the
+  external-session panel degrades to empty; and a toast listener that cannot start costs
+  click-to-focus rather than the window process.
+
 - The restart budget is a rolling window rather than a lifetime counter. Five restarts spread over
   a week used to permanently kill a session that had run healthily in between, because nothing ever
   reset the count. A process that runs for ten continuous minutes now clears the budget — the
