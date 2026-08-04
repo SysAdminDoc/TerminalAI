@@ -91,6 +91,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Scrollback cleanup now waits for a full writer queue instead of losing a session's delete
+  request and leaving its disk segments orphaned.
 - Session ids now escape underscores in both scrollback logs and store sidecars, preventing
   restored sessions with colliding names from sharing history.
 - A damaged persisted scrollback sidecar now clears only that session's replay history while the

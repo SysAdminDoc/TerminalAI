@@ -139,7 +139,9 @@ impl ScrollbackSpool {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(id);
-        let _ = self.sender.try_send(Message::Forget { id: id.clone() });
+        // Cleanup is not on the pty output path: wait for the writer rather
+        // than dropping the delete when a busy fleet fills the queue.
+        let _ = self.sender.send(Message::Forget { id: id.clone() });
     }
 
     /// Block until everything queued so far has been written.
@@ -582,6 +584,41 @@ mod tests {
         spool.flush();
         assert!(!active.exists(), "a closed session kept paying for disk");
         assert!(spool.history(&id, 1024).is_empty());
+    }
+
+    #[test]
+    fn forget_waits_behind_a_full_queue() {
+        let dir = scratch("forget-full");
+        let id = SessionId::new(1);
+        let (sender, receiver) = sync_channel(QUEUE_CAPACITY);
+        let dropped = Arc::new(Mutex::new(HashMap::new()));
+        for _ in 0..QUEUE_CAPACITY {
+            sender
+                .try_send(Message::Append {
+                    id: id.clone(),
+                    bytes: b"queued".to_vec(),
+                })
+                .expect("fill scrollback queue");
+        }
+        let worker_directory = dir.0.clone();
+        let worker_dropped = Arc::clone(&dropped);
+        let worker = std::thread::Builder::new()
+            .name("terminalai-scrollback-test".into())
+            .spawn(move || run_writer(&worker_directory, receiver, &worker_dropped))
+            .expect("worker");
+        let spool = ScrollbackSpool {
+            sender,
+            dropped,
+            directory: dir.0.clone(),
+            worker: Some(worker),
+        };
+
+        spool.forget(&id);
+        spool.flush();
+
+        let (active, previous) = segment_paths(&dir.0, &id);
+        assert!(!active.exists(), "active segment survived forget");
+        assert!(!previous.exists(), "previous segment survived forget");
     }
 
     #[test]
