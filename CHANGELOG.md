@@ -91,6 +91,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Land verification budgets are now capped before they reach the process deadline, so an absurd
+  wire value cannot overflow `Instant` and kill the landing request thread.
 - Corrupt Claude registry timestamps now skip only the invalid external session instead of
   overflowing the system clock and panicking the reader.
 - The web update fallback now uses the package manifest version injected by Vite, so failed native

@@ -33,6 +33,9 @@ pub const LAND_GIT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Default budget for the operator's verify command. Overridable per request,
 /// because a real test suite is routinely slower than any Git operation.
 pub const DEFAULT_VERIFY_TIMEOUT: Duration = Duration::from_secs(600);
+/// Upper bound for an operator-supplied verify budget. This keeps a malformed
+/// wire value from overflowing `Instant` or holding the landing gate forever.
+pub const MAX_VERIFY_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// What the operator asked to land, and what it must be true against.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -230,7 +233,7 @@ fn run_land(request: &LandRequest) -> Result<LandOutcome, LandRefusal> {
 
     let timeout = request
         .verify_timeout_secs
-        .map(Duration::from_secs)
+        .map(|seconds| Duration::from_secs(seconds).min(MAX_VERIFY_TIMEOUT))
         .unwrap_or(DEFAULT_VERIFY_TIMEOUT);
     match run_verify(&request.target, &request.verify, timeout) {
         VerifyResult::Passed => Ok(LandOutcome::Landed {
@@ -427,7 +430,7 @@ pub(crate) fn run_program(
     stdin: Option<&str>,
     timeout: Duration,
 ) -> ProcessRun {
-    let deadline = Instant::now() + timeout;
+    let deadline = Instant::now() + timeout.min(MAX_VERIFY_TIMEOUT);
     let mut command = Command::new(program);
     command
         .args(args)

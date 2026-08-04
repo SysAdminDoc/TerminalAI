@@ -297,6 +297,25 @@ fn a_passing_verify_keeps_the_change() {
 }
 
 #[test]
+fn an_absurd_verify_timeout_is_clamped_rather_than_fatal() {
+    let (_root, target, source) = repo_pair("verify-timeout-overflow", "one\n");
+    std::fs::write(source.join("file.txt"), "one\ntwo\n").expect("edit");
+
+    let mut plan = request(&source, &target);
+    plan.verify = vec!["git".to_owned(), "--version".to_owned()];
+    plan.verify_timeout_secs = Some(u64::MAX);
+
+    match LandQueue::new().land(&plan) {
+        LandOutcome::Landed { verified, .. } => assert_eq!(verified, Some(true)),
+        LandOutcome::Refused(refusal) => panic!("expected a landing, got {refusal}"),
+    }
+    assert_eq!(
+        std::fs::read_to_string(target.join("file.txt")).expect("target file"),
+        "one\ntwo\n"
+    );
+}
+
+#[test]
 #[cfg(windows)]
 fn a_verify_command_that_hangs_is_refused_and_reversed() {
     let (_root, target, source) = repo_pair("verify-timeout", "one\n");
