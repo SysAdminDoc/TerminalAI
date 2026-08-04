@@ -59,6 +59,28 @@ test("the review view owns its scroll surface", () => {
   assert.equal(rules[0].style.padding, "12px 18px 18px");
 });
 
+test("dialog content shares the action footer inset", () => {
+  const dom = new JSDOM(`<style>${css}</style>`);
+  const rules = [...dom.window.document.styleSheets[0].cssRules];
+  const paddingRule = rules.find((rule) => rule.selectorText?.includes(".launcher-dialog > .dialog-head"));
+  assert.ok(paddingRule, "shared dialog padding rule must exist");
+  for (const selector of [
+    ".launcher-dialog > .dialog-head",
+    ".launcher-dialog > .rollup-body",
+    ".launcher-dialog > .broadcast-body",
+    ".launcher-dialog > .explainer-body",
+    ".launcher-dialog > .work-run-bar",
+    ".launcher-dialog > .work-run-body",
+  ]) {
+    assert.match(paddingRule.selectorText, new RegExp(selector.replaceAll(".", "\\.")));
+  }
+  assert.equal(paddingRule.style.padding, "20px 26px");
+
+  const actionRule = rules.find((rule) => rule.selectorText === ".dialog-actions");
+  assert.ok(actionRule, "dialog action rule must exist");
+  assert.equal(actionRule.style.padding, "15px 26px 19px");
+});
+
 test("light mode keeps interactive surfaces readable", () => {
   const lightStart = css.indexOf("@media (prefers-color-scheme: light)");
   const lightEnd = css.indexOf("\n}", lightStart);

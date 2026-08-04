@@ -89,6 +89,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Explainer, queue, project, broadcast and rollup dialogs now inset their
+  headings and content to the same horizontal boundary as the action footer.
+
 - Rate-limited and preflight red/green states now keep their declared glyph colors and backgrounds,
   including the red pulse shown for a focused rate-limited session.
 

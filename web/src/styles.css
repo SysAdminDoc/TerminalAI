@@ -43,6 +43,10 @@ button { cursor: pointer; }
 .summary-spend { appearance: none; background: none; border: 0; padding: 0 2px; margin: 0; font: inherit; color: inherit; cursor: pointer; border-radius: 4px; }
 .summary-spend:hover { color: var(--text); background: var(--surface0); }
 .summary-spend:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+/* Dialog content keeps the same horizontal inset as the action footer. The
+   launcher already supplies its own padded sections; these are the shared
+   content boxes used by the other dialogs. */
+.launcher-dialog > .dialog-head, .launcher-dialog > .rollup-body, .launcher-dialog > .broadcast-body, .launcher-dialog > .explainer-body, .launcher-dialog > .work-run-bar, .launcher-dialog > .work-run-body { padding: 20px 26px; }
 .rollup-dialog { max-width: 900px; width: min(900px, 92vw); }
 .rollup-dialog .dialog-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
 .rollup-dialog h2 { margin: 0; font-size: 16px; }
