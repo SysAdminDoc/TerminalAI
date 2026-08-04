@@ -139,10 +139,13 @@ const state = {
   templates: [],
   projects: [],
   scannedProjects: [],
+  projectsError: null,
   queueSession: null,
   queuePrompts: [],
+  queueError: null,
   storedPrompts: [],
   workRun: null,
+  reviewError: null,
   announcementQueue: new Map(),
   announcementTimer: null,
   orderFreeze: null,
@@ -175,6 +178,12 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function renderDataError(container, message, action, retry) {
+  container.innerHTML = `<div class="data-error" role="alert"><p>${escapeHtml(message)}</p><button type="button" class="button button-secondary" data-retry-action="${escapeHtml(action)}">${escapeHtml(t("button-retry"))}</button></div>`;
+  const button = container.querySelector("[data-retry-action]");
+  if (button?.dataset.retryAction === action) button.addEventListener("click", () => void retry());
 }
 
 function invokeArgs(spec) {
@@ -530,6 +539,17 @@ function syncReviewVisibility() {
 }
 
 function renderReview() {
+  if (state.reviewError) {
+    $("review-summary").textContent = t("review-unavailable");
+    $("review-empty").classList.add("view-hidden");
+    renderDataError(
+      $("review-list"),
+      t("review-load-error", { error: state.reviewError }),
+      "review",
+      loadReview,
+    );
+    return;
+  }
   const entries = Array.isArray(state.reviews) ? state.reviews : [];
   const pending = entries.filter((entry) => !entry.reviewed).length;
   const conflicts = entries.filter((entry) => (entry.conflicts?.length ?? 0) > 0 || reviewNumber(entry.conflict_markers) > 0).length;
@@ -1281,10 +1301,12 @@ async function loadReview() {
   try {
     const snapshot = await invoke("review_snapshot");
     state.reviews = snapshot.entries ?? [];
-    renderReview();
+    state.reviewError = null;
   } catch (error) {
-    showToast("Could not read review snapshot: " + error);
+    state.reviews = [];
+    state.reviewError = String(error);
   }
+  renderReview();
 }
 
 function setReviewMode(active) {
@@ -1574,6 +1596,16 @@ async function sendBroadcast() {
  * project and quietly remove it from consideration.
  */
 function renderProjects() {
+  if (state.projectsError) {
+    $("projects-coverage").textContent = t("projects-unavailable");
+    renderDataError(
+      $("projects-body"),
+      t("projects-load-error", { error: state.projectsError }),
+      "projects",
+      openProjects,
+    );
+    return;
+  }
   const openOnly = $("projects-open-only").checked;
   const all = state.scannedProjects;
   const rows = sortProjects(openOnly ? all.filter((item) => hasOpenWork(item.roadmap)) : all);
@@ -1787,9 +1819,10 @@ async function openProjects() {
   $("projects-body").innerHTML = `<p class="rollup-total">${escapeHtml(t("loading"))}</p>`;
   try {
     state.scannedProjects = await invoke("scan_projects");
+    state.projectsError = null;
   } catch (error) {
     state.scannedProjects = [];
-    showToast(String(error));
+    state.projectsError = String(error);
   }
   renderProjects();
   await loadStoredPrompts();
@@ -1833,9 +1866,10 @@ async function refreshQueue() {
   if (!id) return;
   try {
     state.queuePrompts = await invoke("queued_prompts", { id });
+    state.queueError = null;
   } catch (error) {
     state.queuePrompts = [];
-    showToast(String(error));
+    state.queueError = String(error);
   }
   renderQueue();
 }
@@ -1852,6 +1886,19 @@ function renderQueue() {
     : t("queue-running");
   $("queue-resume-button").hidden = !paused;
   $("queue-pause-button").hidden = Boolean(paused);
+
+  if (state.queueError) {
+    $("queue-status").textContent = t("queue-unavailable");
+    $("queue-resume-button").hidden = true;
+    $("queue-pause-button").hidden = true;
+    renderDataError(
+      $("queue-list"),
+      t("queue-load-error", { error: state.queueError }),
+      "queue",
+      refreshQueue,
+    );
+    return;
+  }
 
   if (!state.queuePrompts.length) {
     $("queue-list").innerHTML = `<p class="rollup-total">${escapeHtml(t("queue-empty"))}</p>`;

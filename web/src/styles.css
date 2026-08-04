@@ -64,6 +64,7 @@ button { cursor: pointer; }
    qualifies them rather than being one. */
 .rollup-unpriced { color: var(--subtext0); font-weight: 400; }
 .rollup-total p { margin: 0; font-size: 13px; color: var(--subtext0); }
+.data-error { display: grid; gap: 9px; min-height: 120px; place-content: center; padding: 14px; border: 1px solid rgba(243, 139, 168, .35); border-radius: 7px; color: var(--red); background: rgba(243, 139, 168, .07); font-size: 11px; line-height: 1.45; }.data-error p { max-width: 620px; margin: 0; overflow-wrap: anywhere; }.data-error .button { justify-self: start; padding: 5px 9px; font-size: 10px; }
 .broadcast-dialog { max-width: 620px; width: min(620px, 92vw); }
 .broadcast-body { display: grid; gap: 14px; }
 .broadcast-targets { border: 1px solid var(--surface0); border-radius: 8px; padding: 10px 12px; margin: 0; }

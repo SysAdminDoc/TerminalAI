@@ -89,6 +89,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Project discovery, prompt queue and review failures now stay visible as explicit error panels with
+  escaped details and Retry controls instead of masquerading as empty results.
+
 - The installer gate now requires a newly running `terminalai-daemon.exe` from the scratch prefix as
   well as its control pipe, so a pre-existing daemon cannot make the installed-app check pass.
 
