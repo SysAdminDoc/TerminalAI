@@ -208,9 +208,6 @@ struct Entry {
 }
 
 struct State {
-    /// One transcript reader per session. Kept on the state rather than the
-    /// entry so a poll can walk every session under one lock acquisition.
-    tails: crate::tail::TranscriptTails,
     next_id: u64,
     focused: Option<SessionId>,
     entries: BTreeMap<SessionId, Entry>,
@@ -258,6 +255,10 @@ impl PartialOrd for RestartTask {
 
 struct Inner {
     state: Mutex<State>,
+    /// Transcript readers have their own lock because polling performs file
+    /// reads and directory walks. The registry state lock must remain free so
+    /// PTY output and hook ingestion cannot be back-pressured by a slow disk.
+    tails: Mutex<crate::tail::TranscriptTails>,
     domain: Arc<dyn AgentDomain>,
     dropped_events: AtomicU64,
     restart_tx: Sender<RestartTask>,
@@ -378,7 +379,6 @@ impl SessionRegistry {
         let (restart_tx, restart_rx) = mpsc::channel();
         let inner = Arc::new(Inner {
             state: Mutex::new(State {
-                tails: crate::tail::TranscriptTails::default(),
                 next_id: 1,
                 focused: None,
                 entries: BTreeMap::new(),
@@ -389,6 +389,7 @@ impl SessionRegistry {
                 notifications: NotificationCenter::default(),
                 subscribers: Vec::new(),
             }),
+            tails: Mutex::new(crate::tail::TranscriptTails::default()),
             domain,
             spool: Mutex::new(None),
             worktree_root: Mutex::new(None),
@@ -2134,11 +2135,28 @@ impl SessionRegistry {
             return 0;
         }
 
+        // Keep the expensive transcript work behind its own lock. The state
+        // lock is reacquired only after every file read and directory walk has
+        // completed, so output and hook ingestion remain responsive.
+        let updates = {
+            let mut tails = self
+                .inner
+                .tails
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            targets
+                .into_iter()
+                .map(|(id, agent, cwd, started_at)| {
+                    let update = tails.poll(&id.0, agent, home, &cwd, started_at);
+                    (id, update)
+                })
+                .collect::<Vec<_>>()
+        };
+
         let mut updated = Vec::new();
         {
             let mut state = lock_state(&self.inner);
-            for (id, agent, cwd, started_at) in targets {
-                let update = state.tails.poll(&id.0, agent, home, &cwd, started_at);
+            for (id, update) in updates {
                 if !update.changed {
                     continue;
                 }
@@ -2191,7 +2209,11 @@ impl SessionRegistry {
 
     /// Drop a finished session's transcript reader.
     pub fn forget_transcript(&self, id: &SessionId) {
-        lock_state(&self.inner).tails.forget(&id.0);
+        self.inner
+            .tails
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .forget(&id.0);
     }
 
     fn runtime_environment(
