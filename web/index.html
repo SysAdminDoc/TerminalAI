@@ -37,6 +37,9 @@
             <div class="store-quarantine-copy"><strong data-i18n="store-quarantined">Session store quarantined</strong><span id="store-quarantine-message"></span></div>
             <button class="button button-quiet" id="dismiss-store-quarantine" type="button" data-i18n="button-dismiss">Dismiss</button>
           </div>
+          <div id="auth-banner" class="store-quarantine-banner view-hidden" role="alert">
+            <div class="store-quarantine-copy"><strong data-i18n="auth-expired">Agent sign-in expired</strong><span id="auth-banner-message"></span></div>
+          </div>
           <section id="preflight-view" class="preflight-view view-hidden" aria-label="TerminalAI preflight">
             <div class="preflight-heading"><div><span class="eyebrow" data-i18n="label-first-run-check">FIRST-RUN CHECK</span><h2 data-i18n="preflight-title">Ready the control plane</h2><p id="preflight-summary">Checking local dependencies…</p></div><button class="button button-quiet" id="preflight-recheck" type="button" data-i18n="button-recheck-all">Recheck all</button></div>
             <div id="preflight-list" class="preflight-list" role="list" aria-label="TerminalAI prerequisites" data-i18n-aria-label="label-prerequisites"></div>

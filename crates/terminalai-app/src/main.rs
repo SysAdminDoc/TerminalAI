@@ -838,7 +838,16 @@ fn drive_work_run_with(
             Response::Error { message } => return Err(message),
             other => return Err(format!("unexpected snapshot response: {other:?}")),
         };
-        if admission.live_sessions >= admission.max_live_sessions {
+        // One decision, the daemon's: the slot cap, the spend ceiling and the
+        // memory budget all report through the same field, so this loop cannot
+        // enforce a different set of limits than the gate does.
+        if admission.admission_block.is_some() {
+            return Ok(());
+        }
+        // Credentials the agent has already said are gone. Holding is the whole
+        // point: draining the run turns one expired login into one failure per
+        // project, none of which says what actually happened.
+        if !admission.expired_auth.is_empty() {
             return Ok(());
         }
         let Some(entry) = queue.next_pending().cloned() else {

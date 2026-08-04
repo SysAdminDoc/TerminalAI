@@ -33,6 +33,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   budget too small for any agent surfaces as a stuck row instead of a silently halted fleet. A
   session at its cap is reported as memory-limited rather than left to look like an ordinary crash.
 
+- Fleet-wide detection of expired agent credentials. Running many sessions at once provokes OAuth
+  refresh races, and an agent whose login has gone looks exactly like a busy one: it takes a prompt,
+  works briefly, and fails. The daemon now asks each installed agent every five minutes
+  (`claude auth status --json`, `codex login status`) and raises one banner naming the agent instead
+  of letting a work run turn one expired login into one failure per project; queued work holds until
+  it is resolved and running sessions are untouched. Only an explicit "not logged in" holds anything
+  — a probe that could not run reports `unknown`, which blocks nothing, because a banner the
+  operator cannot clear by signing in is worse than no banner. `terminalai-probe auth` runs the same
+  path the daemon does.
+
 ### Changed
 
 - The workspace's direct `windows-sys` dependency moved from 0.59 to 0.61, which is the prerequisite

@@ -308,6 +308,11 @@ pub struct AdmissionSnapshot {
     /// Sessions whose allocations the job is currently refusing.
     #[serde(default)]
     pub memory_limited_sessions: usize,
+    /// Agents that reported expired credentials. Only an explicit "not logged
+    /// in" lands here; an unreachable probe stays silent rather than raising a
+    /// banner the operator cannot act on.
+    #[serde(default)]
+    pub expired_auth: Vec<crate::auth::AgentAuth>,
     /// Agents whose own launcher can enforce a per-session budget. Codex has no
     /// documented equivalent, so its sessions are admission-refused only and
     /// the header has to say so rather than implying a hard stop.
@@ -404,6 +409,8 @@ struct State {
     admission: AdmissionConfig,
     /// Fleet spend over the rolling window the ceiling is measured against.
     spend: crate::spend::SpendLedger,
+    /// What each agent last said about its credentials.
+    auth: BTreeMap<crate::agent::Agent, crate::auth::AgentAuth>,
     notifications: NotificationCenter,
     subscribers: Vec<SyncSender<RegistryEvent>>,
 }
@@ -583,6 +590,7 @@ impl SessionRegistry {
                 queue: VecDeque::new(),
                 admission,
                 spend: crate::spend::SpendLedger::new(),
+                auth: BTreeMap::new(),
                 notifications: NotificationCenter::default(),
                 subscribers: Vec::new(),
             }),
@@ -695,6 +703,32 @@ impl SessionRegistry {
         registry
     }
 
+    /// Record what an agent reported about its credentials.
+    ///
+    /// Emitted as a session-independent fact: the fleet needs one banner, not
+    /// one failure per queued entry.
+    pub fn set_agent_auth(&self, auth: crate::auth::AgentAuth) -> bool {
+        let mut state = lock_state(&self.inner);
+        let changed = state.auth.get(&auth.agent) != Some(&auth);
+        state.auth.insert(auth.agent, auth);
+        changed
+    }
+
+    pub fn agent_auth(&self, agent: crate::agent::Agent) -> Option<crate::auth::AgentAuth> {
+        lock_state(&self.inner).auth.get(&agent).cloned()
+    }
+
+    /// Whether work for this agent should hold rather than start.
+    ///
+    /// Only an explicit expiry holds. `Unknown` deliberately does not: a probe
+    /// that could not run must never be able to stop the fleet.
+    pub fn auth_holds(&self, agent: crate::agent::Agent) -> bool {
+        lock_state(&self.inner)
+            .auth
+            .get(&agent)
+            .is_some_and(|auth| auth.state == crate::auth::AuthState::Expired)
+    }
+
     pub fn admission_snapshot(&self) -> AdmissionSnapshot {
         let state = lock_state(&self.inner);
         AdmissionSnapshot {
@@ -727,6 +761,12 @@ impl SessionRegistry {
                 .values()
                 .filter(|entry| entry.session.memory_limited)
                 .count(),
+            expired_auth: state
+                .auth
+                .values()
+                .filter(|auth| auth.state == crate::auth::AuthState::Expired)
+                .cloned()
+                .collect(),
             // Claude takes `--max-budget-usd`; Codex documents no equivalent, so
             // saying "budget" without naming which agent it binds would claim an
             // enforcement that does not exist for half the fleet.

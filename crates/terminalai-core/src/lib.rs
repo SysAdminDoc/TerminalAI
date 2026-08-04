@@ -12,6 +12,7 @@
 pub mod agent;
 pub mod app_server;
 pub mod atomic_file;
+pub mod auth;
 pub mod capabilities;
 pub mod diagnostics;
 pub mod domain;

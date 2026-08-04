@@ -31,13 +31,6 @@ item above; where the two touch, the note says so.
 
 ### P1
 
-- [ ] P1 — Detect expired agent authentication across the fleet
-  Why: concurrent sessions provoke OAuth refresh races, and an auth-dead agent looks like a busy one; without a fleet-level signal the operator watches a queue fail one entry at a time.
-  Evidence: anthropics/claude-code#24317 "Frequent re-authentication required with multiple concurrent Claude Code sessions (OAuth refresh token race condition)" (41 reactions); #32642. `claude auth status` emits JSON (code.claude.com/docs/en/cli-reference). operator-oss ships a fleet-wide expired-login banner that holds queued follow-ups; agent-deck parks auth-dead sessions in an explicit hold state rather than flapping.
-  Touches: `crates/terminalai-app/src/main.rs` (preflight), `crates/terminalai-core/src/capabilities.rs`, `crates/terminalai-core/src/work_queue.rs`, `web/src/main.js`
-  Acceptance: an authentication failure raises one fleet-wide banner naming the agent, and the work queue and prompt queues hold rather than draining into failures. Resolving auth clears the banner and resumes the holds.
-  Complexity: M
-
 - [ ] P1 — A settings surface for the knobs that currently require an environment variable and a daemon restart
   Why: the product thesis is thirty rows and the shipped default admits three, changeable only by setting `TERMINALAI_MAX_LIVE_SESSIONS` before the daemon starts — a default that contradicts the pitch and a control no user will find.
   Evidence: `DEFAULT_MAX_LIVE_SESSIONS = 3` at `crates/terminalai-core/src/registry.rs:42`; `AdmissionConfig::from_environment` at `:79-107`. `web/index.html` defines six dialogs (launcher, broadcast, projects, queue, rollup, explainer) and no settings dialog; grep for "settings" in that file returns nothing. Distinct from the existing P2 about removing presets and project roots — this is daemon-wide policy, not stored-item CRUD.

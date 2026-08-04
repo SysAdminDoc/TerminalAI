@@ -54,7 +54,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(windows)]
 use std::sync::Condvar;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use interprocess::local_socket::{
     prelude::*, GenericNamespaced, ListenerNonblockingMode, ListenerOptions, Name, RecvHalf,
@@ -1007,6 +1007,30 @@ fn handle_connection(
     Ok(())
 }
 
+/// How often each agent is asked whether it is still authenticated.
+const AUTH_PROBE_INTERVAL: Duration = Duration::from_secs(300);
+
+/// Ask each installed agent about its credentials and record the answer.
+///
+/// An agent that cannot be resolved is not probed at all: "not installed" is
+/// already reported by preflight, and reporting it as an auth failure would put
+/// a banner in front of the operator that logging in cannot clear.
+fn refresh_agent_auth(registry: &SessionRegistry) {
+    for agent in [Agent::Claude, Agent::Codex] {
+        let Ok(binary) = terminalai_core::agent::resolve(agent, None) else {
+            continue;
+        };
+        let auth = terminalai_core::auth::probe(agent, &binary.path);
+        if registry.set_agent_auth(auth.clone()) {
+            tracing::info!(
+                agent = agent.command_name(),
+                state = ?auth.state,
+                "agent authentication state changed"
+            );
+        }
+    }
+}
+
 fn write_messages(mut send: SendHalf, outgoing: Receiver<WireMessage>) -> Result<(), IpcError> {
     for message in outgoing {
         let mut encoded = serde_json::to_vec(&message)?;
@@ -1745,12 +1769,21 @@ fn spawn_transcript_poller(registry: SessionRegistry, shutdown: Arc<AtomicBool>)
     let spawned = thread::Builder::new()
         .name("terminalai-transcripts".to_owned())
         .spawn(move || {
+            // Probe on the first pass so an already-expired login is reported
+            // before the operator queues work against it.
+            let mut last_auth_probe = Instant::now() - AUTH_PROBE_INTERVAL;
             while !shutdown.load(Ordering::Acquire) {
                 registry.poll_transcripts(&home);
                 // Same wakeup rather than a second timer: memory does not move
                 // fast enough to justify one, and the fleet already pays for
                 // this one.
                 registry.sample_memory();
+                // Far slower than the transcript poll: credentials change on the
+                // scale of hours, and each probe is a process spawn per agent.
+                if last_auth_probe.elapsed() >= AUTH_PROBE_INTERVAL {
+                    last_auth_probe = Instant::now();
+                    refresh_agent_auth(&registry);
+                }
                 thread::sleep(TRANSCRIPT_POLL_INTERVAL);
             }
         });

@@ -76,6 +76,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = match args.first().map(String::as_str) {
         Some("resolve") => cmd_resolve(),
+        Some("auth") => cmd_auth(),
         Some("capabilities") => cmd_capabilities(&args[1..]),
         Some("preview") => cmd_build(&args[1..], false),
         Some("spawn") => cmd_build(&args[1..], true),
@@ -844,6 +845,35 @@ fn print_json<T: serde::Serialize>(value: T) -> i32 {
 fn print_error(error: impl std::fmt::Display) -> i32 {
     eprintln!("{error}");
     1
+}
+
+/// Ask each installed agent whether it is still authenticated.
+///
+/// The GUI cannot be unit-tested against a live login, so this is where the
+/// probe's real behaviour gets verified: it runs the same code path the daemon
+/// runs on its timer.
+fn cmd_auth() -> i32 {
+    for a in [Agent::Claude, Agent::Codex] {
+        match agent::resolve(a, None) {
+            Ok(b) => {
+                let auth = terminalai_core::auth::probe(a, &b.path);
+                println!(
+                    "{:<12} {:?}{}{}",
+                    a.command_name(),
+                    auth.state,
+                    auth.account
+                        .map(|account| format!("  {account}"))
+                        .unwrap_or_default(),
+                    auth.detail
+                        .map(|detail| format!("  ({detail})"))
+                        .unwrap_or_default(),
+                );
+            }
+            // Not installed is preflight's business, not an auth failure.
+            Err(e) => println!("{:<12} not resolved: {e}", a.command_name()),
+        }
+    }
+    0
 }
 
 fn cmd_resolve() -> i32 {

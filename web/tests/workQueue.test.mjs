@@ -52,8 +52,20 @@ test("the tree is checked when the entry runs, not when the run was created", ()
 });
 
 test("admission is the fleet's decision, asked one slot at a time", () => {
+  // The run must not carry its own copy of "is there room": the slot cap, the
+  // spend ceiling and the memory budget all report through one field, so asking
+  // for that field is what keeps this loop from enforcing a different set of
+  // limits than the gate does.
   const driver = app.slice(app.indexOf("fn drive_work_run"));
-  assert.match(driver.slice(0, 2000), /if admission\.live_sessions >= admission\.max_live_sessions \{\s*\n\s*return Ok\(\(\)\);/);
+  assert.match(driver.slice(0, 2500), /if admission\.admission_block\.is_some\(\) \{\s*\n\s*return Ok\(\(\)\);/);
+  assert.doesNotMatch(driver.slice(0, 2500), /admission\.live_sessions >= admission\.max_live_sessions/);
+});
+
+test("a run holds on expired credentials instead of failing every project", () => {
+  // One expired login would otherwise become one failure per project, none of
+  // which says what actually happened.
+  const driver = app.slice(app.indexOf("fn drive_work_run"));
+  assert.match(driver.slice(0, 2500), /if !admission\.expired_auth\.is_empty\(\) \{\s*\n\s*return Ok\(\(\)\);/);
 });
 
 test("a session that started without its prompt is reported, not left running", () => {

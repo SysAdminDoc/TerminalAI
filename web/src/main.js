@@ -273,6 +273,22 @@ function renderStoreQuarantine() {
     : "";
 }
 
+/// One banner for the whole fleet, not one failure per queued entry.
+///
+/// Driven only by an explicit expiry. A probe that could not run reports
+/// `unknown` and is deliberately absent from this list, because a banner the
+/// operator cannot clear by signing in is worse than no banner.
+function renderAuthBanner() {
+  const banner = $("auth-banner");
+  const expired = Array.isArray(state.admission.expired_auth) ? state.admission.expired_auth : [];
+  banner.classList.toggle("view-hidden", expired.length === 0);
+  if (!expired.length) return;
+  const agents = expired
+    .map((entry) => (entry.agent === "codex" ? "Codex" : "Claude Code"))
+    .join(", ");
+  $("auth-banner-message").textContent = t("auth-expired-detail", { agents });
+}
+
 function showAttentionToast(notification) {
   if (state.attentionToasts.has(notification.dedup_key)) return;
   const session = state.sessions.find((item) => item.id === notification.session_id);
@@ -967,6 +983,7 @@ function groupChip(session) {
 function renderRows() {
   syncReviewVisibility();
   renderSummary();
+  renderAuthBanner();
   renderPinnedSplit();
   const filter = $("filter-input").value.trim().toLowerCase();
   const desiredSessions = sortedSessions().filter((session) => {

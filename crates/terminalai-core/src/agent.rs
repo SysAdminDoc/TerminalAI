@@ -24,7 +24,8 @@ const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Which coding agent a session runs.
 #[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize,
+    serde::Deserialize,
 )]
 #[serde(rename_all = "lowercase")]
 pub enum Agent {
