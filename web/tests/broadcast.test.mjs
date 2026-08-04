@@ -89,6 +89,21 @@ test("the selection is re-checked at send time, not trusted from open time", () 
   assert.match(body, /readBroadcastSelection\(\)\.filter\(\(id\) =>\s*isEligible\(/);
 });
 
+test("a partial refusal keeps the operator's live broadcast selection", () => {
+  // The dialog is re-rendered after a refusal so current eligibility and
+  // labels are fresh. That render must read the boxes the operator left
+  // checked, not the selection captured when the dialog opened.
+  const sync = main.slice(main.indexOf("function syncBroadcastSelection"));
+  assert.match(sync.slice(0, 180), /state\.broadcastSelection = readBroadcastSelection\(\)/);
+  assert.match(
+    main,
+    /\$\("broadcast-list"\)\.addEventListener\("change", \(\) => syncBroadcastSelection\(\)\)/,
+  );
+  const send = main.slice(main.indexOf("async function sendBroadcast"));
+  const refusal = send.slice(send.indexOf("} else {"), send.indexOf("\n  } catch"));
+  assert.match(refusal, /syncBroadcastSelection\(\);\s*renderBroadcast\(\)/);
+});
+
 test("both numbers are shown whenever anything was refused", () => {
   const send = main.slice(main.indexOf("async function sendBroadcast"));
   const body = send.slice(0, send.indexOf("\nfunction createOutputChannel"));

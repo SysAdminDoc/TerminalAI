@@ -89,6 +89,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- The broadcast dialog now remembers which eligible sessions the operator left
+  checked when a partial refusal forces the target list to re-render, so it no
+  longer silently re-ticks excluded sessions.
 - Repository database leases now validate their environment-variable names:
   administrative URLs must use an operator-controlled `TERMINALAI_*` name, and
   session URLs cannot shadow the sanitized process baseline or TerminalAI's

@@ -1517,6 +1517,10 @@ function readBroadcastSelection() {
     .map((box) => box.dataset.broadcastId);
 }
 
+function syncBroadcastSelection() {
+  state.broadcastSelection = readBroadcastSelection();
+}
+
 async function sendBroadcast() {
   const text = $("broadcast-input").value.trim();
   if (!text) {
@@ -1546,6 +1550,9 @@ async function sendBroadcast() {
       $("broadcast-input").value = "";
       $("broadcast-dialog").close();
     } else {
+      // Re-rendering after a partial refusal must preserve the boxes the
+      // operator left checked, rather than restoring the open-time default.
+      syncBroadcastSelection();
       renderBroadcast();
     }
   } catch (error) {
@@ -2745,6 +2752,7 @@ function bindEvents() {
     await refreshWorkRun();
   });
   $("broadcast-toggle").addEventListener("click", () => openBroadcast());
+  $("broadcast-list").addEventListener("change", () => syncBroadcastSelection());
   $("cancel-broadcast-button").addEventListener("click", () => $("broadcast-dialog").close());
   $("send-broadcast-button").addEventListener("click", () => void sendBroadcast());
   // Launching costs tokens and writes to a real repository, so it is reachable only
