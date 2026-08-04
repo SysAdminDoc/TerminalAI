@@ -91,6 +91,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- A damaged persisted scrollback sidecar now clears only that session's replay history while the
+  remaining session store still loads.
 - Land requests now refuse expected Git hashes shorter than four characters, avoiding accidental
   matches against a target the operator did not review.
 - Land verification budgets are now capped before they reach the process deadline, so an absurd

@@ -196,10 +196,18 @@ fn load_sidecars(
 ) -> Result<(), SessionStoreError> {
     for stored in &mut snapshot.sessions {
         let sidecar = sidecar_path(path, &stored.session.id);
-        match fs::read(sidecar) {
+        match fs::read(&sidecar) {
             Ok(bytes) => stored.scrollback = bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
+            Err(error) => {
+                stored.scrollback.clear();
+                tracing::warn!(
+                    session = %stored.session.id,
+                    sidecar = %sidecar.display(),
+                    %error,
+                    "could not read persisted scrollback; restoring without history"
+                );
+            }
         }
     }
     Ok(())
@@ -286,6 +294,54 @@ mod tests {
                 .scrollback,
             b"hello\x1b[2J"
         );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_unreadable_sidecar_does_not_discard_the_other_sessions() {
+        let dir = test_dir();
+        let path = dir.join("sessions.json");
+        let cwd = std::env::current_dir().expect("cwd");
+        let spec = spec_for(Agent::Claude, &cwd);
+        let command = ResolvedCommand {
+            program: PathBuf::from("claude.exe"),
+            args: vec!["--resume".into(), "native-1".into()],
+            cwd: cwd.clone(),
+        };
+        let snapshot = SessionStoreSnapshot {
+            magic: SESSION_STORE_MAGIC.to_owned(),
+            schema_version: SESSION_STORE_SCHEMA_VERSION,
+            sessions: vec![
+                StoredSession {
+                    session: Session::new(SessionId::new(1), &spec),
+                    spec: spec.clone(),
+                    command: command.clone(),
+                    scrollback: b"first".to_vec(),
+                    queue: Default::default(),
+                },
+                StoredSession {
+                    session: Session::new(SessionId::new(2), &spec),
+                    spec,
+                    command,
+                    scrollback: b"second".to_vec(),
+                    queue: Default::default(),
+                },
+            ],
+            archives: Vec::new(),
+            extra: BTreeMap::new(),
+        };
+        snapshot.write(&path).expect("write");
+
+        let broken = sidecar_path(&path, &SessionId::new(1));
+        fs::remove_file(&broken).expect("remove first sidecar");
+        fs::create_dir(&broken).expect("replace first sidecar with a directory");
+
+        let restored = SessionStoreSnapshot::read(&path)
+            .expect("read store")
+            .expect("snapshot");
+        assert_eq!(restored.sessions.len(), 2);
+        assert!(restored.sessions[0].scrollback.is_empty());
+        assert_eq!(restored.sessions[1].scrollback, b"second");
         let _ = fs::remove_dir_all(dir);
     }
 
