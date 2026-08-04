@@ -49,6 +49,55 @@ export function rateLimitedLabel(session, t, now = Date.now()) {
 }
 
 /**
+ * The most-consumed quota window any session has reported.
+ *
+ * `quota` is the headroom reading and exists whether or not the provider is
+ * currently refusing; `rate_limit` only exists once it is. Reading the former
+ * is what lets the header warn before work stops rather than after.
+ *
+ * Returns `null` when no session reported a usable percentage. A session that
+ * reported a window without one is not a zero — it is a session that did not
+ * say, and rendering 0% would claim the fleet has all its quota left.
+ */
+export function worstQuota(sessions) {
+  let worst = null;
+  for (const session of sessions ?? []) {
+    // A limit that is actively refusing is the more urgent reading of the two.
+    const reported = session?.rate_limit ?? session?.quota;
+    const used = Number(reported?.used_percent);
+    if (!Number.isFinite(used)) continue;
+    if (!worst || used > worst.used) worst = { used, limit: reported, session };
+  }
+  return worst;
+}
+
+/**
+ * The header's quota label: how much of the tightest window is gone, and when
+ * it reopens. `null` when nobody reported one.
+ */
+export function quotaLabel(sessions, t, now = Date.now()) {
+  const worst = worstQuota(sessions);
+  if (!worst) return null;
+  const parts = [t("quota-used", { percent: Math.round(worst.used) })];
+  if (worst.limit.scope) parts.push(t("rate-limit-row", { scope: worst.limit.scope }));
+  const resets = resetMillis(worst.limit);
+  parts.push(
+    resets === null
+      ? t("quota-reset-unreported")
+      : t("rate-limit-in-minutes", { minutes: minutesUntil(resets, now) }),
+  );
+  return { percent: Math.round(worst.used), title: parts.join(" · ") };
+}
+
+/**
+ * What the header says when no agent has reported a quota at all — which is the
+ * normal state for Claude Code, since only Codex publishes a quota table.
+ */
+export function quotaUnreportedLabel(t) {
+  return t("quota-unreported");
+}
+
+/**
  * The fleet header's summary of every limited session: how many, and when the
  * soonest window reopens. Sessions that reported no reset time are counted but
  * cannot contribute a time, so a fleet where none reported says exactly that.

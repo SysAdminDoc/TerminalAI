@@ -461,6 +461,11 @@ rate-limit-reset-unknown = { $count ->
 }
 rate-limit-row = { $scope } quota
 rate-limit-in-minutes = reopens in { $minutes } min
+fleet-quota = { $percent }% quota
+fleet-quota-unreported = quota —
+quota-used = { $percent }% of the tightest quota window used
+quota-reset-unreported = reset time not reported
+quota-unreported = No agent has reported a quota window. Codex publishes one continuously; Claude Code reports only once a limit is hit.
 
 review-land = Land
 review-landing = Landing…

@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Added
+
+- The fleet header shows quota headroom, so the fleet can warn before a window closes rather than
+  only reporting that it has. Codex publishes a quota table continuously; the parser read
+  `used_percent` out of it, correctly decided the window was not blocking, and then threw the whole
+  reading away — the fleet had the number that would have warned first and dropped it twice over,
+  once in the registry and once at the UI boundary. The most-consumed window across the fleet is
+  now kept as headroom separately from an active refusal, and the header states its percentage,
+  which quota it is and when it reopens. A fleet where nobody reported one says so rather than
+  rendering 0%, and explains that only Codex publishes a table continuously.
+
 ### Fixed
 
 - A session the supervisor gave up on no longer reads exactly like one that finished. Both arrive as

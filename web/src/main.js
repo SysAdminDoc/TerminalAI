@@ -7,7 +7,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { reconcileGroupChip, reconcileKeyedRows } from "./fleetRows.js";
 import { countMessage, localizeDom, relativeDwell, t } from "./i18n.js";
-import { rateLimitTitle, rateLimitedLabel } from "./rateLimit.js";
+import { quotaLabel, quotaUnreportedLabel, rateLimitTitle, rateLimitedLabel } from "./rateLimit.js";
 import { coverage, fleetTotals, folderOf, formatCost, formatTokens, rollupBy, TOKEN_FIELDS } from "./rollup.js";
 import { defaultSelection, isEligible, summarize, targets } from "./broadcast.js";
 import { hasOpenWork, openItemsCell, sortProjects, stalenessLabel, summarize as summarizeProjects } from "./projects.js";
@@ -717,12 +717,23 @@ function renderSummary() {
   const limitedSummary = limited.length
     ? '<span class="summary-separator">/</span><span class="summary-item summary-limited" title="' + escapeHtml(rateLimitTitle(limited, t)) + '">' + escapeHtml(countMessage("count-rate-limited", limited.length)) + "</span>"
     : "";
+  // Headroom, not refusal. The agents report this continuously and the fleet
+  // used to drop it at this boundary, so it could only say "rate limited" after
+  // work had already stopped - with the number that would have warned first
+  // sitting on the session all along.
+  const quota = quotaLabel(state.sessions, t);
+  const quotaSummary = '<span class="summary-separator">/</span><span class="summary-item'
+    + (quota && quota.percent >= 80 ? " summary-limited" : "")
+    + '" title="' + escapeHtml(quota ? quota.title : quotaUnreportedLabel(t)) + '">'
+    + escapeHtml(quota ? t("fleet-quota", { percent: quota.percent }) : t("fleet-quota-unreported"))
+    + "</span>";
   const summaryMarkup =
     '<span class="summary-item"><b>' + live + "/" + maxLive + "</b> " + escapeHtml(t("fleet-live")) + "</span>" +
     '<span class="summary-separator">/</span><span class="summary-item">' + escapeHtml(countMessage("count-queued", queued)) + "</span>" +
     '<span class="summary-separator">/</span><span class="summary-item summary-attention">' + escapeHtml(countMessage("count-needs-attention", needsAttention)) + "</span>" +
     '<span class="summary-separator">/</span><span class="summary-item">' + escapeHtml(countMessage("count-active", working)) + "</span>" +
     limitedSummary +
+    quotaSummary +
     '<span class="summary-separator">/</span><button type="button" class="summary-item summary-spend" id="fleet-spend" title="' + escapeHtml(spendTitle) + '" aria-label="' + escapeHtml(t("button-open-rollup")) + '"><b>' + spendLabel + "</b> " + escapeHtml(t("fleet-spent")) + "</button>";
   const summary = $("fleet-summary");
   if (summary.innerHTML !== summaryMarkup) summary.innerHTML = summaryMarkup;

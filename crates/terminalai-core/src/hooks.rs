@@ -47,8 +47,11 @@ pub enum HookSignal {
     /// from a session going quiet — silence is indistinguishable from a long
     /// tool call, and this is the state the fleet header counts.
     RateLimited { limit: HookRateLimit },
-    /// A previously reported quota is over and the session can work again.
-    RateLimitCleared,
+    /// A quota table with room left. Positive evidence the window is open, and
+    /// the only thing that clears a limit — but it also carries the headroom
+    /// the agent reported, which is what lets the fleet warn *before* work
+    /// stops rather than only after.
+    RateLimitCleared { limit: HookRateLimit },
     Unknown { event: String },
 }
 
@@ -329,8 +332,10 @@ pub fn parse_hook_in(
         Some(limit) if is_blocking_limit(&limit) => HookSignal::RateLimited { limit },
         // A quota table with room left is positive evidence the window reset —
         // the only thing that clears this state, since a session that simply
-        // goes quiet proves nothing.
-        Some(_) => HookSignal::RateLimitCleared,
+        // goes quiet proves nothing. The table travels with it: it is the same
+        // measurement, and discarding it here is what left the fleet unable to
+        // say anything about quota until a session had already stopped.
+        Some(limit) => HookSignal::RateLimitCleared { limit },
         None => parse_lifecycle_signal(&normalized, &event_name, notification_name.as_deref()),
     };
     Ok(HookEvent {
@@ -610,7 +615,12 @@ mod tests {
             "token_count": {"rate_limits": {"primary": {"used_percent": 63.5, "resets_in_seconds": 600}}}
         }"#;
         let event = parse_hook(Agent::Codex, input).expect("token count parses");
-        assert_eq!(event.signal, HookSignal::RateLimitCleared);
+        let HookSignal::RateLimitCleared { limit } = event.signal else {
+            panic!("a window with room left is not a refusal");
+        };
+        // The headroom survives the classification; it is the number the header
+        // needs in order to warn before the window closes.
+        assert_eq!(limit.used_percent, Some(63.5));
     }
 
     #[test]

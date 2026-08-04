@@ -1442,7 +1442,34 @@ impl SessionRegistry {
                 },
                 HookSignal::RateLimited { ref limit } => {
                     let now = SystemTime::now();
-                    entry.session.rate_limit = Some(RateLimit {
+                    let reported = RateLimit {
+                        scope: limit.scope.clone(),
+                        used_percent: limit.used_percent,
+                        window_minutes: limit.window_minutes,
+                        resets_at: limit
+                            .resets_at_unix
+                            .map(|seconds| UNIX_EPOCH + Duration::from_secs(seconds))
+                            .or_else(|| {
+                                limit
+                                    .resets_in_seconds
+                                    .map(|seconds| now + Duration::from_secs(seconds))
+                            }),
+                        plan: limit.plan.clone(),
+                        reported_at: now,
+                    };
+                    entry.session.quota = Some(reported.clone());
+                    entry.session.rate_limit = Some(reported);
+                    entry
+                        .session
+                        .set_status_from(SessionStatus::RateLimited, source);
+                }
+                HookSignal::RateLimitCleared { ref limit } => {
+                    // Positive evidence the window has room. Keep the reading:
+                    // it is the headroom the header warns on, and throwing it
+                    // away is why the fleet could only speak about quota after
+                    // work had already stopped.
+                    let now = SystemTime::now();
+                    entry.session.quota = Some(RateLimit {
                         scope: limit.scope.clone(),
                         used_percent: limit.used_percent,
                         window_minutes: limit.window_minutes,
@@ -1457,14 +1484,9 @@ impl SessionRegistry {
                         plan: limit.plan.clone(),
                         reported_at: now,
                     });
-                    entry
-                        .session
-                        .set_status_from(SessionStatus::RateLimited, source);
-                }
-                HookSignal::RateLimitCleared => {
-                    // Positive evidence the window has room. Only move the row
-                    // off the limited state — a session that was working is left
-                    // alone, since a routine quota report says nothing about it.
+                    // Only move the row off the limited state — a session that
+                    // was working is left alone, since a routine quota report
+                    // says nothing about it.
                     if entry.session.rate_limit.take().is_some()
                         && entry.session.status == SessionStatus::RateLimited
                     {
@@ -4697,7 +4719,16 @@ mod tests {
             agent: Agent::Claude,
             session_id: None,
             cwd: Some(Path::new(".").to_path_buf()),
-            signal: HookSignal::RateLimitCleared,
+            signal: HookSignal::RateLimitCleared {
+                limit: crate::hooks::HookRateLimit {
+                    scope: "primary".into(),
+                    used_percent: Some(12.0),
+                    window_minutes: Some(300),
+                    resets_in_seconds: Some(600),
+                    resets_at_unix: None,
+                    plan: None,
+                },
+            },
             progress: None,
         });
         assert_ne!(registry.snapshot()[0].status, SessionStatus::RateLimited);

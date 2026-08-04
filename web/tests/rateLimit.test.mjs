@@ -35,7 +35,7 @@ test("the header reports how many are limited and when the soonest reopens", () 
 test("the limited row and header labels come from one place", () => {
   // They were duplicated in main.js, where neither could be executed by a test —
   // only grepped. Both now resolve through the extracted module.
-  assert.match(main, /import \{ rateLimitTitle, rateLimitedLabel \} from "\.\/rateLimit\.js";/);
+  assert.match(main, /import \{[^}]*rateLimitTitle, rateLimitedLabel \} from "\.\/rateLimit\.js";/);
   assert.match(main, /return rateLimitedLabel\(session, t\);/);
   assert.doesNotMatch(main, /function resetMillis/);
 });
@@ -55,4 +55,14 @@ test("every rate-limit string used by the renderer exists in the catalog", () =>
     assert.ok(new RegExp(`^${key}-other =`, "m").test(ftl), `${key}-other missing`);
   }
   assert.match(ftl, /^status-rate-limited = /m);
+});
+
+test("quota headroom is read through the extracted module, not open-coded", () => {
+  assert.match(main, /import \{ quotaLabel, quotaUnreportedLabel, rateLimitTitle, rateLimitedLabel \} from "\.\/rateLimit\.js";/);
+  assert.match(main, /quotaLabel\(state\.sessions, t\)/);
+  // Behaviour of the helpers is covered in rateLimitLabels.test.mjs.
+  assert.match(helpers, /export function worstQuota/);
+  for (const key of ["fleet-quota", "fleet-quota-unreported", "quota-used", "quota-reset-unreported", "quota-unreported"]) {
+    assert.ok(new RegExp(`^${key} =`, "m").test(ftl), `${key} missing from terminalai.ftl`);
+  }
 });

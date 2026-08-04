@@ -338,6 +338,15 @@ pub struct Session {
     /// indistinguishable from a long tool call.
     #[serde(default)]
     pub rate_limit: Option<RateLimit>,
+    /// The most-consumed quota window the agent has reported, whether or not it
+    /// is currently refusing work.
+    ///
+    /// Distinct from `rate_limit`, which means "the provider is saying no right
+    /// now" and is cleared the moment it stops. This one is the headroom
+    /// reading, and keeping it is what lets the fleet warn before a window
+    /// closes instead of only reporting that it has.
+    #[serde(default)]
+    pub quota: Option<RateLimit>,
     /// Set when the session enters an attention state and cleared when the user looks.
     pub unread: bool,
     /// Pinned sessions keep a live terminal grid even when not focused.
@@ -394,6 +403,7 @@ impl Session {
             tokens: None,
             last_message: None,
             rate_limit: None,
+            quota: None,
             unread: false,
             pinned: false,
             status_history: Vec::new(),
