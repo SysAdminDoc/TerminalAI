@@ -91,6 +91,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- The web update fallback now uses the package manifest version injected by Vite, so failed native
+  version lookups cannot report a stale release.
 - The web shell now applies Fluent placeholders, routes update and action feedback through the
   catalog, and checks that every non-dynamic catalog message and localization attribute has a
   renderer reference.

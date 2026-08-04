@@ -56,7 +56,7 @@ const PREFLIGHT_META = {
   unsupported: { glyph: "—", label: "preflight-not-applicable", tone: "overlay0" },
 };
 const RELEASES_ENDPOINT = "https://api.github.com/repos/SysAdminDoc/TerminalAI/releases/latest";
-const FALLBACK_APP_VERSION = "0.1.0";
+const FALLBACK_APP_VERSION = __APP_VERSION__;
 
 /// What the row shows as "the last thing that happened".
 ///
