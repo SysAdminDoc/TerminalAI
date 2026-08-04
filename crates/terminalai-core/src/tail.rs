@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use crate::agent::Agent;
+use crate::launch::is_valid_resume_id;
 use crate::transcript::{TranscriptAccumulator, UsageTotals};
 
 /// Cap on one line handed to the JSON parser. A transcript line carrying a
@@ -426,7 +427,7 @@ fn native_session_id(value: &serde_json::Value) -> Option<String> {
         for key in KEYS {
             if let Some(id) = object.get(key).and_then(serde_json::Value::as_str) {
                 let id = id.trim();
-                if !id.is_empty() {
+                if is_valid_resume_id(id) {
                     return Some(id.to_owned());
                 }
             }

@@ -117,6 +117,22 @@ pub enum Resume {
     Fork(String),
 }
 
+/// Native session ids are passed as command-line tokens on both supported
+/// agents. Keep the accepted shape deliberately narrow so an id can never
+/// become a provider flag or a multi-token config override.
+pub fn is_valid_resume_id(id: &str) -> bool {
+    let mut chars = id.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    id.len() <= 128
+        && first.is_ascii_alphanumeric()
+        && chars.all(|character| {
+            character.is_ascii_alphanumeric()
+                || matches!(character, '.' | '_' | ':' | '-')
+        })
+}
+
 /// Everything the launcher dialog collects.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct LaunchSpec {
@@ -193,6 +209,8 @@ pub enum LaunchError {
     },
     #[error("{0} cannot resume a specific session id from the command line; use Last or New")]
     ResumeUnsupported(&'static str),
+    #[error("resume session id has an invalid command-line shape")]
+    InvalidResumeId,
     #[error("max_budget_usd must be finite and non-negative")]
     InvalidBudget,
     #[error(transparent)]
@@ -211,6 +229,10 @@ impl LaunchSpec {
             if !budget.is_finite() || budget < 0.0 {
                 return Err(LaunchError::InvalidBudget);
             }
+        }
+        if matches!(&self.resume, Resume::Session(id) | Resume::Fork(id) if !is_valid_resume_id(id))
+        {
+            return Err(LaunchError::InvalidResumeId);
         }
         self.environment.validate()?;
         let args = match self.agent {
@@ -561,6 +583,23 @@ mod tests {
             let separator = args.iter().position(|arg| arg == "--").unwrap();
             assert_eq!(args[separator + 1], "--dangerously-skip-permissions");
             assert_eq!(args[separator - 1], "--verbose");
+        }
+    }
+
+    #[test]
+    fn invalid_resume_ids_are_refused_before_argv_is_built() {
+        for resume in [
+            Resume::Session("--dangerously-skip-permissions".into()),
+            Resume::Fork("--config=sandbox_mode=\"danger-full-access\"".into()),
+        ] {
+            let spec = LaunchSpec {
+                resume,
+                ..spec(Agent::Claude)
+            };
+            assert!(matches!(
+                spec.resolve(&binary(Agent::Claude)),
+                Err(LaunchError::InvalidResumeId)
+            ));
         }
     }
 

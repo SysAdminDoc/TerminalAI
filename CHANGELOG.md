@@ -89,6 +89,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Resume IDs from hooks and transcripts are now validated before storage and again before argv
+  construction, so flag-like values cannot alter a revived Claude or Codex launch.
 - Environment leases now reject escaping compose files, canonicalize accepted paths inside the
   repository before teardown, and ignore repository attempts to enable destructive volume removal.
 - Work runs now mark exited or removed sessions as done and automatically admit

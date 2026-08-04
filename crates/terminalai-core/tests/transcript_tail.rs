@@ -103,6 +103,26 @@ fn the_native_session_id_last_message_and_cost_are_read() {
 }
 
 #[test]
+fn a_flag_like_transcript_session_id_is_ignored() {
+    let home = scratch("invalid-session-id");
+    let cwd = Path::new(r"C:\repos\shop");
+    let file = home
+        .0
+        .join(".claude")
+        .join("projects")
+        .join(claude_project_slug(cwd))
+        .join("s.jsonl");
+    append(
+        &file,
+        &[r#"{"type":"system","sessionId":"--dangerously-skip-permissions"}"#],
+    );
+
+    let mut tail = TranscriptTail::new(Agent::Claude);
+    let update = tail.poll(&home.0, cwd, SystemTime::UNIX_EPOCH);
+    assert_eq!(update.native_session_id, None);
+}
+
+#[test]
 fn a_second_poll_reads_only_what_was_appended() {
     let home = scratch("incremental");
     let cwd = Path::new(r"C:\repos\shop");

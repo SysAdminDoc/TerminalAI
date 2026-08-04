@@ -21,7 +21,7 @@ use crate::domain::{AgentDomain, AgentSession, DomainError, LocalPtyDomain};
 use crate::environment::{self, EnvironmentError, EnvironmentSpec};
 use crate::grid::{TerminalGrid, TerminalGridSnapshot};
 use crate::hooks::{HookEvent, HookNotification, HookSignal};
-use crate::launch::{LaunchError, LaunchSpec, ResolvedCommand, Resume};
+use crate::launch::{is_valid_resume_id, LaunchError, LaunchSpec, ResolvedCommand, Resume};
 use crate::notification::{NotificationCenter, NotificationChange, NotificationEvent};
 use crate::pty::PtySize;
 use crate::review::{collect_reviews, ReviewItem};
@@ -1191,7 +1191,16 @@ impl SessionRegistry {
         Some(branch)
     }
 
-    fn apply_hook_from(&self, event: HookEvent, source: StatusSource) -> bool {
+    fn apply_hook_from(&self, mut event: HookEvent, source: StatusSource) -> bool {
+        // The pipe transport accepts an already-normalized event and therefore
+        // bypasses `parse_hook`; enforce the same boundary for both transports.
+        if event
+            .session_id
+            .as_deref()
+            .is_some_and(|session_id| !is_valid_resume_id(session_id))
+        {
+            event.session_id = None;
+        }
         let id = {
             let state = lock_state(&self.inner);
             event
@@ -2140,7 +2149,10 @@ impl SessionRegistry {
                 // The agent's own id is what `--resume` takes. Never overwrite
                 // one the hooks already reported with something read later.
                 if entry.session.resume_id.is_none() {
-                    if let Some(native) = update.native_session_id {
+                    if let Some(native) = update
+                        .native_session_id
+                        .filter(|native| is_valid_resume_id(native))
+                    {
                         entry.session.resume_id = Some(native);
                         changed = true;
                     }
@@ -3536,6 +3548,19 @@ mod tests {
                 branch_checked: None,
                 span: tracing::Span::none(),
             },
+        );
+
+        assert!(registry.apply_hook(HookEvent {
+            agent: Agent::Claude,
+            session_id: Some("--dangerously-skip-permissions".into()),
+            cwd: Some(cwd.clone()),
+            signal: HookSignal::SessionStart,
+            progress: None,
+        }));
+        assert_eq!(
+            registry.snapshot()[0].resume_id,
+            None,
+            "a flag-like hook id must not become a resume id"
         );
 
         assert!(registry.apply_hook(HookEvent {

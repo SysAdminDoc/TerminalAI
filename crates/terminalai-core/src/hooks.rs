@@ -9,6 +9,7 @@
 use std::path::PathBuf;
 
 use crate::agent::Agent;
+use crate::launch::is_valid_resume_id;
 use crate::session::ToolProgress;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -319,7 +320,7 @@ pub fn parse_hook(agent: Agent, input: &str) -> Result<HookEvent, HookParseError
         agent,
         session_id: raw
             .session_id
-            .filter(|session_id| !session_id.trim().is_empty()),
+            .filter(|session_id| is_valid_resume_id(session_id)),
         cwd: raw.cwd.or_else(|| std::env::current_dir().ok()),
         signal,
         progress,
@@ -425,6 +426,16 @@ mod tests {
                 notification: HookNotification::PermissionPrompt
             }
         );
+    }
+
+    #[test]
+    fn a_flag_like_session_id_is_dropped_at_hook_ingest() {
+        let event = parse_hook(
+            Agent::Claude,
+            r#"{"session_id":"--dangerously-skip-permissions","hook_event_name":"SessionStart"}"#,
+        )
+        .expect("hook");
+        assert_eq!(event.session_id, None);
     }
 
     #[test]
