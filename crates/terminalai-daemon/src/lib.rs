@@ -611,7 +611,10 @@ impl DaemonServer {
                 let log_hub = self.log_hub.clone();
                 let shutdown = shutdown.clone();
                 let hook_endpoint = hook_endpoint.clone();
-                thread::Builder::new()
+                // A transient spawn failure used to end serve() outright,
+                // abandoning every live agent with no UI. One refused
+                // client is not a reason to drop the fleet.
+                if let Err(error) = thread::Builder::new()
                     .name("terminalai-daemon-client".into())
                     .spawn(move || {
                         if let Err(error) =
@@ -627,15 +630,11 @@ impl DaemonServer {
                             eprintln!("terminalai-daemon client: {error}");
                         }
                     })
-                    // A transient spawn failure used to end serve() outright,
-                    // abandoning every live agent with no UI. One refused
-                    // client is not a reason to drop the fleet.
-                    .unwrap_or_else(|error| {
-                        eprintln!(
-                            "terminalai-daemon: could not start a client thread,                                  dropping this connection: {error}"
-                        );
-                        thread::spawn(|| {})
-                    });
+                {
+                    eprintln!(
+                        "terminalai-daemon: could not start a client thread, dropping this connection: {error}"
+                    );
+                }
             }
             Ok::<(), IpcError>(())
         })();

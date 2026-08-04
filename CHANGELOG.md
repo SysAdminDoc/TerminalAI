@@ -89,6 +89,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- A transient client-thread allocation failure now drops only that connection
+  instead of invoking a second panic-on-spawn fallback that could kill the daemon.
+
 - Daemon shutdown now stops and joins the store bridge, persists one final
   post-teardown snapshot synchronously, and waits for teardown during Windows
   console close, logoff and shutdown events.
