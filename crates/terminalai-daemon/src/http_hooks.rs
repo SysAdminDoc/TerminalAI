@@ -9,10 +9,12 @@
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use terminalai_core::agent::Agent;
@@ -21,7 +23,10 @@ use terminalai_core::{parse_hook, HookSignal, SessionRegistry};
 const MAX_HEADER_BYTES: usize = 64 * 1024;
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 const READ_TIMEOUT: Duration = Duration::from_secs(2);
+const REQUEST_DEADLINE: Duration = Duration::from_secs(5);
 const ACCEPT_POLL: Duration = Duration::from_millis(25);
+const HOOK_WORKER_COUNT: usize = 4;
+const CONNECTION_QUEUE_CAPACITY: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HookEndpoint {
@@ -104,11 +109,31 @@ fn serve(
     address: SocketAddr,
     shutdown: Arc<AtomicBool>,
 ) {
+    let (connections, receiver) = sync_channel(CONNECTION_QUEUE_CAPACITY);
+    let receiver = Arc::new(Mutex::new(receiver));
+    let mut workers = Vec::with_capacity(HOOK_WORKER_COUNT);
+    for index in 0..HOOK_WORKER_COUNT {
+        let receiver = Arc::clone(&receiver);
+        let registry = registry.clone();
+        let token = token.clone();
+        let shutdown = shutdown.clone();
+        match thread::Builder::new()
+            .name(format!("terminalai-http-hook-{index}"))
+            .spawn(move || worker_loop(receiver, registry, token, address, shutdown))
+        {
+            Ok(worker) => workers.push(worker),
+            Err(error) => tracing::warn!(%error, index, "could not start HTTP hook worker"),
+        }
+    }
+
     while !shutdown.load(Ordering::Acquire) {
         match listener.accept() {
             Ok((stream, peer)) => {
-                if let Err(error) = handle_connection(stream, &registry, &token, address) {
-                    tracing::debug!(%peer, error = %error, "HTTP hook request rejected");
+                if connections
+                    .try_send(AcceptedConnection { stream, peer })
+                    .is_err()
+                {
+                    tracing::debug!(%peer, "HTTP hook connection dropped because the worker queue is full");
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -120,6 +145,47 @@ fn serve(
             }
         }
     }
+
+    drop(connections);
+    for worker in workers {
+        let _ = worker.join();
+    }
+}
+
+fn worker_loop(
+    receiver: Arc<Mutex<Receiver<AcceptedConnection>>>,
+    registry: SessionRegistry,
+    token: String,
+    address: SocketAddr,
+    shutdown: Arc<AtomicBool>,
+) {
+    while !shutdown.load(Ordering::Acquire) {
+        let connection = match receiver
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .recv_timeout(ACCEPT_POLL)
+        {
+            Ok(connection) => connection,
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
+        if shutdown.load(Ordering::Acquire) {
+            break;
+        }
+        let peer = connection.peer;
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            handle_connection(connection.stream, &registry, &token, address)
+        }));
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::debug!(%peer, error = %error, "HTTP hook request rejected");
+            }
+            Err(_) => {
+                tracing::error!(%peer, "HTTP hook worker recovered from a panic");
+            }
+        }
+    }
 }
 
 fn handle_connection(
@@ -128,9 +194,9 @@ fn handle_connection(
     token: &str,
     address: SocketAddr,
 ) -> io::Result<()> {
-    stream.set_read_timeout(Some(READ_TIMEOUT))?;
     stream.set_write_timeout(Some(READ_TIMEOUT))?;
-    let request = match read_request(&mut stream)? {
+    let deadline = Instant::now() + REQUEST_DEADLINE;
+    let request = match read_request(&mut stream, deadline)? {
         Ok(request) => request,
         Err(rejection) => {
             write_response(&mut stream, rejection.status, &rejection.message)?;
@@ -179,6 +245,9 @@ fn handle_connection(
             "unknown HTTP hook event observed"
         );
     }
+    if Instant::now() >= deadline {
+        return write_response(&mut stream, 408, "hook request deadline exceeded");
+    }
     let _matched = registry.apply_hook(event);
     write_response(&mut stream, 202, "accepted")
 }
@@ -195,9 +264,25 @@ struct Rejection {
     message: String,
 }
 
-fn read_request(stream: &mut TcpStream) -> io::Result<Result<HttpRequest, Rejection>> {
+struct AcceptedConnection {
+    stream: TcpStream,
+    peer: SocketAddr,
+}
+
+fn read_request(
+    stream: &mut TcpStream,
+    deadline: Instant,
+) -> io::Result<Result<HttpRequest, Rejection>> {
     let mut bytes = Vec::with_capacity(4096);
     let header_end = loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "HTTP hook request deadline exceeded",
+            ));
+        }
+        stream.set_read_timeout(Some(remaining.min(READ_TIMEOUT)))?;
         if bytes.len() > MAX_HEADER_BYTES {
             return Ok(Err(Rejection {
                 status: 431,
@@ -284,6 +369,14 @@ fn read_request(stream: &mut TcpStream) -> io::Result<Result<HttpRequest, Reject
     let mut body = bytes[header_end..].to_vec();
     body.resize(content_length, 0);
     if body.len() > available {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "HTTP hook request deadline exceeded",
+            ));
+        }
+        stream.set_read_timeout(Some(remaining.min(READ_TIMEOUT)))?;
         stream.read_exact(&mut body[available..])?;
     }
     Ok(Ok(HttpRequest {
@@ -319,6 +412,7 @@ fn reason_phrase(status: u16) -> &'static str {
         405 => "Method Not Allowed",
         411 => "Length Required",
         413 => "Content Too Large",
+        408 => "Request Timeout",
         431 => "Request Header Fields Too Large",
         _ => "Bad Request",
     }
@@ -343,6 +437,7 @@ fn fresh_token() -> io::Result<String> {
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+    use std::time::Instant;
 
     fn request(_endpoint: &HookEndpoint, host: &str, authorization: &str, extra: &str) -> String {
         let body = r#"{"hook_event_name":"SessionStart","session_id":"missing"}"#;
@@ -353,13 +448,22 @@ mod tests {
     }
 
     fn response(address: SocketAddr, request: String) -> String {
+        response_with_timeout(address, request, Duration::from_secs(2)).expect("HTTP response")
+    }
+
+    fn response_with_timeout(
+        address: SocketAddr,
+        request: String,
+        timeout: Duration,
+    ) -> io::Result<String> {
         let mut stream = TcpStream::connect(address).expect("connect HTTP hook listener");
+        stream.set_read_timeout(Some(timeout))?;
         stream
             .write_all(request.as_bytes())
-            .expect("write HTTP request");
+            .map_err(|error| io::Error::other(format!("write HTTP request: {error}")))?;
         let mut response = String::new();
-        stream.read_to_string(&mut response).expect("read response");
-        response
+        stream.read_to_string(&mut response)?;
+        Ok(response)
     }
 
     #[test]
@@ -422,5 +526,28 @@ mod tests {
             wrong_token.starts_with("HTTP/1.1 401 Unauthorized"),
             "{wrong_token}"
         );
+    }
+
+    #[test]
+    fn a_stalled_connection_does_not_block_a_second_hook() {
+        let ingress = HookIngress::bind(SessionRegistry::new()).expect("listener");
+        let endpoint = ingress.endpoint();
+        let stalled = TcpStream::connect(ingress.address()).expect("connect stalled client");
+        thread::sleep(Duration::from_millis(50));
+
+        let authorization = format!("Bearer {}", endpoint.bearer_token);
+        let started = Instant::now();
+        let accepted = response_with_timeout(
+            ingress.address(),
+            request(&endpoint, &endpoint.host, &authorization, ""),
+            Duration::from_secs(1),
+        )
+        .expect("second hook response");
+        assert!(accepted.starts_with("HTTP/1.1 202 Accepted"), "{accepted}");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "second hook waited behind the stalled connection: {accepted}"
+        );
+        drop(stalled);
     }
 }

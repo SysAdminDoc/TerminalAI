@@ -89,6 +89,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- The loopback HTTP hook listener now uses four bounded workers and a bounded connection queue,
+  catches worker panics, and enforces a five-second request deadline alongside per-read timeouts.
+  A stalled-client regression proves a second authenticated hook still receives a 202 response.
 - Scrollback gaps are now tracked per session, disk append failures are retained as pending gaps,
   and rate-limited warnings explain when the durable log falls behind. Markers are emitted into the
   session that lost the bytes, with regressions covering cross-session attribution and recovery.
