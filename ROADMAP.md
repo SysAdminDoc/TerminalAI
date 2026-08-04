@@ -33,13 +33,6 @@ item above; where the two touch, the note says so.
 
 ### P2
 
-- [ ] P2 — Close the spawn-to-job race so a grandchild cannot escape containment
-  Why: the job is assigned after the process exists, so anything the child spawns in that window is outside the kill-on-close guarantee the whole teardown story rests on.
-  Evidence: `ProcessJob::assign()` (`crates/terminalai-core/src/process_tree.rs:32-57`) takes an already-created `RawHandle`; `portable-pty` performs the `CreateProcess`. The documented fix is `PROC_THREAD_ATTRIBUTE_JOB_LIST` via `UpdateProcThreadAttribute` at creation — learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute
-  Touches: `crates/terminalai-core/src/process_tree.rs`, `crates/terminalai-core/src/pty.rs`, possibly a `[patch.crates-io]` fork of `portable-pty`
-  Acceptance: the agent process is created already inside its job, or — if reaching into `portable-pty`'s spawn proves impractical — the residual window is measured, documented, and the decision recorded rather than left implicit. Nested jobs give the fleet-wide second tier if adopted.
-  Complexity: M
-
 - [ ] P2 — Un-minify `styles.css` and finish the frontend module extraction
   Why: the P1 "a literal `\n` inside styles.css kills the Review view's only layout" was fixed on 2026-08-04, but its cause was not — a 2,204-character line is a file where that class of defect is undetectable by review, so it will recur.
   Evidence: `web/src/styles.css` still has 29 lines over 300 characters, longest 2,204 after that fix (measured with `awk '{print length}' | sort -rn`). `web/src/main.js` is 2,800 lines / 119 KB with a longest line of 1,348, beside five already-extracted modules (`broadcast.js`, `fleetRows.js`, `projects.js`, `rateLimit.js`, `rollup.js`) that establish the pattern.

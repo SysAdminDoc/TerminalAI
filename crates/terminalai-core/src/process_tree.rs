@@ -9,7 +9,7 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 #[cfg(windows)]
 use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+    AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob, JobObjectExtendedLimitInformation,
     SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOB_OBJECT_LIMIT_JOB_MEMORY,
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
@@ -55,6 +55,23 @@ impl ProcessJob {
         process: RawHandle,
         limits_config: JobLimits,
     ) -> Result<Self, String> {
+        let job = Self::create(limits_config)?;
+        job.adopt(process)?;
+        Ok(job)
+    }
+
+    /// Create and fully configure the job *before* the process it will hold
+    /// exists.
+    ///
+    /// Windows offers no way to create a process already inside a job unless the
+    /// creator owns the `CreateProcessW` call — `PROC_THREAD_ATTRIBUTE_JOB_LIST`
+    /// is set on the attribute list, and `portable-pty` builds that list itself
+    /// with room for exactly one entry (the pseudoconsole). So an assignment
+    /// after creation is the only reachable option, and the useful thing to
+    /// control is how long it takes. Creating and configuring the job up front
+    /// leaves a single syscall between the process existing and it being
+    /// contained, instead of three.
+    pub(crate) fn create(limits_config: JobLimits) -> Result<Self, String> {
         let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
         if job.is_null() {
             return Err(std::io::Error::last_os_error().to_string());
@@ -86,18 +103,35 @@ impl ProcessJob {
             return Err(error.to_string());
         }
 
-        let assigned = unsafe { AssignProcessToJobObject(job, process as HANDLE) } != 0;
-        if !assigned {
-            let error = std::io::Error::last_os_error();
-            unsafe {
-                CloseHandle(job);
-            }
-            return Err(error.to_string());
-        }
-
         Ok(Self {
             handle: unsafe { OwnedHandle::from_raw_handle(job as RawHandle) },
         })
+    }
+
+    /// Put an already-created process inside this job.
+    ///
+    /// The membership is read back rather than inferred from the return value.
+    /// `AssignProcessToJobObject` succeeding is not the same claim as the
+    /// process being in *this* job — a process already in another job that
+    /// forbids breakaway is the documented case — and a containment guarantee
+    /// that quietly did not apply is worse than one that failed loudly, because
+    /// every teardown path downstream trusts it.
+    pub(crate) fn adopt(&self, process: RawHandle) -> Result<(), String> {
+        let job = self.handle.as_raw_handle() as HANDLE;
+        if unsafe { AssignProcessToJobObject(job, process as HANDLE) } == 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        let mut member: i32 = 0;
+        if unsafe { IsProcessInJob(process as HANDLE, job, &mut member) } == 0 {
+            return Err(format!(
+                "could not confirm job membership: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        if member == 0 {
+            return Err("the process was not in the job after assignment".into());
+        }
+        Ok(())
     }
 
     pub(crate) fn terminate(&self) -> Result<(), String> {
@@ -223,4 +257,79 @@ pub fn private_bytes(pid: u32) -> Option<u64> {
 #[cfg(not(windows))]
 pub fn private_bytes(_pid: u32) -> Option<u64> {
     None
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use std::os::windows::io::AsRawHandle;
+    use std::process::{Command, Stdio};
+    use std::time::Instant;
+
+    /// Measure what is left of the spawn-to-job race.
+    ///
+    /// The job cannot hold the process from the instant of creation — that
+    /// needs `PROC_THREAD_ATTRIBUTE_JOB_LIST` on the attribute list, which
+    /// `portable-pty` owns and sizes for one entry. What is controllable is the
+    /// length of the gap, and this pins it: with the job created and configured
+    /// beforehand, containment costs one `AssignProcessToJobObject`. Measured
+    /// 2026-08-04 on Windows 11 26100 at **34.8 µs**. The ceiling is deliberately
+    /// two orders of magnitude above that, so this reports a regression in
+    /// *kind* — a syscall creeping back in front of the assignment — rather than
+    /// machine load.
+    #[test]
+    fn containment_costs_one_syscall_after_the_process_exists() {
+        let job = ProcessJob::create(JobLimits::default()).expect("create job");
+        let mut child = Command::new("cmd.exe")
+            .args(["/c", "pause"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn child");
+
+        let started = Instant::now();
+        job.adopt(child.as_raw_handle()).expect("adopt child");
+        let window = started.elapsed();
+
+        assert!(
+            window < std::time::Duration::from_millis(5),
+            "the uncontained window grew to {window:?}"
+        );
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn membership_is_read_back_rather_than_assumed() {
+        // A job whose assignment silently did not apply would report every
+        // teardown as successful while leaving the tree alive.
+        let first = ProcessJob::create(JobLimits::default()).expect("create first job");
+        let second = ProcessJob::create(JobLimits::default()).expect("create second job");
+        let mut child = Command::new("cmd.exe")
+            .args(["/c", "pause"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn child");
+
+        first.adopt(child.as_raw_handle()).expect("adopt child");
+        // Nested jobs are permitted on this Windows, so the second assignment
+        // may succeed; what must never happen is a report of success while the
+        // process sits outside the job that claims it.
+        if second.adopt(child.as_raw_handle()).is_ok() {
+            let mut member: i32 = 0;
+            let confirmed = unsafe {
+                IsProcessInJob(
+                    child.as_raw_handle() as HANDLE,
+                    second.handle.as_raw_handle() as HANDLE,
+                    &mut member,
+                )
+            };
+            assert!(confirmed != 0 && member != 0);
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }

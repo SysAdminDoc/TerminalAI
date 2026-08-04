@@ -197,6 +197,16 @@ impl PtySession {
         }
         builder.cwd(&cmd.cwd);
 
+        // The job is created and configured before the process exists, so the
+        // only thing standing between `CreateProcessW` returning and the agent
+        // being contained is a single `AssignProcessToJobObject`. Anything the
+        // agent spawns in that window would escape the kill-on-close guarantee;
+        // the window cannot be closed entirely without owning the
+        // `CreateProcessW` call, which `portable-pty` does, so the reachable
+        // goal is to make it as short as one syscall.
+        #[cfg(windows)]
+        let pending_job = ProcessJob::create(limits).map_err(PtyError::Job)?;
+
         let child = pair
             .slave
             .spawn_command(builder)
@@ -215,14 +225,18 @@ impl PtySession {
 
         #[cfg(windows)]
         let job = {
-            let process = child.as_raw_handle().ok_or_else(|| {
-                PtyError::Job("portable-pty did not expose a process handle".into())
-            });
-            match process.and_then(|process| {
-                ProcessJob::assign_with_limits(process, limits).map_err(PtyError::Job)
-            }) {
-                Ok(job) => job,
+            let adopted = child
+                .as_raw_handle()
+                .ok_or_else(|| {
+                    PtyError::Job("portable-pty did not expose a process handle".into())
+                })
+                .and_then(|process| pending_job.adopt(process).map_err(PtyError::Job));
+            match adopted {
+                Ok(()) => pending_job,
                 Err(error) => {
+                    // The child is outside any job, so killing it directly is
+                    // the only teardown available — and it must happen, or the
+                    // failed spawn leaves an uncontained agent running.
                     let mut child = child;
                     let _ = child.kill();
                     return Err(error);

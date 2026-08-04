@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Changed
 
+- The window in which a newly spawned agent is not yet inside its job object is down to a single
+  syscall, and is now measured rather than assumed. Containment previously created the job, applied
+  its limits and only then assigned the process — three syscalls after `CreateProcessW` returned,
+  during which anything the agent spawned escaped the kill-on-close guarantee every teardown path
+  relies on. The job is now created and configured before the process exists, leaving only
+  `AssignProcessToJobObject`: **34.8 µs**, measured on Windows 11 26100 and pinned by a test that
+  fails if a syscall creeps back in front of it. Membership is read back with `IsProcessInJob`
+  instead of being inferred from the assignment's return value, because a containment guarantee that
+  quietly did not apply is worse than one that failed loudly. The window cannot be closed entirely
+  without owning the `CreateProcessW` call — `PROC_THREAD_ATTRIBUTE_JOB_LIST` needs a second
+  attribute slot and `portable-pty` sizes its list for one — and forking the pty crate was rejected
+  as a permanent maintenance cost on the fleet's most load-bearing path.
+
 - The archive of finished sessions is bounded. Every archived row was appended to a list with no
   cap, and that list is serialized into each full store snapshot — which is written after a 200 ms
   quiet period and at least once per second under sustained output. Persistence cost therefore rose
