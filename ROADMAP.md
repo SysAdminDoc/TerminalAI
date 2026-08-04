@@ -9,12 +9,6 @@ Single task tracker for this repo. Newest phase at the top; completed items are 
       labels for status/dwell/attention states, tooltips on every control, and a short in-app
       explainer of the row → focused-terminal model. Acceptance: someone unfamiliar with the tool
       can launch a session, read its state, and answer an attention request unaided
-- [ ] Per-session prompt queue — queue one or more prompts against a session while it is busy;
-      when the current run completes, the next queued prompt is sent automatically. Queue is
-      visible and reorderable per row, a queued prompt can be edited or withdrawn before it fires,
-      and completion detection uses the same hook/status signal as the fleet's Idle state — never a
-      timer. If the run ends in an attention state (approval or question), the queue pauses rather
-      than answering blind
 - [ ] Automated roadmap work queue — stored prompt library plus a queue that runs a chosen prompt
       against all (or selected) projects whose roadmaps still have open items, one session per
       project, honoring the fleet's admission/memory budget. First two stored prompts: "research

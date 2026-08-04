@@ -49,6 +49,11 @@ pub struct StoredSession {
     /// still accepted for a one-time compatibility read.
     #[serde(default, skip_serializing)]
     pub scrollback: Vec<u8>,
+    /// Prompts still waiting their turn. Persisted because a daemon restart
+    /// that restores a session should restore what it was queued to do next —
+    /// retyping them is the one thing the queue exists to avoid.
+    #[serde(default)]
+    pub queue: crate::queue::PromptQueue,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -261,6 +266,7 @@ mod tests {
                     cwd,
                 },
                 scrollback: b"hello\x1b[2J".to_vec(),
+                queue: Default::default(),
             }],
             archives: Vec::new(),
             extra: BTreeMap::from([("future_field".into(), serde_json::json!({"retained": true}))]),

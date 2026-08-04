@@ -139,6 +139,8 @@ const state = {
   templates: [],
   projects: [],
   scannedProjects: [],
+  queueSession: null,
+  queuePrompts: [],
   announcementQueue: new Map(),
   announcementTimer: null,
   orderFreeze: null,
@@ -1063,6 +1065,15 @@ function updateFleetRow(row, session, position = 1, setSize = 1, rovingId = stat
   const archive = row.querySelector('[data-action="archive"]');
   archive.hidden = session.status !== "exited";
   archive.setAttribute("aria-label", t("action-archive", { name: session.name }));
+  const queueButton = row.querySelector('[data-action="queue"]');
+  queueButton.textContent = queueGlyph(session);
+  queueButton.classList.toggle("row-action-active", session.queued_prompts > 0);
+  // A paused queue is the one state worth colouring: it means the queue has
+  // stopped and is waiting for the operator, which is invisible from a count.
+  queueButton.classList.toggle("row-action-warn", Boolean(session.queue_paused));
+  const queueLabel = queueTitle(session);
+  queueButton.title = queueLabel;
+  queueButton.setAttribute("aria-label", queueLabel);
   const stop = row.querySelector('[data-action="kill"]');
   stop.hidden = session.status === "exited";
   const stopLabel = session.status === "queued" ? t("action-cancel-queued") : t("action-stop", { name: session.name });
@@ -1138,7 +1149,7 @@ function renderRow(session) {
     <div class="row-identity"><span class="status-glyph tone-${escapeHtml(meta.tone)}" title="${escapeHtml(label)}" aria-hidden="true">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name"><span class="row-name-text">${escapeHtml(session.name)}</span>${session.unread ? `<span class="unread-dot" title="${escapeHtml(t("action-unread-attention"))}"></span>` : ""}</div><div class="row-folder"><span class="row-repo" title="${escapeHtml(t("action-repository"))}">${escapeHtml(repo)}</span><span class="row-branch" title="${escapeHtml(t("action-branch"))}">${escapeHtml(branch)}</span><span class="row-status-label">${escapeHtml(label)}</span>${groupChip(session)}<span class="row-ports" title="${escapeHtml(t("action-allocated-ports"))}">${escapeHtml(t("action-allocated-ports"))} ${escapeHtml(portsLabel)}</span></div></div></div>
     <div class="row-metrics"><span class="agent-badge agent-${escapeHtml(session.agent)}" title="${session.agent === "codex" ? "Codex" : "Claude Code"}" aria-label="${session.agent === "codex" ? "Codex" : "Claude Code"}">${agentLabel}</span><span class="row-progress" title="${escapeHtml(t("action-tool-progress"))}"><small>PROG</small><b>${escapeHtml(progress)}</b></span><span class="row-restarts" title="${escapeHtml(t("action-restart-count"))}">↻ ${restartCount}</span></div>
     <div class="row-dwell"><span>${dwell(session.status_since)}</span><small class="row-last-line" title="${escapeHtml(lastLine)}">${escapeHtml(lastLine)}</small></div>
-    <div class="row-actions"><button type="button" data-action="pin" class="row-action ${session.pinned ? "row-action-active" : ""}" title="${escapeHtml(pinLabel)}" aria-label="${escapeHtml(pinLabel)} ${escapeHtml(session.name)}">${session.pinned ? "◆" : "◇"}</button><button type="button" data-action="focus" class="row-action" title="${escapeHtml(t("action-focus-terminal"))}" aria-label="${escapeHtml(t("action-focus-session", { name: session.name }))}">↗</button><button type="button" data-action="revive" class="row-action" title="${escapeHtml(t("action-revive", { name: session.name }))}" aria-label="${escapeHtml(t("action-revive", { name: session.name }))}"${reviveHidden}>↻</button><button type="button" data-action="archive" class="row-action" title="${escapeHtml(t("action-archive-stopped"))}" aria-label="${escapeHtml(t("action-archive", { name: session.name }))}"${archiveHidden}>▣</button><button type="button" data-action="kill" class="row-action row-action-danger" title="${escapeHtml(stopLabel)}" aria-label="${escapeHtml(stopLabel)}"${stopHidden}>×</button></div>
+    <div class="row-actions"><button type="button" data-action="pin" class="row-action ${session.pinned ? "row-action-active" : ""}" title="${escapeHtml(pinLabel)}" aria-label="${escapeHtml(pinLabel)} ${escapeHtml(session.name)}">${session.pinned ? "◆" : "◇"}</button><button type="button" data-action="focus" class="row-action" title="${escapeHtml(t("action-focus-terminal"))}" aria-label="${escapeHtml(t("action-focus-session", { name: session.name }))}">↗</button><button type="button" data-action="revive" class="row-action" title="${escapeHtml(t("action-revive", { name: session.name }))}" aria-label="${escapeHtml(t("action-revive", { name: session.name }))}"${reviveHidden}>↻</button><button type="button" data-action="archive" class="row-action" title="${escapeHtml(t("action-archive-stopped"))}" aria-label="${escapeHtml(t("action-archive", { name: session.name }))}"${archiveHidden}>▣</button><button type="button" data-action="queue" class="row-action row-action-queue" title="${escapeHtml(t("action-queue", { name: session.name }))}" aria-label="${escapeHtml(t("action-queue", { name: session.name }))}">${escapeHtml(queueGlyph(session))}</button><button type="button" data-action="kill" class="row-action row-action-danger" title="${escapeHtml(stopLabel)}" aria-label="${escapeHtml(stopLabel)}"${stopHidden}>×</button></div>
     <div class="row-wide-meta"${wideHidden}><span><small>MODEL</small><b data-row-model>${escapeHtml(model)}</b></span><span><small>EFFORT</small><b data-row-effort>${escapeHtml(effort)}</b></span><span><small>COST</small><b data-row-cost>${escapeHtml(cost(session.cost_usd))}</b></span></div>
     <div class="row-reply"${replyHidden}><input data-reply type="text" maxlength="500" placeholder="${escapeHtml(t("action-reply", { name: session.name }))}" aria-label="${escapeHtml(t("action-reply", { name: session.name }))}" /><button type="button" data-action="reply" class="row-reply-send" title="${escapeHtml(t("button-send-reply"))}" aria-label="${escapeHtml(t("action-send-reply", { name: session.name }))}">↵</button></div>
   </article>`;
@@ -1617,6 +1628,120 @@ async function openProjects() {
   renderProjects();
 }
 
+/** The queue button's glyph: the count when there is one, an outline when not. */
+function queueGlyph(session) {
+  const count = session.queued_prompts ?? 0;
+  if (!count) return "≡";
+  return count > 9 ? "9+" : String(count);
+}
+
+function queueTitle(session) {
+  const count = session.queued_prompts ?? 0;
+  if (session.queue_paused) {
+    return t("queue-paused-title", { name: session.name, reason: t(`queue-pause-${session.queue_paused}`) });
+  }
+  return count
+    ? t("queue-count-title", { name: session.name, count })
+    : t("action-queue", { name: session.name });
+}
+
+/**
+ * The prompts waiting on one session.
+ *
+ * Fetched when the dialog opens rather than carried on every row: a session is
+ * re-rendered on each status change, and the prompts can be a quarter of a
+ * megabyte each.
+ */
+async function openQueue(id) {
+  state.queueSession = id;
+  const dialog = $("queue-dialog");
+  if (!dialog.open) dialog.showModal();
+  await refreshQueue();
+  $("queue-input").focus();
+}
+
+async function refreshQueue() {
+  const id = state.queueSession;
+  if (!id) return;
+  try {
+    state.queuePrompts = await invoke("queued_prompts", { id });
+  } catch (error) {
+    state.queuePrompts = [];
+    showToast(String(error));
+  }
+  renderQueue();
+}
+
+function renderQueue() {
+  const id = state.queueSession;
+  const session = state.sessions.find((item) => item.id === id);
+  $("queue-title").textContent = session ? t("queue-title", { name: session.name }) : t("queue-title-generic");
+  const paused = session?.queue_paused ?? null;
+  // Always stated, and always with the reason. "Paused" alone leaves the
+  // operator guessing whether the agent is waiting on them or the queue is.
+  $("queue-status").textContent = paused
+    ? t("queue-paused-detail", { reason: t(`queue-pause-${paused}`) })
+    : t("queue-running");
+  $("queue-resume-button").hidden = !paused;
+  $("queue-pause-button").hidden = Boolean(paused);
+
+  if (!state.queuePrompts.length) {
+    $("queue-list").innerHTML = `<p class="rollup-total">${escapeHtml(t("queue-empty"))}</p>`;
+    return;
+  }
+  $("queue-list").innerHTML = state.queuePrompts
+    .map((prompt, index) => {
+      const position = t("queue-position", { position: index + 1 });
+      return `<li class="queue-row" data-prompt="${escapeHtml(String(prompt.id))}"><span class="queue-position">${escapeHtml(position)}</span><textarea class="queue-text" rows="2" aria-label="${escapeHtml(position)}">${escapeHtml(prompt.text)}</textarea><span class="queue-row-actions"><button type="button" class="row-action" data-queue-action="up" title="${escapeHtml(t("queue-move-up"))}" aria-label="${escapeHtml(t("queue-move-up"))}">↑</button><button type="button" class="row-action" data-queue-action="down" title="${escapeHtml(t("queue-move-down"))}" aria-label="${escapeHtml(t("queue-move-down"))}">↓</button><button type="button" class="row-action" data-queue-action="save" title="${escapeHtml(t("queue-save"))}" aria-label="${escapeHtml(t("queue-save"))}">✓</button><button type="button" class="row-action row-action-danger" data-queue-action="remove" title="${escapeHtml(t("queue-withdraw"))}" aria-label="${escapeHtml(t("queue-withdraw"))}">×</button></span></li>`;
+    })
+    .join("");
+  for (const button of $("queue-list").querySelectorAll("[data-queue-action]")) {
+    button.addEventListener("click", () => void queueRowAction(button));
+  }
+}
+
+async function queueRowAction(button) {
+  const id = state.queueSession;
+  const row = button.closest("[data-prompt]");
+  const prompt = Number(row.dataset.prompt);
+  const index = state.queuePrompts.findIndex((item) => item.id === prompt);
+  const action = button.dataset.queueAction;
+  try {
+    if (action === "remove") await invoke("remove_queued_prompt", { id, prompt });
+    if (action === "save") {
+      await invoke("edit_queued_prompt", { id, prompt, text: row.querySelector(".queue-text").value });
+      showToast(t("queue-saved"), "success");
+    }
+    if (action === "up" && index > 0) {
+      await invoke("reorder_queued_prompt", { id, prompt, to: index - 1 });
+    }
+    if (action === "down" && index < state.queuePrompts.length - 1) {
+      await invoke("reorder_queued_prompt", { id, prompt, to: index + 1 });
+    }
+  } catch (error) {
+    // Usually a race: the prompt fired while the operator was deciding. The
+    // backend names that case, so it is shown rather than swallowed.
+    showToast(String(error));
+  }
+  await refreshQueue();
+}
+
+async function addQueuedPrompt() {
+  const id = state.queueSession;
+  const text = $("queue-input").value.trim();
+  if (!text) {
+    showToast(t("queue-empty-prompt"));
+    return;
+  }
+  try {
+    await invoke("enqueue_prompt", { id, text });
+    $("queue-input").value = "";
+  } catch (error) {
+    showToast(String(error));
+  }
+  await refreshQueue();
+}
+
 function createOutputChannel(id) {
   const generation = state.focusGeneration;
   const channel = new Channel();
@@ -1683,6 +1808,7 @@ async function attachSessionOutput(id) {
 
 async function rowAction(action, id, row = null) {
   try {
+    if (action === "queue") await openQueue(id);
     if (action === "pin") await invoke("toggle_pin", { id });
     if (action === "focus") await focusSession(id);
     if (action === "reply") {
@@ -2401,6 +2527,24 @@ function bindEvents() {
   $("cancel-launch-button").addEventListener("click", () => $("launcher-dialog").close());
   $("close-launcher-button").addEventListener("click", () => $("launcher-dialog").close());
   $("close-rollup-button").addEventListener("click", () => $("rollup-dialog").close());
+  $("close-queue-button").addEventListener("click", () => $("queue-dialog").close());
+  $("queue-add-button").addEventListener("click", () => void addQueuedPrompt());
+  $("queue-pause-button").addEventListener("click", async () => {
+    try {
+      await invoke("pause_queue", { id: state.queueSession });
+    } catch (error) {
+      showToast(String(error));
+    }
+    await refreshQueue();
+  });
+  $("queue-resume-button").addEventListener("click", async () => {
+    try {
+      await invoke("resume_queue", { id: state.queueSession });
+    } catch (error) {
+      showToast(String(error));
+    }
+    await refreshQueue();
+  });
   $("projects-toggle").addEventListener("click", () => void openProjects());
   $("close-projects-button").addEventListener("click", () => $("projects-dialog").close());
   $("projects-open-only").addEventListener("change", () => renderProjects());

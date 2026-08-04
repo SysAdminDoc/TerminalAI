@@ -185,6 +185,8 @@ pub enum RegistryError {
     NotRunning(SessionId),
     #[error("cannot record a review for {0}: its working tree could not be read")]
     ReviewStateUnavailable(SessionId),
+    #[error("{0}")]
+    Queue(#[from] crate::queue::QueueError),
 }
 
 struct Entry {
@@ -194,6 +196,8 @@ struct Entry {
     pty: Option<Arc<dyn AgentSession>>,
     scrollback: RingBuffer,
     grid: TerminalGrid,
+    /// Prompts waiting their turn on this session.
+    queue: crate::queue::PromptQueue,
     generation: u64,
     stop_requested: bool,
     teardown_done: bool,
@@ -440,6 +444,7 @@ impl SessionRegistry {
                 spec,
                 command,
                 scrollback: bytes,
+                mut queue,
             } = stored;
             let id = session.id.clone();
             if session.ports.is_empty() && spec.environment.port_count > 0 {
@@ -450,6 +455,11 @@ impl SessionRegistry {
             }
             let exit_code = session.last_exit_code;
             session.mark_resurrectable_at_from(exit_code, SystemTime::now(), StatusSource::Restore);
+            // A restored session is not running, so its queue must not start
+            // firing at whatever status the restore left behind.
+            queue.pause(crate::queue::PauseReason::NotRunning);
+            session.queued_prompts = queue.len();
+            session.queue_paused = queue.paused();
             let mut scrollback = RingBuffer::default();
             scrollback.push(&bytes);
             let mut grid = TerminalGrid::default();
@@ -465,6 +475,7 @@ impl SessionRegistry {
                     pty: None,
                     scrollback,
                     grid,
+                    queue,
                     generation: 1,
                     stop_requested: false,
                     branch_checked: None,
@@ -544,6 +555,7 @@ impl SessionRegistry {
                     session: entry.session.clone(),
                     spec: entry.spec.clone(),
                     command: entry.command.clone(),
+                    queue: entry.queue.clone(),
                     scrollback: if store_scrollback {
                         entry.scrollback.to_vec()
                     } else {
@@ -646,6 +658,7 @@ impl SessionRegistry {
                     pty: None,
                     scrollback: RingBuffer::default(),
                     grid: TerminalGrid::default(),
+                    queue: crate::queue::PromptQueue::default(),
                     generation: 1,
                     stop_requested: false,
                     branch_checked,
@@ -670,6 +683,147 @@ impl SessionRegistry {
     pub fn write(&self, id: &SessionId, bytes: &[u8]) -> Result<(), RegistryError> {
         let pty = self.pty(id)?;
         pty.write(bytes).map_err(RegistryError::from)
+    }
+
+    /// Add a prompt to a session's queue.
+    ///
+    /// Fires immediately when the session is already idle, which is what makes
+    /// the queue usable as "and then do this" rather than only as a backlog.
+    pub fn enqueue_prompt(&self, id: &SessionId, text: &str) -> Result<u64, RegistryError> {
+        let queued = self.with_queue(id, |queue| queue.push(text))?;
+        self.emit_session(id);
+        self.pump_queue(id);
+        Ok(queued)
+    }
+
+    /// Replace a queued prompt that has not fired yet.
+    pub fn edit_queued_prompt(
+        &self,
+        id: &SessionId,
+        prompt: u64,
+        text: &str,
+    ) -> Result<(), RegistryError> {
+        self.with_queue(id, |queue| queue.edit(prompt, text))?;
+        self.emit_session(id);
+        Ok(())
+    }
+
+    /// Withdraw a queued prompt before it fires.
+    pub fn remove_queued_prompt(&self, id: &SessionId, prompt: u64) -> Result<(), RegistryError> {
+        self.with_queue(id, |queue| queue.remove(prompt))?;
+        self.emit_session(id);
+        Ok(())
+    }
+
+    /// Move a queued prompt to a new position.
+    pub fn reorder_queued_prompt(
+        &self,
+        id: &SessionId,
+        prompt: u64,
+        to: usize,
+    ) -> Result<(), RegistryError> {
+        self.with_queue(id, |queue| queue.reorder(prompt, to))?;
+        self.emit_session(id);
+        Ok(())
+    }
+
+    /// Stop a queue advancing on its own.
+    pub fn pause_queue(&self, id: &SessionId) -> Result<(), RegistryError> {
+        self.with_queue(id, |queue| {
+            queue.pause(crate::queue::PauseReason::Operator);
+            Ok(())
+        })?;
+        self.emit_session(id);
+        Ok(())
+    }
+
+    /// Resume a paused queue, sending the next prompt if the session is ready.
+    pub fn resume_queue(&self, id: &SessionId) -> Result<(), RegistryError> {
+        self.with_queue(id, |queue| {
+            queue.resume();
+            Ok(())
+        })?;
+        self.emit_session(id);
+        self.pump_queue(id);
+        Ok(())
+    }
+
+    /// The prompts waiting on one session.
+    ///
+    /// Fetched on demand rather than carried on every `Session`, which is
+    /// cloned on each status change: 32 prompts of up to a quarter of a
+    /// megabyte would make that the most expensive thing the fleet does.
+    pub fn queued_prompts(
+        &self,
+        id: &SessionId,
+    ) -> Result<Vec<crate::queue::QueuedPrompt>, RegistryError> {
+        let state = lock_state(&self.inner);
+        state
+            .entries
+            .get(id)
+            .map(|entry| entry.queue.entries().iter().cloned().collect())
+            .ok_or_else(|| RegistryError::Missing(id.clone()))
+    }
+
+    fn with_queue<T>(
+        &self,
+        id: &SessionId,
+        edit: impl FnOnce(&mut crate::queue::PromptQueue) -> Result<T, crate::queue::QueueError>,
+    ) -> Result<T, RegistryError> {
+        let mut state = lock_state(&self.inner);
+        let entry = state
+            .entries
+            .get_mut(id)
+            .ok_or_else(|| RegistryError::Missing(id.clone()))?;
+        let result = edit(&mut entry.queue).map_err(RegistryError::Queue)?;
+        entry.session.queued_prompts = entry.queue.len();
+        entry.session.queue_paused = entry.queue.paused();
+        Ok(result)
+    }
+
+    /// Let a session's queue react to its current status.
+    ///
+    /// Called wherever a status can change, because the queue advances on the
+    /// same reported signal the fleet row is drawn from — never on a timer, and
+    /// never on evidence the operator cannot also see.
+    fn pump_queue(&self, id: &SessionId) {
+        let send = {
+            let mut state = lock_state(&self.inner);
+            let Some(entry) = state.entries.get_mut(id) else {
+                return;
+            };
+            // A session with no queue is the common case; do nothing and touch
+            // nothing, so this can be called freely on every status change.
+            if entry.queue.is_empty() && entry.queue.paused().is_none() {
+                return;
+            }
+            let status = entry.session.status;
+            let action = entry.queue.observe(status);
+            entry.session.queued_prompts = entry.queue.len();
+            entry.session.queue_paused = entry.queue.paused();
+            match action {
+                crate::queue::QueueAction::Idle => None,
+                crate::queue::QueueAction::Send(text) => Some(text),
+            }
+        };
+        let Some(text) = send else {
+            self.emit_session(id);
+            return;
+        };
+        // The same bracketed-paste framing a typed reply uses. Without it a
+        // multi-line prompt is submitted a line at a time and the agent acts on
+        // the first fragment.
+        let payload = format!("\u{1b}[200~{text}\u{1b}[201~\r");
+        if let Err(error) = self.write(id, payload.as_bytes()) {
+            // The prompt has already left the queue. Say so rather than
+            // silently dropping what the operator asked for.
+            tracing::warn!(session = %id, %error, "a queued prompt could not be delivered");
+            let _ = self.with_queue(id, |queue| {
+                queue.pause(crate::queue::PauseReason::NotRunning);
+                Ok(())
+            });
+        }
+        self.emit_session(id);
     }
 
     /// Send the same bytes to several sessions, reporting each one separately.
@@ -1191,8 +1345,12 @@ impl SessionRegistry {
             );
             (session, notifications)
         };
+        let id = session.id.clone();
         self.emit(RegistryEvent::SessionUpdated { session });
         self.emit_notification_changes(notifications);
+        // The queue advances on exactly this signal — the reported status the
+        // fleet row is drawn from — rather than on a timer.
+        self.pump_queue(&id);
         true
     }
 
@@ -2178,6 +2336,10 @@ impl SessionRegistry {
         };
         self.emit(RegistryEvent::SessionUpdated { session });
         self.emit_notification_changes(notifications);
+        // An exit pauses the queue rather than losing it: those prompts are
+        // still what the operator wanted done, and reviving the session should
+        // not mean retyping them.
+        self.pump_queue(id);
         if let Some(task) = teardown {
             self.spawn_teardown(task);
         } else {
@@ -2973,6 +3135,7 @@ mod tests {
                 pty: None,
                 scrollback: RingBuffer::default(),
                 grid: TerminalGrid::default(),
+                queue: crate::queue::PromptQueue::default(),
                 generation: 1,
                 stop_requested: false,
                 teardown_done: true,
@@ -3041,6 +3204,7 @@ mod tests {
                 pty: None,
                 scrollback: RingBuffer::default(),
                 grid: TerminalGrid::default(),
+                queue: crate::queue::PromptQueue::default(),
                 generation: 1,
                 stop_requested: false,
                 teardown_done: true,
@@ -3084,6 +3248,7 @@ mod tests {
                 pty: None,
                 scrollback: RingBuffer::default(),
                 grid: TerminalGrid::default(),
+                queue: crate::queue::PromptQueue::default(),
                 generation: 1,
                 stop_requested: false,
                 teardown_done: true,
@@ -3136,6 +3301,7 @@ mod tests {
                     cwd,
                 },
                 scrollback: b"restored\r\n".to_vec(),
+                queue: Default::default(),
             }],
             archives: Vec::new(),
             extra: BTreeMap::from([("future_field".into(), serde_json::json!({"retained": true}))]),
@@ -3188,6 +3354,7 @@ mod tests {
                     pty: None,
                     scrollback: RingBuffer::default(),
                     grid: TerminalGrid::default(),
+                    queue: crate::queue::PromptQueue::default(),
                     generation: 1,
                     stop_requested: false,
                     branch_checked: None,
@@ -3245,6 +3412,7 @@ mod tests {
                     pty: None,
                     scrollback: RingBuffer::default(),
                     grid: TerminalGrid::default(),
+                    queue: crate::queue::PromptQueue::default(),
                     generation: 1,
                     stop_requested: false,
                     branch_checked: None,
@@ -3299,6 +3467,7 @@ mod tests {
                     pty: None,
                     scrollback: RingBuffer::default(),
                     grid: TerminalGrid::default(),
+                    queue: crate::queue::PromptQueue::default(),
                     generation: 1,
                     stop_requested: false,
                     branch_checked: None,
@@ -3346,6 +3515,7 @@ mod tests {
                 pty: None,
                 scrollback: RingBuffer::default(),
                 grid: TerminalGrid::default(),
+                queue: crate::queue::PromptQueue::default(),
                 generation: 1,
                 stop_requested: false,
                 teardown_done: true,
@@ -3407,6 +3577,7 @@ mod tests {
                 pty: None,
                 scrollback: RingBuffer::default(),
                 grid: TerminalGrid::default(),
+                queue: crate::queue::PromptQueue::default(),
                 generation: 1,
                 stop_requested: false,
                 teardown_done: true,
@@ -3487,6 +3658,7 @@ mod tests {
                 pty: None,
                 scrollback: RingBuffer::default(),
                 grid: TerminalGrid::default(),
+                queue: crate::queue::PromptQueue::default(),
                 generation: 1,
                 stop_requested: false,
                 teardown_done: true,
@@ -3608,6 +3780,7 @@ mod tests {
                     pty: None,
                     scrollback: RingBuffer::default(),
                     grid: TerminalGrid::default(),
+                    queue: crate::queue::PromptQueue::default(),
                     generation: 1,
                     stop_requested: false,
                     branch_checked: None,
@@ -3628,6 +3801,7 @@ mod tests {
                     pty: None,
                     scrollback: RingBuffer::default(),
                     grid: TerminalGrid::default(),
+                    queue: crate::queue::PromptQueue::default(),
                     generation: 1,
                     stop_requested: false,
                     branch_checked: None,
@@ -3795,6 +3969,7 @@ mod tests {
                 pty: None,
                 scrollback: RingBuffer::default(),
                 grid: TerminalGrid::default(),
+                queue: crate::queue::PromptQueue::default(),
                 generation: 1,
                 stop_requested: false,
                 teardown_done: true,
@@ -4181,5 +4356,151 @@ mod tests {
         let unique: std::collections::BTreeSet<_> = refusals.iter().collect();
         assert_eq!(unique.len(), 4, "{refusals:?}");
         assert!(refusals[3].contains("pipe closed"));
+    }
+
+    /// A domain whose sessions record what was written to them.
+    struct WritableSession {
+        writes: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl AgentSession for WritableSession {
+        fn write(&self, bytes: &[u8]) -> Result<(), DomainError> {
+            self.writes
+                .lock()
+                .expect("writes")
+                .push(String::from_utf8_lossy(bytes).into_owned());
+            Ok(())
+        }
+
+        fn resize(&self, _size: PtySize) -> Result<(), DomainError> {
+            Ok(())
+        }
+
+        fn pid(&self) -> Option<u32> {
+            Some(1234)
+        }
+
+        fn try_wait(&self) -> Result<Option<u32>, DomainError> {
+            Ok(None)
+        }
+
+        fn wait_for_exit(&self) -> Result<u32, DomainError> {
+            Err(DomainError::Message("never exits".into()))
+        }
+
+        fn kill(&self) -> Result<(), DomainError> {
+            Ok(())
+        }
+    }
+
+    /// A session with a live, writable pty behind it.
+    fn writable_session(
+        registry: &SessionRegistry,
+        id: &SessionId,
+        status: SessionStatus,
+        writes: Arc<Mutex<Vec<String>>>,
+    ) {
+        insert_session(registry, id, status);
+        let mut state = lock_state(&registry.inner);
+        let entry = state.entries.get_mut(id).expect("entry");
+        entry.pty = Some(Arc::new(WritableSession { writes }));
+    }
+
+    #[test]
+    fn a_queued_prompt_is_sent_when_the_session_reports_idle() {
+        // End to end through the registry: the prompt leaves the queue, reaches
+        // the pty, and is framed the way a typed reply is.
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        writable_session(&registry, &id, SessionStatus::Working, writes.clone());
+
+        registry.enqueue_prompt(&id, "do the next thing").expect("enqueue");
+        assert!(writes.lock().expect("writes").is_empty(), "sent while busy");
+        assert_eq!(registry.snapshot()[0].queued_prompts, 1);
+
+        // The same signal the fleet row is drawn from.
+        registry.apply_hook(HookEvent {
+            agent: Agent::Claude,
+            session_id: None,
+            cwd: Some(Path::new(".").to_path_buf()),
+            signal: HookSignal::Stop,
+            progress: None,
+        });
+
+        let sent = writes.lock().expect("writes").clone();
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert!(sent[0].contains("do the next thing"), "{sent:?}");
+        assert!(sent[0].starts_with("\u{1b}[200~"), "not bracketed paste: {sent:?}");
+        assert!(sent[0].ends_with("\u{1b}[201~\r"), "no submit: {sent:?}");
+        assert_eq!(registry.snapshot()[0].queued_prompts, 0);
+    }
+
+    #[test]
+    fn a_prompt_queued_against_an_idle_session_fires_at_once() {
+        // Otherwise the queue is only usable as a backlog, never as "and then
+        // do this".
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        writable_session(&registry, &id, SessionStatus::Idle, writes.clone());
+        registry.enqueue_prompt(&id, "start now").expect("enqueue");
+        assert_eq!(writes.lock().expect("writes").len(), 1);
+    }
+
+    #[test]
+    fn a_session_waiting_for_permission_does_not_receive_its_queue() {
+        // Prompt text at a permission prompt answers something, just not what
+        // was queued.
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        writable_session(&registry, &id, SessionStatus::NeedsApproval, writes.clone());
+        registry.enqueue_prompt(&id, "carry on").expect("enqueue");
+
+        assert!(writes.lock().expect("writes").is_empty());
+        let session = registry.snapshot().into_iter().next().expect("session");
+        assert_eq!(session.queue_paused, Some(crate::queue::PauseReason::NeedsApproval));
+        assert_eq!(session.queued_prompts, 1, "the prompt was consumed");
+    }
+
+    #[test]
+    fn resuming_a_paused_queue_delivers_the_prompt() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        writable_session(&registry, &id, SessionStatus::NeedsApproval, writes.clone());
+        registry.enqueue_prompt(&id, "carry on").expect("enqueue");
+
+        // The operator answers, the session goes idle, and they resume.
+        {
+            let mut state = lock_state(&registry.inner);
+            let entry = state.entries.get_mut(&id).expect("entry");
+            entry.session.status = SessionStatus::Idle;
+        }
+        registry.resume_queue(&id).expect("resume");
+        let sent = writes.lock().expect("writes").clone();
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert!(sent[0].contains("carry on"));
+    }
+
+    #[test]
+    fn a_queue_survives_being_written_to_the_store_and_restored() {
+        // Retyping the backlog is the one thing the queue exists to avoid.
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        insert_session(&registry, &id, SessionStatus::Working);
+        registry.enqueue_prompt(&id, "first").expect("enqueue");
+        registry.enqueue_prompt(&id, "second").expect("enqueue");
+
+        let restored = SessionRegistry::from_store(registry.store_snapshot());
+        let prompts = restored.queued_prompts(&id).expect("prompts");
+        assert_eq!(prompts.len(), 2);
+        assert_eq!(prompts[0].text, "first");
+        // A restored session is not running, so its queue must not fire at
+        // whatever status the restore left behind.
+        let session = restored.snapshot().into_iter().next().expect("session");
+        assert_eq!(session.queue_paused, Some(crate::queue::PauseReason::NotRunning));
+        assert_eq!(session.queued_prompts, 2);
     }
 }

@@ -29,6 +29,7 @@ pub mod notification;
 pub(crate) mod process_tree;
 pub mod project;
 pub mod pty;
+pub mod queue;
 pub mod registry;
 pub mod review;
 pub mod roadmap;

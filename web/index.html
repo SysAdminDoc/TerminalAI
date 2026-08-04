@@ -79,6 +79,15 @@
       </main>
     </div>
 
+    <dialog id="queue-dialog" class="launcher-dialog queue-dialog" aria-label="Prompt queue" data-i18n-aria-label="label-queue">
+      <div class="dialog-head"><h2 id="queue-title">Prompt queue</h2><span id="queue-status" class="rollup-coverage"></span></div>
+      <div class="broadcast-body">
+        <ol id="queue-list" class="queue-list"></ol>
+        <label class="field field-wide"><span data-i18n="queue-add">Add a prompt</span><textarea id="queue-input" rows="3" placeholder="Sent when the current run finishes" data-i18n-placeholder="queue-add-placeholder"></textarea></label>
+      </div>
+      <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-quiet" id="queue-pause-button" data-i18n="queue-pause">Pause queue</button><button type="button" class="button button-quiet" id="queue-resume-button" data-i18n="queue-resume" hidden>Resume queue</button><button type="button" class="button button-secondary" id="close-queue-button" data-i18n="button-close">Close</button><button type="button" class="button button-primary" id="queue-add-button" data-i18n="queue-add-button">Queue it</button></div></div>
+    </dialog>
+
     <dialog id="projects-dialog" class="launcher-dialog rollup-dialog" aria-label="Projects and their roadmaps" data-i18n-aria-label="label-projects-dialog">
       <div class="dialog-head"><h2 data-i18n="projects-title">Projects</h2><span id="projects-coverage" class="rollup-coverage"></span></div>
       <div class="broadcast-body">

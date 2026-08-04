@@ -7,6 +7,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- A prompt queue per session. Queue what the agent should do next while it is still working, and
+  each prompt is sent when the run finishes — a session becomes something you load up and leave
+  rather than something you come back to. The queue advances on the same reported status the fleet
+  row is drawn from, never on a timer: a timer would fire into the middle of a long tool call,
+  where the prompt is ignored or read as an answer to something else. A run that ends waiting for
+  a permission decision or asking a question pauses the queue instead of answering blind, and says
+  which of the two it is. Only one prompt is in flight at a time — writing to the pty does not
+  change a session's status, so without a hold between "sent" and "picked up" the whole queue
+  would fire in one burst. Prompts are addressed by id rather than position, since the operator is
+  the one reordering them, and can be edited or withdrawn until they fire; an action that raced a
+  fired prompt is reported rather than silently doing nothing. Queues survive a daemon restart and
+  come back paused, because a restored session is not running. `≡` on each row opens it, and
+  `terminalai-probe queue <id> [add <text>|pause|resume]` drives it from the command line.
+
 - A Projects view showing which known projects still have roadmap work: open items, how long ago
   the roadmap was touched, and the next unchecked item, sorted by most work first. Two states are
   kept distinct from zero throughout, because both would otherwise sort beside a finished project

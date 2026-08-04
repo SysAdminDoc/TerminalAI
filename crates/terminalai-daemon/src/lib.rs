@@ -261,6 +261,35 @@ pub enum Request {
     TogglePin {
         id: SessionId,
     },
+    /// Prompts waiting their turn on one session.
+    QueuedPrompts {
+        id: SessionId,
+    },
+    /// Add a prompt to a session's queue.
+    EnqueuePrompt {
+        id: SessionId,
+        text: String,
+    },
+    EditQueuedPrompt {
+        id: SessionId,
+        prompt: u64,
+        text: String,
+    },
+    RemoveQueuedPrompt {
+        id: SessionId,
+        prompt: u64,
+    },
+    ReorderQueuedPrompt {
+        id: SessionId,
+        prompt: u64,
+        to: usize,
+    },
+    PauseQueue {
+        id: SessionId,
+    },
+    ResumeQueue {
+        id: SessionId,
+    },
     /// Send the same bytes to several sessions at once.
     ///
     /// Answered with one result per session rather than a single status: a
@@ -366,6 +395,12 @@ pub enum Response {
     },
     Broadcast {
         results: Vec<terminalai_core::BroadcastResult>,
+    },
+    QueuedPrompts {
+        prompts: Vec<terminalai_core::queue::QueuedPrompt>,
+    },
+    Enqueued {
+        prompt: u64,
     },
     GridSnapshot {
         grid: terminalai_core::TerminalGridSnapshot,
@@ -1082,6 +1117,65 @@ fn dispatch_with_endpoint(
                 }
             }
         }
+        Request::QueuedPrompts { id } => match registry.queued_prompts(&id) {
+            Ok(prompts) => Response::QueuedPrompts { prompts },
+            Err(error) => Response::Error {
+                message: error.to_string(),
+            },
+        },
+        Request::EnqueuePrompt { id, text } => {
+            if text.len() > MAX_WRITE_BYTES {
+                Response::Error {
+                    message: format!(
+                        "queued prompt of {} bytes exceeds the {MAX_WRITE_BYTES}-byte limit",
+                        text.len()
+                    ),
+                }
+            } else {
+                match registry.enqueue_prompt(&id, &text) {
+                    Ok(prompt) => Response::Enqueued { prompt },
+                    Err(error) => Response::Error {
+                        message: error.to_string(),
+                    },
+                }
+            }
+        }
+        Request::EditQueuedPrompt { id, prompt, text } => {
+            match registry.edit_queued_prompt(&id, prompt, &text) {
+                Ok(()) => Response::Ok,
+                Err(error) => Response::Error {
+                    message: error.to_string(),
+                },
+            }
+        }
+        Request::RemoveQueuedPrompt { id, prompt } => {
+            match registry.remove_queued_prompt(&id, prompt) {
+                Ok(()) => Response::Ok,
+                Err(error) => Response::Error {
+                    message: error.to_string(),
+                },
+            }
+        }
+        Request::ReorderQueuedPrompt { id, prompt, to } => {
+            match registry.reorder_queued_prompt(&id, prompt, to) {
+                Ok(()) => Response::Ok,
+                Err(error) => Response::Error {
+                    message: error.to_string(),
+                },
+            }
+        }
+        Request::PauseQueue { id } => match registry.pause_queue(&id) {
+            Ok(()) => Response::Ok,
+            Err(error) => Response::Error {
+                message: error.to_string(),
+            },
+        },
+        Request::ResumeQueue { id } => match registry.resume_queue(&id) {
+            Ok(()) => Response::Ok,
+            Err(error) => Response::Error {
+                message: error.to_string(),
+            },
+        },
         Request::Broadcast { ids, data } => {
             if data.len() > MAX_WRITE_BYTES {
                 Response::Error {

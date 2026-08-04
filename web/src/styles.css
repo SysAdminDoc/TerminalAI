@@ -75,6 +75,15 @@ button { cursor: pointer; }
 /* The next open item is context, not the answer — it must not push the counts
    off the row. */
 .projects-next { max-width: 320px; overflow: hidden; text-overflow: ellipsis; color: var(--subtext0); }
+.queue-dialog { max-width: 680px; width: min(680px, 92vw); }
+.queue-list { list-style: none; margin: 0 0 4px; padding: 0; display: grid; gap: 6px; max-height: 40vh; overflow-y: auto; }
+.queue-row { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: start; }
+.queue-position { color: var(--subtext0); font-size: 12px; padding-top: 6px; font-variant-numeric: tabular-nums; }
+.queue-text { width: 100%; resize: vertical; font: inherit; font-size: 12px; }
+.queue-row-actions { display: flex; gap: 2px; }
+/* A queued count is information; a paused queue is a thing to act on, so only
+   the paused state takes a colour. */
+.row-action-warn { color: var(--peach); }
 .top-actions { display: flex; align-items: center; gap: 8px; }
 .button { border: 1px solid transparent; border-radius: 7px; padding: 8px 12px; color: var(--text); font-size: 12px; font-weight: 650; transition: border-color .16s ease, background .16s ease, transform .16s ease; }.button:hover { transform: translateY(-1px); }.button:active { transform: translateY(0); }
 .button-primary { background: linear-gradient(135deg, #cba6f7, #b4befe); color: #1e1e2e; box-shadow: 0 6px 20px rgba(203, 166, 247, .16); }.button-primary:hover { background: linear-gradient(135deg, #d8b9ff, #c3ccff); }

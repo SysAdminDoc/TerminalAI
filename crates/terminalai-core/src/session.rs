@@ -209,6 +209,17 @@ pub struct Session {
     /// Deterministic service ports reserved for this session's environment.
     #[serde(default)]
     pub ports: Vec<u16>,
+    /// How many prompts are waiting their turn on this session.
+    ///
+    /// A count rather than the prompts themselves: a `Session` is cloned on
+    /// every status change and sent to the window, and 32 prompts of up to a
+    /// quarter of a megabyte each would make that the most expensive thing the
+    /// fleet does. The prompts are fetched when the operator opens the queue.
+    #[serde(default)]
+    pub queued_prompts: usize,
+    /// Why this session's queue stopped advancing, when it has.
+    #[serde(default)]
+    pub queue_paused: Option<crate::queue::PauseReason>,
     /// The private checkout this session was given, when it asked for one.
     ///
     /// Recorded on the session rather than the spec because it is a fact about
@@ -295,6 +306,8 @@ impl Session {
             cwd: spec.cwd.clone(),
             branch: None,
             ports,
+            queued_prompts: 0,
+            queue_paused: None,
             worktree: None,
             model: spec.model.clone(),
             effort: spec.effort.clone(),

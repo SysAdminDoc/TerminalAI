@@ -37,6 +37,7 @@ USAGE:
   terminalai-probe stop    <session-id> --json
   terminalai-probe send    <session-id> <text> --json
   terminalai-probe broadcast <session-id>... -- <text> [--json]  (one prompt, many sessions)
+  terminalai-probe queue   <session-id> [add <text>|pause|resume] [--json]
   terminalai-probe status  <session-id> --json
   terminalai-probe shutdown
   terminalai-probe pin     <session-id> --json      (toggle a pinned live grid)
@@ -83,6 +84,7 @@ fn main() {
         Some("stop") => cmd_stop(&args[1..]),
         Some("send") => cmd_send(&args[1..]),
         Some("broadcast") => cmd_broadcast(&args[1..]),
+        Some("queue") => cmd_queue(&args[1..]),
         Some("status") => cmd_status(&args[1..]),
         Some("shutdown") => cmd_shutdown(&args[1..]),
         Some("exec") => cmd_exec(&args[1..]),
@@ -219,6 +221,43 @@ fn cmd_broadcast(args: &[String]) -> i32 {
                 }
             }
             i32::from(refused > 0)
+        }
+        Ok(response) => print_control_response(response, machine),
+        Err(error) => print_control_error(error, machine),
+    }
+}
+
+/// Inspect or drive one session's prompt queue.
+fn cmd_queue(args: &[String]) -> i32 {
+    let (machine, args) = without_json(args);
+    let Some(id) = args.first().map(|id| SessionId(id.clone())) else {
+        return control_usage("queue <session-id> [add <text> | pause | resume] [--json]");
+    };
+    let request = match args.get(1).map(String::as_str) {
+        None | Some("list") => Request::QueuedPrompts { id },
+        Some("pause") => Request::PauseQueue { id },
+        Some("resume") => Request::ResumeQueue { id },
+        Some("add") if args.len() > 2 => Request::EnqueuePrompt {
+            id,
+            text: args[2..].join(" "),
+        },
+        _ => return control_usage("queue <session-id> [add <text> | pause | resume] [--json]"),
+    };
+    match control_call(request) {
+        Ok(Response::QueuedPrompts { prompts }) if machine => print_json(prompts),
+        Ok(Response::QueuedPrompts { prompts }) => {
+            if prompts.is_empty() {
+                println!("nothing queued");
+            }
+            for (index, prompt) in prompts.iter().enumerate() {
+                println!("{}. [{}] {}", index + 1, prompt.id, prompt.text);
+            }
+            0
+        }
+        Ok(Response::Enqueued { prompt }) if machine => print_json(serde_json::json!({ "prompt": prompt })),
+        Ok(Response::Enqueued { prompt }) => {
+            println!("queued as {prompt}");
+            0
         }
         Ok(response) => print_control_response(response, machine),
         Err(error) => print_control_error(error, machine),

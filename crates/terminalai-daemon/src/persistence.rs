@@ -293,6 +293,7 @@ mod tests {
                     cwd,
                 },
                 scrollback: b"worker-built".to_vec(),
+                queue: Default::default(),
             }],
             archives: vec![ArchivedSession {
                 id: SessionId::new(8),
@@ -342,6 +343,7 @@ mod tests {
                     cwd,
                 },
                 scrollback: Vec::new(),
+                queue: Default::default(),
             }],
             archives: Vec::new(),
             extra: Default::default(),

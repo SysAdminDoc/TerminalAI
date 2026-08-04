@@ -361,6 +361,79 @@ fn stream_scrollback(
     }
 }
 
+/// Prompts waiting their turn on one session.
+#[tauri::command]
+fn queued_prompts(
+    id: SessionId,
+    state: State<'_, AppState>,
+) -> Result<Vec<terminalai_core::queue::QueuedPrompt>, String> {
+    let client = daemon_client(&state)?;
+    match daemon_response(&client, Request::QueuedPrompts { id })? {
+        Response::QueuedPrompts { prompts } => Ok(prompts),
+        Response::Error { message } => Err(message),
+        other => Err(format!("unexpected queue response: {other:?}")),
+    }
+}
+
+#[tauri::command]
+fn enqueue_prompt(id: SessionId, text: String, state: State<'_, AppState>) -> Result<u64, String> {
+    let client = daemon_client(&state)?;
+    match daemon_response(&client, Request::EnqueuePrompt { id, text })? {
+        Response::Enqueued { prompt } => Ok(prompt),
+        Response::Error { message } => Err(message),
+        other => Err(format!("unexpected queue response: {other:?}")),
+    }
+}
+
+#[tauri::command]
+fn edit_queued_prompt(
+    id: SessionId,
+    prompt: u64,
+    text: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    expect_ok(&state, Request::EditQueuedPrompt { id, prompt, text })
+}
+
+#[tauri::command]
+fn remove_queued_prompt(
+    id: SessionId,
+    prompt: u64,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    expect_ok(&state, Request::RemoveQueuedPrompt { id, prompt })
+}
+
+#[tauri::command]
+fn reorder_queued_prompt(
+    id: SessionId,
+    prompt: u64,
+    to: usize,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    expect_ok(&state, Request::ReorderQueuedPrompt { id, prompt, to })
+}
+
+#[tauri::command]
+fn pause_queue(id: SessionId, state: State<'_, AppState>) -> Result<(), String> {
+    expect_ok(&state, Request::PauseQueue { id })
+}
+
+#[tauri::command]
+fn resume_queue(id: SessionId, state: State<'_, AppState>) -> Result<(), String> {
+    expect_ok(&state, Request::ResumeQueue { id })
+}
+
+/// Send a request whose only successful answer is `Ok`.
+fn expect_ok(state: &State<'_, AppState>, request: Request) -> Result<(), String> {
+    let client = daemon_client(state)?;
+    match daemon_response(&client, request)? {
+        Response::Ok => Ok(()),
+        Response::Error { message } => Err(message),
+        other => Err(format!("unexpected response: {other:?}")),
+    }
+}
+
 /// Send one prompt to several sessions, returning what happened to each.
 ///
 /// The per-session result is returned to the caller rather than collapsed into
@@ -1433,6 +1506,13 @@ fn run_app() -> Result<(), String> {
             stream_scrollback,
             stream_scrollback_history,
             broadcast_prompt,
+            queued_prompts,
+            enqueue_prompt,
+            edit_queued_prompt,
+            remove_queued_prompt,
+            reorder_queued_prompt,
+            pause_queue,
+            resume_queue,
             attach_session_output,
             revive_session,
             archive_session,
