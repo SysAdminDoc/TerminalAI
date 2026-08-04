@@ -82,10 +82,13 @@ pub struct DatabaseLease {
     pub name_prefix: Option<String>,
     /// A libpq connection string for the *server*, not the session database.
     /// Read from this environment variable so a password never lands in a file
-    /// that is committed with the repository.
+    /// that is committed with the repository. Only operator-owned
+    /// `TERMINALAI_*` names are accepted here.
     #[serde(default = "default_admin_url_var")]
     pub admin_url_env: String,
-    /// The variable the session's own database URL is exposed as.
+    /// The variable the session's own database URL is exposed as. It may use
+    /// the conventional `DATABASE_URL` name, but cannot shadow the sanitized
+    /// process baseline or TerminalAI's own session variables.
     #[serde(default = "default_session_url_var")]
     pub session_url_env: String,
     /// Drop the session database on teardown.
@@ -191,6 +194,16 @@ impl Lease {
             if let Some(prefix) = &database.name_prefix {
                 validate_identifier("database name_prefix", prefix)?;
             }
+            validate_environment_variable(
+                "database admin_url_env",
+                &database.admin_url_env,
+                true,
+            )?;
+            validate_environment_variable(
+                "database session_url_env",
+                &database.session_url_env,
+                false,
+            )?;
         }
         if let Some(compose) = &self.compose {
             if let Some(prefix) = &compose.project_prefix {
@@ -256,6 +269,49 @@ fn validate_identifier(what: &str, value: &str) -> Result<(), LeaseError> {
     if value.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         return Err(LeaseError::Invalid(format!(
             "{what} {value:?} must not start with a digit"
+        )));
+    }
+    Ok(())
+}
+
+const RESERVED_SESSION_ENVIRONMENT_KEYS: &[&str] = &[
+    "TERMINALAI_SESSION_ID",
+    "TERMINALAI_PORTS",
+    "TERMINALAI_PORT_BASE",
+    "TERMINALAI_HOOK_TOKEN",
+    "TERMINALAI_COMPOSE_PROJECT",
+    "TERMINALAI_DB_NAME",
+    "COMPOSE_PROJECT_NAME",
+    "PORT",
+];
+
+/// Validate a repository-selected environment name before it reaches either
+/// the daemon's lookup or the agent's child environment.
+fn validate_environment_variable(
+    what: &str,
+    value: &str,
+    require_operator_prefix: bool,
+) -> Result<(), LeaseError> {
+    validate_identifier(what, value)?;
+    if require_operator_prefix && !value.starts_with("TERMINALAI_") {
+        return Err(LeaseError::Invalid(format!(
+            "{what} {value:?} must use the operator-controlled TERMINALAI_ prefix"
+        )));
+    }
+    if crate::environment::safe_environment_keys()
+        .iter()
+        .any(|key| value.eq_ignore_ascii_case(key))
+    {
+        return Err(LeaseError::Invalid(format!(
+            "{what} {value:?} may not shadow the sanitized process environment"
+        )));
+    }
+    if RESERVED_SESSION_ENVIRONMENT_KEYS
+        .iter()
+        .any(|key| value.eq_ignore_ascii_case(key))
+    {
+        return Err(LeaseError::Invalid(format!(
+            "{what} {value:?} is reserved by TerminalAI"
         )));
     }
     Ok(())

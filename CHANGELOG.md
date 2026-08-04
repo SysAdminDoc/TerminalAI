@@ -89,6 +89,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Repository database leases now validate their environment-variable names:
+  administrative URLs must use an operator-controlled `TERMINALAI_*` name, and
+  session URLs cannot shadow the sanitized process baseline or TerminalAI's
+  own session variables.
 - Repository lease commands now use the sanitized child environment and carry
   Postgres connection strings in `PGDATABASE` rather than argv. `PGURI` is no
   longer emitted, so database passwords do not leak through process listings or

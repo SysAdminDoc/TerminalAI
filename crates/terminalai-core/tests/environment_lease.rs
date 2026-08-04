@@ -121,6 +121,34 @@ fn a_database_name_that_is_not_a_plain_identifier_is_refused() {
 }
 
 #[test]
+fn a_lease_cannot_name_an_arbitrary_environment_variable() {
+    for field in ["admin_url_env", "session_url_env"] {
+        let source = format!(
+            "[database]\ntemplate = \"shop_dev\"\n{field} = \"PATH\"\n"
+        );
+        assert!(
+            Lease::parse(&source).is_err(),
+            "{field} must not shadow the process PATH"
+        );
+    }
+
+    assert!(
+        Lease::parse(
+            "[database]\ntemplate = \"shop_dev\"\nadmin_url_env = \"DATABASE_URL\"\n"
+        )
+        .is_err(),
+        "the daemon must not read a repository-selected general-purpose variable"
+    );
+    assert!(
+        Lease::parse(
+            "[database]\ntemplate = \"shop_dev\"\nsession_url_env = \"DATABASE_URL\"\n"
+        )
+        .is_ok(),
+        "the documented session URL default remains valid"
+    );
+}
+
+#[test]
 fn two_sessions_get_distinct_compose_projects_and_databases() {
     // The whole point: the same declaration must produce non-colliding names.
     let lease = Lease::parse(
