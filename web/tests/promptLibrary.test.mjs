@@ -86,3 +86,15 @@ test("presets have a delete control wired to the backend", () => {
   assert.match(ftl, /^preset-deleted = /m);
   assert.match(ftl, /^preset-not-found = /m);
 });
+
+test("work queued longer than the deadline is reported as expired, not failed", () => {
+  const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
+  // Its own outcome category. Reporting it as a failure sends the operator
+  // looking for a fault when the fleet was simply busy.
+  assert.match(main, /expired: "work-state-expired"/);
+  assert.match(main, /expired: counts\.expired \?\? 0/);
+  assert.match(main, /state\.kind === "expired"/);
+  assert.match(ftl, /^work-outcome = .*\{ \$expired \} expired/m);
+  assert.match(ftl, /^work-state-expired = /m);
+  assert.match(ftl, /^work-expired-detail = .*\{ \$minutes \}/m);
+});

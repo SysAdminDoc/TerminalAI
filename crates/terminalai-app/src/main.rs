@@ -816,6 +816,23 @@ fn drive_work_run_with(
         if queue.paused || queue.is_finished() {
             return Ok(());
         }
+
+        // Before asking for a slot, give up on work that has waited longer than
+        // it is worth. A run with no deadline launches whatever was queued hours
+        // ago the moment a slot frees, and by then the tree has usually moved.
+        let expired = work_run_store
+            .update(|queue| {
+                queue.expire_stale(
+                    terminalai_core::work_queue::DEFAULT_WAIT_DEADLINE,
+                    std::time::SystemTime::now(),
+                )
+            })?
+            .unwrap_or(0);
+        if expired > 0 {
+            // Loop rather than continue past it: the store has changed under us.
+            continue;
+        }
+
         let admission = match daemon_response(client, Request::Snapshot)? {
             Response::Snapshot { admission, .. } => admission,
             Response::Error { message } => return Err(message),

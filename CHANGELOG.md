@@ -7,6 +7,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- A work run gives up on entries that have waited too long for a fleet slot. There was no deadline
+  at all, so an entry queued hours ago launched whenever a slot happened to free — against a tree
+  that had usually moved, a prompt that had been superseded, or work the operator had since done by
+  hand. Entries past a two-hour deadline are now reported as expired, in their own outcome category
+  beside done, failed and skipped, saying how long they waited: nothing went wrong, so calling it a
+  failure would send the operator looking for a fault. A paused run does not age out. Dispatch stays
+  in the order the operator wrote — newest-first was considered and rejected, because silently
+  reordering a run makes a partial one cover a different set of projects than the top of the list
+  suggests, and the deadline handles staleness visibly instead.
+
 - A row waiting on a question shows how long is left before the agent answers it for itself. Claude
   Code's `AskUserQuestion` proceeds without an answer after sixty seconds, and the notification
   grace period spent thirty of them — so the operator was told at the halfway point and the agent

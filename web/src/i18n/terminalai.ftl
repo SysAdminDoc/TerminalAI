@@ -197,7 +197,7 @@ work-started = Queued { $count } { $count ->
     [one] project
    *[other] projects
   }
-work-outcome = { $done } done · { $running } running · { $pending } waiting · { $flagged } flagged · { $failed } failed · { $skipped } skipped
+work-outcome = { $done } done · { $running } running · { $pending } waiting · { $flagged } flagged · { $failed } failed · { $skipped } skipped · { $expired } expired
 work-run-paused = Run paused
 work-state-pending = waiting for a slot
 work-state-running = running
@@ -205,6 +205,8 @@ work-state-done = done
 work-state-failed = failed
 work-state-skipped = skipped
 work-state-flagged = uncommitted changes
+work-state-expired = waited too long
+work-expired-detail = Never got a fleet slot within { $minutes } minutes, so it was given up on rather than started against a tree that has since moved
 work-approve = Run anyway
 work-skip = Skip
 work-dirty-detail = { $count } uncommitted { $count ->

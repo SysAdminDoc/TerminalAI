@@ -1900,6 +1900,9 @@ const WORK_STATE_LABEL = {
   failed: "work-state-failed",
   skipped: "work-state-skipped",
   flagged: "work-state-flagged",
+  // Its own category, not a failure: nothing went wrong, the fleet was busy for
+  // longer than the work was worth.
+  expired: "work-state-expired",
 };
 
 /**
@@ -1930,6 +1933,7 @@ function renderWorkRun() {
     flagged: counts.flagged ?? 0,
     failed: counts.failed ?? 0,
     skipped: counts.skipped ?? 0,
+    expired: counts.expired ?? 0,
   });
   const rows = run.entries
     .map((entry) => {
@@ -1963,6 +1967,9 @@ function workEntryDetail(entry) {
     if (tree.kind === "unknown") return `${t("work-tree-unknown")}: ${tree.detail ?? ""}`;
   }
   if (state.kind === "running" || state.kind === "done") return state.session ?? "";
+  if (state.kind === "expired") {
+    return t("work-expired-detail", { minutes: Math.round(Number(state.waited_seconds ?? 0) / 60) });
+  }
   return "";
 }
 

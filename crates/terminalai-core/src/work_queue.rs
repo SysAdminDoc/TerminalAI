@@ -38,6 +38,20 @@ const GIT_TIMEOUT: Duration = Duration::from_secs(30);
 /// script, and the operator should say which projects they mean.
 pub const MAX_ENTRIES: usize = 200;
 
+/// How long a queued entry may wait for a fleet slot before it is given up on.
+///
+/// A queue with no deadline launches whatever was asked for hours ago whenever
+/// a slot happens to free, and stale queued work is usually unwanted work — the
+/// tree has moved, the prompt has been superseded, or the operator has already
+/// done it by hand. pgbouncer bounds the same situation with `query_wait_timeout`
+/// (120 s, then disconnect) and Google's SRE guidance recommends shedding the
+/// oldest queued item under overload for exactly this reason.
+///
+/// Two hours rather than two minutes because the unit of work here is an agent
+/// session, not a database query: a fleet of three can legitimately take an hour
+/// to reach the twentieth project in a run the operator started deliberately.
+pub const DEFAULT_WAIT_DEADLINE: Duration = Duration::from_secs(2 * 60 * 60);
+
 /// Whether a project's working tree is safe to turn an agent loose in.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -73,6 +87,12 @@ pub enum EntryState {
     Failed { detail: String },
     /// The operator withdrew it.
     Skipped,
+    /// It waited longer than the run's deadline without ever getting a slot.
+    ///
+    /// Its own category rather than `Failed`: nothing went wrong, the fleet was
+    /// simply busy for longer than the work was worth, and a run summary that
+    /// calls that a failure sends the operator looking for a fault.
+    Expired { waited_seconds: u64 },
 }
 
 impl EntryState {
@@ -142,6 +162,13 @@ impl WorkQueue {
     }
 
     /// The next project to start, if the queue should start one now.
+    ///
+    /// Insertion order is kept deliberately. Newest-first (LIFO) is the standard
+    /// recommendation under sustained overload, and it was considered and
+    /// rejected here: a run is a list the operator wrote in the order they meant,
+    /// and reordering it silently would make a partial run cover a different set
+    /// of projects than the top of the list suggests. The deadline below is what
+    /// handles staleness instead, and it does so visibly.
     pub fn next_pending(&self) -> Option<&WorkEntry> {
         if self.paused {
             return None;
@@ -149,6 +176,38 @@ impl WorkQueue {
         self.entries
             .iter()
             .find(|entry| matches!(entry.state, EntryState::Pending))
+    }
+
+    /// Give up on entries that have waited past `deadline`, returning how many.
+    ///
+    /// Measured from the run's start, which is when the operator asked for the
+    /// work — not from when a slot was last checked. A paused run does not age
+    /// out: the operator stopped it on purpose and is coming back to it.
+    pub fn expire_stale(&mut self, deadline: Duration, now: SystemTime) -> usize {
+        if self.paused {
+            return 0;
+        }
+        let Some(started_at) = self.started_at else {
+            return 0;
+        };
+        let Ok(waited) = now.duration_since(started_at) else {
+            return 0;
+        };
+        if waited < deadline {
+            return 0;
+        }
+        let waited_seconds = waited.as_secs();
+        let mut expired = 0;
+        for entry in &mut self.entries {
+            // Only entries still waiting for a slot. A flagged entry is waiting
+            // on the operator, not on the fleet, and a running one has already
+            // had its slot.
+            if matches!(entry.state, EntryState::Pending) {
+                entry.state = EntryState::Expired { waited_seconds };
+                expired += 1;
+            }
+        }
+        expired
     }
 
     /// How many of this run's sessions are still going.
@@ -222,6 +281,7 @@ impl WorkQueue {
                 EntryState::Done { .. } => outcome.done += 1,
                 EntryState::Failed { .. } => outcome.failed += 1,
                 EntryState::Skipped => outcome.skipped += 1,
+                EntryState::Expired { .. } => outcome.expired += 1,
             }
         }
         outcome
@@ -239,6 +299,10 @@ pub struct WorkOutcome {
     pub done: usize,
     pub failed: usize,
     pub skipped: usize,
+    /// Waited past the run's deadline without ever getting a fleet slot. Counted
+    /// apart from `failed`: nothing went wrong, the fleet was busy.
+    #[serde(default)]
+    pub expired: usize,
 }
 
 /// Whether a repository has uncommitted changes.
@@ -536,5 +600,58 @@ mod tests {
         let json = serde_json::to_string(&queue).expect("encode");
         let restored: WorkQueue = serde_json::from_str(&json).expect("decode");
         assert_eq!(restored, queue);
+    }
+
+    /// A queue with no deadline launches work queued hours ago the moment a slot
+    /// frees, against a tree that has usually moved since.
+    #[test]
+    fn work_waiting_past_the_deadline_expires_rather_than_launching() {
+        let mut queue = WorkQueue::new(
+            "prompt",
+            &[
+                ("alpha".into(), PathBuf::from("/a")),
+                ("beta".into(), PathBuf::from("/b")),
+            ],
+        )
+        .expect("queue");
+        let started = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        queue.started_at = Some(started);
+        queue
+            .set_state(Path::new("/b"), EntryState::Running { session: SessionId::new(1) })
+            .expect("running entry");
+
+        // Inside the deadline nothing moves.
+        assert_eq!(queue.expire_stale(DEFAULT_WAIT_DEADLINE, started + Duration::from_secs(60)), 0);
+        assert!(queue.next_pending().is_some());
+
+        let expired = queue.expire_stale(
+            DEFAULT_WAIT_DEADLINE,
+            started + DEFAULT_WAIT_DEADLINE + Duration::from_secs(1),
+        );
+        assert_eq!(expired, 1, "only the entry still waiting for a slot");
+        assert!(queue.next_pending().is_none(), "an expired entry must not launch");
+
+        let outcome = queue.outcome();
+        assert_eq!(outcome.expired, 1);
+        // Its own category. Calling it a failure sends the operator looking for
+        // a fault that does not exist.
+        assert_eq!(outcome.failed, 0);
+        // A running entry keeps its slot; it already got one.
+        assert_eq!(outcome.running, 1);
+    }
+
+    #[test]
+    fn a_paused_run_does_not_age_out() {
+        let mut queue = WorkQueue::new("prompt", &[("alpha".into(), PathBuf::from("/a"))])
+            .expect("queue");
+        let started = SystemTime::UNIX_EPOCH;
+        queue.started_at = Some(started);
+        queue.paused = true;
+        // The operator stopped it deliberately and is coming back to it; expiring
+        // it while paused would punish them for pausing.
+        assert_eq!(
+            queue.expire_stale(DEFAULT_WAIT_DEADLINE, started + DEFAULT_WAIT_DEADLINE * 10),
+            0
+        );
     }
 }
