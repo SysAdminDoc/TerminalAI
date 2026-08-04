@@ -2402,7 +2402,10 @@ function fitTerminal({ notify = true } = {}) {
   }
   terminalSizeLabel(cols, rows);
   if (!notify || !state.focused) return;
-  const signature = `${cols}x${rows}`;
+  // The same renderer geometry must be sent once per session. A global
+  // `cols x rows` signature would suppress the first resize after switching
+  // from one session to another, leaving the new pty at its 120x40 default.
+  const signature = `${state.focused}:${cols}x${rows}`;
   if (state.lastSentSize === signature) return;
   state.lastSentSize = signature;
   invoke("resize_session", { id: state.focused, rows, cols }).catch(() => {

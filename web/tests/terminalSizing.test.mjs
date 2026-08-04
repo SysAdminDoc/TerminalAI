@@ -30,6 +30,12 @@ test("an unchanged size is not resent to the pty", () => {
   assert.match(main, /if \(state\.lastSentSize === signature\) return;/);
 });
 
+test("the same geometry is sent separately for each focused session", () => {
+  // A single global `cols x rows` signature lets session B inherit session A's
+  // size when focus changes without changing the renderer dimensions.
+  assert.match(main, /const signature = `\$\{state\.focused\}:\$\{cols\}x\$\{rows\}`;/);
+});
+
 test("output for a previous session is discarded across a focus switch", () => {
   // state.focused is assigned before an await and output arrives asynchronously,
   // so a late chunk could otherwise be written into the wrong session's grid.
