@@ -69,7 +69,10 @@ fn a_lease_declares_copies_compose_and_a_database() {
     assert_eq!(lease.copy, vec![".env", "config/*.local.json"]);
     let compose = lease.compose.as_ref().expect("compose section");
     assert_eq!(compose.project_prefix.as_deref(), Some("shop"));
-    assert!(compose.remove_volumes);
+    assert!(
+        !compose.remove_volumes,
+        "repository metadata cannot remove volumes"
+    );
     let database = lease.database.as_ref().expect("database section");
     assert_eq!(database.template, "shop_dev");
     // Defaults that keep a password out of a committed file.
@@ -126,8 +129,8 @@ fn two_sessions_get_distinct_compose_projects_and_databases() {
     .expect("valid");
     let root = Path::new("C:/repos/shop");
 
-    let first = lease.resolve("s0001", root);
-    let second = lease.resolve("s0002", root);
+    let first = lease.resolve("s0001", root).expect("first resolve");
+    let second = lease.resolve("s0002", root).expect("second resolve");
     assert_eq!(first.compose_project.as_deref(), Some("shop-s0001"));
     assert_eq!(second.compose_project.as_deref(), Some("shop-s0002"));
     assert_ne!(first.compose_project, second.compose_project);
@@ -138,7 +141,9 @@ fn two_sessions_get_distinct_compose_projects_and_databases() {
 #[test]
 fn the_compose_prefix_defaults_to_the_repository_folder() {
     let lease = Lease::parse("[compose]\n").expect("valid");
-    let resolved = lease.resolve("s0007", Path::new("C:/repos/My Shop"));
+    let resolved = lease
+        .resolve("s0007", Path::new("C:/repos/My Shop"))
+        .expect("resolve");
     // Uppercase and spaces are not legal in a compose project name.
     assert_eq!(resolved.compose_project.as_deref(), Some("my-shop-s0007"));
 }
@@ -147,7 +152,9 @@ fn the_compose_prefix_defaults_to_the_repository_folder() {
 fn provisioning_statements_name_this_session_only() {
     let lease =
         Lease::parse("[database]\ntemplate = \"shop_dev\"\n").expect("valid");
-    let resolved = lease.resolve("s0003", Path::new("C:/repos/shop"));
+    let resolved = lease
+        .resolve("s0003", Path::new("C:/repos/shop"))
+        .expect("resolve");
 
     let create = resolved.create_database_args().expect("create args");
     assert!(create.contains(&"ON_ERROR_STOP=1".to_owned()), "{create:?}");
@@ -171,21 +178,30 @@ fn provisioning_statements_name_this_session_only() {
 fn a_database_kept_on_purpose_is_not_dropped() {
     let lease = Lease::parse("[database]\ntemplate = \"shop_dev\"\ndrop_on_teardown = false\n")
         .expect("valid");
-    let resolved = lease.resolve("s0004", Path::new("C:/repos/shop"));
+    let resolved = lease
+        .resolve("s0004", Path::new("C:/repos/shop"))
+        .expect("resolve");
     assert!(resolved.create_database_args().is_some());
     assert_eq!(resolved.drop_database_args(), None);
 }
 
 #[test]
 fn compose_teardown_targets_this_session_and_nothing_else() {
+    let root = scratch("compose-down");
+    write(&root.0, "ops/compose.yml", "services: {}\n");
     let lease = Lease::parse(
         "[compose]\nproject_prefix = \"shop\"\nfile = \"ops/compose.yml\"\nremove_volumes = true\n",
     )
     .expect("valid");
     let args = lease
-        .resolve("s0005", Path::new("C:/repos/shop"))
+        .resolve("s0005", &root.0)
+        .expect("resolve")
         .compose_down_args()
         .expect("down args");
+    let compose_file = std::fs::canonicalize(root.0.join("ops/compose.yml"))
+        .expect("canonical compose file")
+        .to_string_lossy()
+        .into_owned();
     assert_eq!(
         args,
         vec![
@@ -193,11 +209,35 @@ fn compose_teardown_targets_this_session_and_nothing_else() {
             "--project-name",
             "shop-s0005",
             "--file",
-            "ops/compose.yml",
+            compose_file.as_str(),
             "down",
             "--remove-orphans",
-            "--volumes",
         ]
+    );
+}
+
+#[test]
+fn a_compose_file_cannot_escape_the_repository() {
+    for file in ["../../ops/prod.yml", "C:/ops/prod.yml"] {
+        let source = format!("[compose]\nfile = \"{file}\"\n");
+        assert!(
+            Lease::parse(&source).is_err(),
+            "compose file {file:?} should be refused"
+        );
+    }
+
+    let root = scratch("compose-safe");
+    write(&root.0, "ops/compose.yml", "services: {}\n");
+    let lease = Lease::parse("[compose]\nfile = \"ops/compose.yml\"\nremove_volumes = true\n")
+        .expect("valid");
+    let args = lease
+        .resolve("s0006", &root.0)
+        .expect("resolve")
+        .compose_down_args()
+        .expect("down args");
+    assert!(
+        !args.iter().any(|arg| arg == "--volumes"),
+        "repository metadata enabled destructive volume removal: {args:?}"
     );
 }
 

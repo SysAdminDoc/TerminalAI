@@ -62,8 +62,8 @@ pub struct ComposeLease {
     /// starting the stack stays the operator's business.
     #[serde(default)]
     pub file: Option<String>,
-    /// Whether teardown removes named volumes too. Off by default: destroying
-    /// data the operator did not ask to lose is not a default.
+    /// Whether teardown removes named volumes too. This is reserved for a
+    /// trusted operator-side configuration; repository TOML cannot enable it.
     #[serde(default)]
     pub remove_volumes: bool,
 }
@@ -154,10 +154,9 @@ impl Lease {
             lease.compose = Some(ComposeLease {
                 project_prefix: string_field(compose, "project_prefix"),
                 file: string_field(compose, "file"),
-                remove_volumes: compose
-                    .get("remove_volumes")
-                    .and_then(|value| value.as_bool())
-                    .unwrap_or(false),
+                // A repository may describe its own compose file, but it may
+                // not authorize destructive volume removal during teardown.
+                remove_volumes: false,
             });
         }
 
@@ -185,18 +184,7 @@ impl Lease {
 
     fn validate(&self) -> Result<(), LeaseError> {
         for glob in &self.copy {
-            // A glob that escapes the repository would copy arbitrary host files
-            // into a session's tree.
-            if glob.starts_with('/') || glob.starts_with('\\') || glob.contains("..") {
-                return Err(LeaseError::Invalid(format!(
-                    "copy glob {glob:?} must stay inside the repository"
-                )));
-            }
-            if Path::new(glob).is_absolute() {
-                return Err(LeaseError::Invalid(format!(
-                    "copy glob {glob:?} must be relative"
-                )));
-            }
+            validate_repository_relative_path("copy glob", glob)?;
         }
         if let Some(database) = &self.database {
             validate_identifier("database template", &database.template)?;
@@ -207,6 +195,9 @@ impl Lease {
         if let Some(compose) = &self.compose {
             if let Some(prefix) = &compose.project_prefix {
                 validate_project_name("compose project_prefix", prefix)?;
+            }
+            if let Some(file) = &compose.file {
+                validate_repository_relative_path("compose file", file)?;
             }
         }
         Ok(())
@@ -222,6 +213,25 @@ fn string_field(table: &dyn toml_edit::TableLike, key: &str) -> Option<String> {
         .get(key)
         .and_then(|value| value.as_str())
         .map(str::to_owned)
+}
+
+fn validate_repository_relative_path(what: &str, value: &str) -> Result<(), LeaseError> {
+    let drive_prefix = value.len() >= 2
+        && value.as_bytes()[1] == b':'
+        && value.as_bytes()[0].is_ascii_alphabetic();
+    if value.is_empty()
+        || value.chars().any(char::is_control)
+        || value.starts_with('/')
+        || value.starts_with('\\')
+        || value.contains("..")
+        || drive_prefix
+        || Path::new(value).is_absolute()
+    {
+        return Err(LeaseError::Invalid(format!(
+            "{what} {value:?} must stay inside the repository"
+        )));
+    }
+    Ok(())
 }
 
 /// A SQL identifier this module is willing to interpolate.
@@ -304,9 +314,47 @@ fn session_suffix(session_id: &str) -> String {
     }
 }
 
+fn canonicalize_with_missing_tail(path: &Path) -> std::io::Result<PathBuf> {
+    let mut missing = Vec::new();
+    let mut existing = path;
+    while !existing.exists() {
+        let name = existing.file_name().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name")
+        })?;
+        missing.push(name.to_os_string());
+        existing = existing.parent().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no parent")
+        })?;
+    }
+
+    let mut canonical = std::fs::canonicalize(existing)?;
+    for name in missing.iter().rev() {
+        canonical.push(name);
+    }
+    Ok(canonical)
+}
+
+fn canonical_compose_file(repo_root: &Path, file: &str) -> Result<String, LeaseError> {
+    let canonical_root =
+        std::fs::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
+    let candidate = canonical_root.join(file);
+    let canonical = canonicalize_with_missing_tail(&candidate).map_err(|error| {
+        LeaseError::Invalid(format!(
+            "compose file {file:?} could not be resolved under the repository: {error}"
+        ))
+    })?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err(LeaseError::Invalid(format!(
+            "compose file {file:?} resolves outside the repository"
+        )));
+    }
+    Ok(canonical.to_string_lossy().into_owned())
+}
+
 impl Lease {
     /// Resolve this lease for one session.
-    pub fn resolve(&self, session_id: &str, repo_root: &Path) -> ResolvedLease {
+    pub fn resolve(&self, session_id: &str, repo_root: &Path) -> Result<ResolvedLease, LeaseError> {
+        self.validate()?;
         let suffix = session_suffix(session_id);
         let folder = repo_root
             .file_name()
@@ -325,17 +373,21 @@ impl Lease {
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| "terminalai".to_owned());
 
-        ResolvedLease {
+        let compose_file = self
+            .compose
+            .as_ref()
+            .and_then(|compose| compose.file.as_deref())
+            .map(|file| canonical_compose_file(repo_root, file))
+            .transpose()?;
+
+        Ok(ResolvedLease {
             session_id: session_id.to_owned(),
             copy: self.copy.clone(),
             compose_project: self.compose.as_ref().map(|compose| {
                 let prefix = compose.project_prefix.clone().unwrap_or(folder);
                 format!("{prefix}-{suffix}")
             }),
-            compose_file: self
-                .compose
-                .as_ref()
-                .and_then(|compose| compose.file.clone()),
+            compose_file,
             compose_remove_volumes: self
                 .compose
                 .as_ref()
@@ -353,7 +405,7 @@ impl Lease {
                     drop_on_teardown: database.drop_on_teardown,
                 }
             }),
-        }
+        })
     }
 }
 

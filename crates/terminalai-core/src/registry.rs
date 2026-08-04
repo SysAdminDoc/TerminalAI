@@ -1754,7 +1754,15 @@ impl SessionRegistry {
                 }));
             }
         };
-        let resolved_lease = lease.as_ref().map(|lease| lease.resolve(&id.0, &cwd));
+        let resolved_lease = match lease.as_ref() {
+            Some(lease) => Some(lease.resolve(&id.0, &cwd).map_err(|error| {
+                RegistryError::Environment(EnvironmentError::HookSpawn {
+                    phase: "lease",
+                    cause: error.to_string(),
+                })
+            })?),
+            None => None,
+        };
         if let Some(resolved) = &resolved_lease {
             if let Err(error) = self.apply_lease(id, resolved, &cwd, &mut environment) {
                 self.report_failed_teardown(
@@ -2052,7 +2060,13 @@ impl SessionRegistry {
                 return failures;
             }
         };
-        let resolved = lease.resolve(&id.0, cwd);
+        let resolved = match lease.resolve(&id.0, cwd) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                failures.push(format!("lease could not be resolved for teardown: {error}"));
+                return failures;
+            }
+        };
 
         if let Some(args) = resolved.compose_down_args() {
             if let Err(error) = run_lease_command("docker", cwd, &args, None, "lease-compose") {

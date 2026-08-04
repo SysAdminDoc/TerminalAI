@@ -89,6 +89,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Environment leases now reject escaping compose files, canonicalize accepted paths inside the
+  repository before teardown, and ignore repository attempts to enable destructive volume removal.
 - Work runs now mark exited or removed sessions as done and automatically admit
   the next pending project when a fleet slot opens.
 - Transcript tailing now advances past oversized and invalid-UTF-8 JSONL records instead of
