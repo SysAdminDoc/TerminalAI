@@ -177,14 +177,14 @@ fn sidecar_path(path: &Path, id: &SessionId) -> PathBuf {
 fn sidecar_name(id: &SessionId) -> String {
     let mut name = String::with_capacity(id.0.len());
     for byte in id.0.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') {
+        if byte.is_ascii_alphanumeric() || byte == b'-' {
             name.push(byte as char);
         } else {
             name.push_str(&format!("_{byte:02x}"));
         }
     }
     if name.is_empty() {
-        "session".into()
+        "_".into()
     } else {
         name
     }
@@ -343,6 +343,20 @@ mod tests {
         assert!(restored.sessions[0].scrollback.is_empty());
         assert_eq!(restored.sessions[1].scrollback, b"second");
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn sidecar_names_are_injective_for_restored_ids() {
+        use std::collections::HashSet;
+
+        let ids = ["", "session", "a.", "a_2e", "_", "_5f", "../../evil"];
+        let names: HashSet<_> = ids
+            .iter()
+            .map(|id| sidecar_name(&SessionId((*id).into())))
+            .collect();
+        assert_eq!(names.len(), ids.len(), "{names:?}");
+        assert_eq!(sidecar_name(&SessionId("a.".into())), "a_2e");
+        assert_eq!(sidecar_name(&SessionId("a_2e".into())), "a_5f2e");
     }
 
     #[test]

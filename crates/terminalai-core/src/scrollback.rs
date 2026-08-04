@@ -362,14 +362,14 @@ fn segment_paths(directory: &Path, id: &SessionId) -> (PathBuf, PathBuf) {
 fn segment_name(id: &SessionId) -> String {
     let mut name = String::with_capacity(id.0.len());
     for byte in id.0.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') {
+        if byte.is_ascii_alphanumeric() || byte == b'-' {
             name.push(byte as char);
         } else {
             name.push_str(&format!("_{byte:02x}"));
         }
     }
     if name.is_empty() {
-        "session".into()
+        "_".into()
     } else {
         name
     }
@@ -590,6 +590,20 @@ mod tests {
         // the directory the daemon owns.
         let name = segment_name(&SessionId("../../evil".into()));
         assert!(!name.contains('.') && !name.contains('/') && !name.contains('\\'), "{name}");
+    }
+
+    #[test]
+    fn session_id_filename_escaping_is_injective() {
+        use std::collections::HashSet;
+
+        let ids = ["", "session", "a.", "a_2e", "_", "_5f", "../../evil"];
+        let names: HashSet<_> = ids
+            .iter()
+            .map(|id| segment_name(&SessionId((*id).into())))
+            .collect();
+        assert_eq!(names.len(), ids.len(), "{names:?}");
+        assert_eq!(segment_name(&SessionId("a.".into())), "a_2e");
+        assert_eq!(segment_name(&SessionId("a_2e".into())), "a_5f2e");
     }
 
     #[test]
