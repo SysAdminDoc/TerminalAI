@@ -23,7 +23,7 @@ use crate::grid::{TerminalGrid, TerminalGridSnapshot};
 use crate::hooks::{HookEvent, HookNotification, HookSignal};
 use crate::launch::{is_valid_resume_id, LaunchError, LaunchSpec, ResolvedCommand, Resume};
 use crate::notification::{NotificationCenter, NotificationChange, NotificationEvent};
-use crate::pty::PtySize;
+use crate::pty::{PtySize, StopOutcome};
 use crate::review::{collect_reviews, ReviewItem};
 use crate::scrollback::ScrollbackSpool;
 use crate::session::{
@@ -1172,16 +1172,60 @@ impl SessionRegistry {
                 }
                 return Err(RegistryError::Missing(id.clone()));
             };
-            (pty, entry.generation)
+            // The stop is no longer instantaneous, so say so: the row shows the
+            // agent shutting down instead of looking untouched for five seconds.
+            // The exit path overwrites this phase when the process actually goes.
+            entry.session.mark_tearing_down();
+            let generation = entry.generation;
+            let session = entry.session.clone();
+            drop(state);
+            self.emit(RegistryEvent::SessionUpdated { session });
+            (pty, generation)
         };
-        if let Err(error) = pty.kill() {
-            let mut state = lock_state(&self.inner);
-            if let Some(entry) = state.entries.get_mut(id) {
-                entry.stop_requested = false;
+
+        // The stop ladder is bounded but not instant, and this runs on the
+        // client connection's dispatch thread — blocking it would freeze every
+        // other request on that connection, snapshots included, for the whole
+        // grace period. Hand the ladder to a worker and let the session's own
+        // exit monitor report the result, which it does with the real exit code
+        // rather than the `None` this path used to invent.
+        let registry = self.clone();
+        let worker_id = id.clone();
+        let worker_pty = pty.clone();
+        let spawned = thread::Builder::new()
+            .name(format!("terminalai-stop-{id}"))
+            .spawn(move || match worker_pty.stop() {
+                Ok(StopOutcome::Graceful) => {}
+                Ok(StopOutcome::Terminated) => {
+                    tracing::warn!(
+                        session = %worker_id,
+                        "agent did not shut down within its grace period; the job was terminated"
+                    );
+                    registry.mark_process_exit(&worker_id, generation, None);
+                }
+                Err(error) => {
+                    tracing::error!(session = %worker_id, %error, "could not stop the agent");
+                    registry.mark_process_exit(&worker_id, generation, None);
+                }
+            });
+        if let Err(error) = spawned {
+            // Thread exhaustion. A session the operator asked to stop must stop,
+            // so fall back to the immediate kill on this thread rather than
+            // leaving it running.
+            tracing::error!(
+                session = %id,
+                %error,
+                "could not start a stop worker; terminating the agent immediately"
+            );
+            if let Err(error) = pty.kill() {
+                let mut state = lock_state(&self.inner);
+                if let Some(entry) = state.entries.get_mut(id) {
+                    entry.stop_requested = false;
+                }
+                return Err(error.into());
             }
-            return Err(error.into());
+            self.mark_process_exit(id, generation, None);
         }
-        self.mark_process_exit(id, generation, None);
         Ok(())
     }
 
@@ -1780,9 +1824,39 @@ impl SessionRegistry {
                 })
                 .collect()
         };
+        // Concurrently, not in series. Each stop is bounded by its own grace
+        // period, and a fleet of thirty stopped one at a time would multiply
+        // that by thirty on the daemon's own way out.
+        let mut workers = Vec::new();
         for (id, generation, pty) in sessions {
-            let _ = pty.kill();
-            self.mark_process_exit(&id, generation, None);
+            let registry = self.clone();
+            let worker_id = id.clone();
+            let worker_pty = pty.clone();
+            match thread::Builder::new()
+                .name(format!("terminalai-shutdown-stop-{id}"))
+                .spawn(move || {
+                    if let Ok(StopOutcome::Terminated) | Err(_) = worker_pty.stop() {
+                        tracing::warn!(
+                            session = %worker_id,
+                            "agent did not shut down within its grace period during daemon shutdown"
+                        );
+                    }
+                    registry.mark_process_exit(&worker_id, generation, None);
+                }) {
+                Ok(worker) => workers.push(worker),
+                Err(error) => {
+                    tracing::error!(
+                        session = %id,
+                        %error,
+                        "could not start a shutdown stop worker; terminating the agent immediately"
+                    );
+                    let _ = pty.kill();
+                    self.mark_process_exit(&id, generation, None);
+                }
+            }
+        }
+        for worker in workers {
+            let _ = worker.join();
         }
     }
 

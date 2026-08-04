@@ -7,6 +7,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Stopping a session now gives the agent a chance to shut itself down. `TerminateJobObject` fired
+  immediately, so the `SessionEnd` hook — one of the sixteen this app installs — never ran, and the
+  transcript the fleet reads for cost never flushed its final usage records. The stop is now a
+  ladder: the interrupt byte into the pty, then closing the pseudo-console, then the hard kill,
+  bounded at five seconds in total and logged when the last rung is reached. Verified against a
+  real Claude Code session, which now exits through its own interrupt path rather than being
+  killed. Measured while building it, and recorded in the code: writing `0x03` to this ConPTY does
+  **not** raise a console control event on Windows 11 26100 — `ping` ignores it entirely — so a
+  single-rung ladder would have been a five-second pause in front of the same hard kill.
+  `GenerateConsoleCtrlEvent` is unusable here because it addresses the caller's own console.
+  The stop runs on a worker rather than the client's dispatch thread, so a five-second grace no
+  longer freezes every other request on that connection, and the row shows the agent shutting down
+  while it happens. Daemon shutdown stops the whole fleet concurrently for the same reason.
+
 - A session that exits cleanly is no longer restarted like one that crashed. The exit code was
   captured and never consulted, so an agent that finished its work — or an operator who quit one
   inside its own pane — was brought back up to five times, billing quota on each. Classification is

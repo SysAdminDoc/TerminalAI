@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use crate::launch::ResolvedCommand;
-use crate::pty::{PtyError, PtySession, PtySize};
+use crate::pty::{PtyError, PtySession, PtySize, StopOutcome};
 
 pub type OutputHandler = Box<dyn FnMut(&[u8]) + Send + 'static>;
 
@@ -28,6 +28,12 @@ pub trait AgentSession: Send + Sync {
     fn try_wait(&self) -> Result<Option<u32>, DomainError>;
     fn wait_for_exit(&self) -> Result<u32, DomainError>;
     fn kill(&self) -> Result<(), DomainError>;
+    /// Stop the agent, giving it a chance to shut itself down first. The
+    /// default is the hard kill, so a domain that has no graceful path is
+    /// honest about it rather than silently claiming one.
+    fn stop(&self) -> Result<StopOutcome, DomainError> {
+        self.kill().map(|()| StopOutcome::Terminated)
+    }
     /// Apply or restore the platform's background execution policy. Remote
     /// domains may leave the default no-op in place when they do not own a
     /// local process.
@@ -91,6 +97,10 @@ impl AgentSession for PtySession {
 
     fn kill(&self) -> Result<(), DomainError> {
         PtySession::kill(self).map_err(DomainError::from)
+    }
+
+    fn stop(&self) -> Result<StopOutcome, DomainError> {
+        PtySession::stop(self).map_err(DomainError::from)
     }
 
     fn set_background(&self, background: bool) -> Result<(), DomainError> {

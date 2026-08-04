@@ -10,6 +10,7 @@
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty};
 
@@ -38,9 +39,41 @@ pub enum PtyError {
     Priority(String),
 }
 
+/// `ETX`. What a terminal sends when the user presses Ctrl-C, and the only
+/// interrupt this process boundary can actually deliver — see
+/// [`PtySession::stop`] for why the console-control APIs cannot be used here.
+const INTERRUPT: u8 = 0x03;
+
+/// How long the agent gets to cancel its current work after the first
+/// interrupt. Both CLIs treat one interrupt as "stop what you are doing".
+pub const STOP_CANCEL_GRACE: Duration = Duration::from_millis(1_500);
+
+/// How long the agent gets to run its own shutdown after the second interrupt
+/// — `SessionEnd` hooks and the final transcript flush. Together with the
+/// cancel grace this keeps a stop bounded at five seconds, which is the budget
+/// Windows itself gives a console application on `CTRL_CLOSE_EVENT`.
+pub const STOP_EXIT_GRACE: Duration = Duration::from_millis(3_500);
+
+/// Only used where no waitable process handle exists.
+const STOP_POLL_INTERVAL: Duration = Duration::from_millis(25);
+
+/// How a session ended when the supervisor asked it to stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopOutcome {
+    /// The agent shut itself down inside the grace period.
+    Graceful,
+    /// The grace period ran out and the job was terminated. Worth logging: it
+    /// means the agent's own shutdown did not complete.
+    Terminated,
+}
+
 /// A live agent process attached to a pseudo-console.
 pub struct PtySession {
-    master: Mutex<Box<dyn MasterPty + Send>>,
+    /// `None` once the pseudo-console has been closed as a stop rung. Held as
+    /// an `Option` for exactly that: dropping the last `MasterPty` is what calls
+    /// `ClosePseudoConsole`, and there is no other way to reach it through
+    /// `portable-pty`.
+    master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     running: Arc<AtomicBool>,
@@ -227,7 +260,7 @@ impl PtySession {
             .map_err(PtyError::Write)?;
 
         Ok(Self {
-            master: Mutex::new(pair.master),
+            master: Mutex::new(Some(pair.master)),
             child: Arc::new(Mutex::new(child)),
             writer,
             running,
@@ -262,6 +295,8 @@ impl PtySession {
         self.master
             .lock()
             .map_err(|_| PtyError::Gone)?
+            .as_ref()
+            .ok_or(PtyError::Gone)?
             .resize(size)
             .map_err(|e| PtyError::Open(e.to_string()))
     }
@@ -349,7 +384,122 @@ impl PtySession {
         }
     }
 
-    /// Terminate the agent. Used when the user closes a session.
+    /// Stop the agent, giving it a chance to shut itself down first.
+    ///
+    /// `TerminateJobObject` is instant and unconditional: the agent's own
+    /// `SessionEnd` hook — one of the sixteen this app installs — never runs,
+    /// and the transcript the fleet reads for cost may never flush its final
+    /// usage records. So the hard kill is the last rung, not the first.
+    ///
+    /// The ladder has two rungs before the kill.
+    ///
+    /// **First, `ETX` written into the pty.** Both agents run their TUI in raw
+    /// mode and read the byte themselves, treating it as "stop what you are
+    /// doing" and — on a second one at an idle prompt — as "exit". This is the
+    /// gentlest rung and the only one that lets the agent choose its own
+    /// shutdown path.
+    ///
+    /// It is *not*, on this boundary, a console control event. Measured on
+    /// Windows 11 26100 through `portable-pty`'s ConPTY: writing `0x03` to the
+    /// master leaves `ping.exe` running for as long as you care to wait, both
+    /// directly and under `cmd /c`. conhost translates the byte into an input
+    /// record; nothing raises `CTRL_C_EVENT`. So a child that relies on the
+    /// console control path — rather than reading its own input — is untouched
+    /// by this rung, which is why it is not the only one.
+    ///
+    /// **Second, closing the pseudo-console.** `ClosePseudoConsole` sends
+    /// `CTRL_CLOSE_EVENT` to the attached process group with the hung-app
+    /// budget Windows gives a closing console, which is the sanctioned graceful
+    /// stop for a ConPTY client. `portable-pty` exposes no method for it, but
+    /// its `PsuedoCon` closes the console in `Drop` and the slave has already
+    /// been released, so dropping the master *is* the call. It returns
+    /// immediately on 26100.
+    ///
+    /// `GenerateConsoleCtrlEvent` is deliberately not used: it delivers to a
+    /// process group in the *caller's* console, and the daemon is not attached
+    /// to the agent's. Attaching would be process-wide, so stopping one session
+    /// would disturb the other twenty-nine.
+    pub fn stop(&self) -> Result<StopOutcome, PtyError> {
+        self.stop_within(STOP_CANCEL_GRACE, STOP_EXIT_GRACE)
+    }
+
+    /// [`PtySession::stop`] with explicit grace periods.
+    ///
+    /// Exists so the terminate rung is reachable in a test. Every child that
+    /// honours `CTRL_CLOSE_EVENT` — which on Windows is every console process
+    /// that has not blocked its own handler — exits on the second rung, so the
+    /// only way to exercise the third against a real process is to give the
+    /// earlier ones no time.
+    fn stop_within(
+        &self,
+        cancel_grace: Duration,
+        exit_grace: Duration,
+    ) -> Result<StopOutcome, PtyError> {
+        if !self.is_running() {
+            return Ok(StopOutcome::Graceful);
+        }
+
+        if self.write(&[INTERRUPT]).is_ok() && self.exited_within(cancel_grace) {
+            return Ok(StopOutcome::Graceful);
+        }
+
+        self.close_pseudo_console();
+        if self.exited_within(exit_grace) {
+            return Ok(StopOutcome::Graceful);
+        }
+
+        self.kill().map(|()| StopOutcome::Terminated)
+    }
+
+    /// Drop the master, which is what reaches `ClosePseudoConsole`.
+    ///
+    /// The reader thread holds its own duplicate of the output descriptor, so
+    /// it is not cut off mid-chunk; it sees the stream end when the console
+    /// does. `resize` and `write` correctly report [`PtyError::Gone`] after
+    /// this — the session is on its way out and there is nothing to resize.
+    fn close_pseudo_console(&self) {
+        if let Ok(mut master) = self.master.lock() {
+            drop(master.take());
+        }
+    }
+
+    /// Wait up to `grace` for the child to exit. `true` means it did.
+    fn exited_within(&self, grace: Duration) -> bool {
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+            use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+            if let Some(handle) = self.exit_signal.as_ref() {
+                let milliseconds = grace.as_millis().min(u128::from(u32::MAX)) as u32;
+                if unsafe { WaitForSingleObject(handle.0, milliseconds) } == WAIT_OBJECT_0 {
+                    self.running.store(false, Ordering::SeqCst);
+                    if let Ok(mut child) = self.child.lock() {
+                        let _ = child.try_wait();
+                    }
+                    return true;
+                }
+                return false;
+            }
+        }
+
+        // No waitable handle on this platform. Poll, but only for the length of
+        // one stop — this is not the steady-state supervision path.
+        let deadline = Instant::now() + grace;
+        while Instant::now() < deadline {
+            if matches!(self.try_wait(), Ok(Some(_))) {
+                return true;
+            }
+            std::thread::sleep(STOP_POLL_INTERVAL);
+        }
+        false
+    }
+
+    /// Terminate the agent immediately, with no chance to shut down.
+    ///
+    /// Prefer [`PtySession::stop`] for anything an operator asked for. This is
+    /// the fallback that stop falls back *to*, and the right call when the
+    /// session is already being discarded.
     pub fn kill(&self) -> Result<(), PtyError> {
         #[cfg(windows)]
         self.job.terminate().map_err(PtyError::Job)?;
@@ -726,4 +876,91 @@ mod tests {
         assert!(matches!(session.write(b"x"), Err(PtyError::Gone)));
         let _ = session.kill();
     }
+
+    /// The interrupt has to reach the child through the pseudo-console, or the
+    /// whole ladder is a five-second pause in front of the same hard kill.
+    #[cfg(windows)]
+    #[test]
+    fn stop_lets_the_child_end_itself_before_the_job_is_terminated() {
+        let cmd = ResolvedCommand {
+            program: PathBuf::from("cmd.exe"),
+            args: vec!["/c".into(), "ping -n 60 127.0.0.1 > nul".into()],
+            cwd: std::env::current_dir().expect("test cwd"),
+        };
+        let session = PtySession::spawn(&cmd, default_size(), |_| {}).expect("spawn cmd");
+        let pid = session.pid().expect("child pid");
+        assert!(process_is_running(pid), "child exited before the stop");
+
+        let started = Instant::now();
+        let outcome = session.stop().expect("stop the child");
+        assert_eq!(
+            outcome,
+            StopOutcome::Graceful,
+            "the child was terminated instead of ending itself after {:?}",
+            started.elapsed()
+        );
+        assert!(
+            started.elapsed() < STOP_CANCEL_GRACE + STOP_EXIT_GRACE,
+            "stop ran past its own budget"
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline && process_is_running(pid) {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(!process_is_running(pid), "child survived a graceful stop");
+    }
+
+    /// A child that outlasts every grace must still stop, and the fallback must
+    /// be reported rather than looking like a clean shutdown — a supervisor that
+    /// reports a hard kill as a graceful one hides the fact that the agent's
+    /// `SessionEnd` hook never ran.
+    #[cfg(windows)]
+    #[test]
+    fn stop_falls_back_to_terminating_and_says_so() {
+        let cmd = ResolvedCommand {
+            program: PathBuf::from("cmd.exe"),
+            args: vec!["/c".into(), "ping -n 60 127.0.0.1 > nul".into()],
+            cwd: std::env::current_dir().expect("test cwd"),
+        };
+        let session = PtySession::spawn(&cmd, default_size(), |_| {}).expect("spawn cmd");
+        let pid = session.pid().expect("child pid");
+
+        assert_eq!(
+            session
+                .stop_within(Duration::ZERO, Duration::ZERO)
+                .expect("stop the child"),
+            StopOutcome::Terminated,
+            "a terminated child was reported as a clean shutdown"
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline && process_is_running(pid) {
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(!process_is_running(pid), "child survived the fallback");
+    }
+
+    /// Closing the pseudo-console is the rung that actually reaches a console
+    /// child. Writing the interrupt byte does not: measured on 26100, `ping`
+    /// under this ConPTY ignores `0x03` entirely, which is why the ladder does
+    /// not stop at one rung.
+    #[cfg(windows)]
+    #[test]
+    fn the_interrupt_byte_alone_does_not_stop_a_console_child() {
+        let cmd = ResolvedCommand {
+            program: PathBuf::from("cmd.exe"),
+            args: vec!["/c".into(), "ping -n 60 127.0.0.1 > nul".into()],
+            cwd: std::env::current_dir().expect("test cwd"),
+        };
+        let session = PtySession::spawn(&cmd, default_size(), |_| {}).expect("spawn cmd");
+        std::thread::sleep(Duration::from_millis(500));
+        session.write(&[INTERRUPT]).expect("write the interrupt");
+        assert!(
+            !session.exited_within(Duration::from_millis(750)),
+            "0x03 now raises a console control event; the ladder can be shortened"
+        );
+        let _ = session.kill();
+    }
 }
+

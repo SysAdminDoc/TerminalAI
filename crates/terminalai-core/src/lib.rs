@@ -80,7 +80,7 @@ pub use notification::{
     AttentionNotification, NotificationCenter, NotificationChange, NotificationEvent,
     SuppressionReason, LONG_TOOL_GRACE_PERIOD, STARTUP_GRACE_PERIOD,
 };
-pub use pty::{PtySession, PtySize};
+pub use pty::{PtySession, PtySize, StopOutcome, STOP_CANCEL_GRACE, STOP_EXIT_GRACE};
 pub use registry::{
     AdmissionConfig, AdmissionSnapshot, BroadcastRefusal, BroadcastResult, RegistryError,
     RegistryEvent, SessionRegistry,
