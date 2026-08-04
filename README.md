@@ -1,6 +1,6 @@
 # TerminalAI
 
-[![version](https://img.shields.io/badge/version-0.8.0-blue.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.9.0-blue.svg)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#requirements)
 [![rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
@@ -45,7 +45,7 @@ when waiting on the handle.
 
 ## Status
 
-**v0.8.0 — core and desktop shell built, installed, and verified end to end.**
+**v0.9.0 — core and desktop shell built, installed, and verified end to end.**
 
 Working today (`terminalai-probe`, headless):
 
@@ -89,7 +89,7 @@ Working today (`terminalai-probe`, headless):
   answering a permission prompt blind
 - Runs one stored prompt across many projects, flagging repositories with uncommitted changes
   instead of launching into them
-- 506 default Rust tests over agent identification and resolution against an injected filesystem,
+- 520 default Rust tests over agent identification and resolution against an injected filesystem,
   the flag mapping, real-pty boundary and blocking exit wait, supervision state machine, registry,
   diagnostics, review aggregation and reviewed-mark expiry, the land gate against real
   repositories, environment leases, transcript tailing, the MCP boundary, cost model and vendored
@@ -99,8 +99,9 @@ Working today (`terminalai-probe`, headless):
   scrollback store, repository-declared templates, the broadcast eligibility rule, project
   discovery and roadmap scanning against this machine's own repositories, the prompt queue's state
   machine and the work queue's dirty-tree refusal, the fleet spend ledger and its admission ceiling,
-  memory-aware admission and job limits, and agent authentication state; 509 with the opt-in
-  app-server transport enabled, plus 263 frontend tests (`npm --prefix web test`)
+  memory-aware admission and job limits, agent authentication state, the bounded session
+  archive and the leftover-checkout survey; 523 with the opt-in
+  app-server transport enabled, plus 287 frontend tests (`npm --prefix web test`)
 
 `Roadmap_Blocked.md` records what is waiting on something external. The experimental
 Codex app-server adapter is available only when the daemon is built with the explicit
