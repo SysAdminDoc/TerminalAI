@@ -124,6 +124,7 @@ const state = {
   /// an ARIA listbox, and a non-option child would break its semantics.
   groupBy: "none",
   focusGeneration: 0,
+  focusQueue: Promise.resolve(),
   resizeTimer: null,
   lastSentSize: null,
   previewTimer: null,
@@ -1493,6 +1494,15 @@ async function loadSnapshot() {
 }
 
 async function focusSession(id) {
+  // The app-side output registry keeps only the newest route. Serializing the
+  // attach/restore sequence prevents rapid arrow navigation from letting an
+  // older request register its channel after a newer request has completed.
+  const switchPromise = state.focusQueue.then(() => focusSessionNow(id));
+  state.focusQueue = switchPromise.catch(() => {});
+  return switchPromise;
+}
+
+async function focusSessionNow(id) {
   const previousFocused = state.focused;
   state.focused = id;
   state.focusGeneration += 1;
@@ -1502,12 +1512,28 @@ async function focusSession(id) {
   updateTerminalHeader();
   try {
     await attachSessionOutput(id);
+    if (state.focused !== id) return;
     updateTerminalHeader();
     renderRows();
   } catch (error) {
+    // A later focus request or a session removal owns the pane now. An older
+    // failure must not roll that state back.
+    if (state.focused !== id) return;
     state.focused = previousFocused;
+    state.focusGeneration += 1;
+    state.outputChannel = null;
     renderRows();
     updateTerminalHeader();
+    try {
+      if (previousFocused) await attachSessionOutput(previousFocused);
+    } catch (restoreError) {
+      state.outputChannel = null;
+      showToast(t("focus-session-error", { error: `${String(error)}; ${String(restoreError)}` }));
+      return;
+    }
+    if (state.focused !== previousFocused) return;
+    updateTerminalHeader();
+    renderRows();
     showToast(t("focus-session-error", { error: String(error) }));
   }
 }

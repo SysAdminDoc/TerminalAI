@@ -103,6 +103,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   buttons through unhandled promise rejections.
 - Launcher previews now carry a request generation, so a slower response for an
   older folder or agent choice cannot overwrite the current command preview.
+- Focus switches now serialize output-channel registration and reattach the prior
+  session after a failed switch, so rapid navigation cannot leave the pane blank
+  or restore an older focus over a newer one.
 
 - Persistent attention states suppressed during startup or long-tool grace are now rechecked and
   raised when the grace period ends, even without another status transition.
