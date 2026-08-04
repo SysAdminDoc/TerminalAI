@@ -13,6 +13,7 @@
 //! healthy-looking row.
 
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::agent::Agent;
@@ -93,16 +94,14 @@ struct RawClaudeSession {
 ///
 /// `home` is the user's home directory; `is_running` decides liveness for a
 /// PID, injected so the reconciliation logic is testable without spawning
-/// processes.
+/// processes. None means the registry directory could not be read; Some —
+/// including Some(Vec::new()) — means the directory was readable.
 pub fn claude_sessions(
     home: &Path,
     is_running: &dyn Fn(u32) -> Option<bool>,
-) -> Vec<ExternalSession> {
+) -> Option<Vec<ExternalSession>> {
     let dir = home.join(CLAUDE_SESSION_DIR);
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        // A missing directory means "we cannot tell", not "nothing is running".
-        return Vec::new();
-    };
+    let entries = std::fs::read_dir(&dir).ok()?;
     let mut sessions = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
@@ -122,7 +121,7 @@ pub fn claude_sessions(
         }
     }
     sessions.sort_by_key(|session| session.pid);
-    sessions
+    Some(sessions)
 }
 
 fn to_session(
@@ -194,14 +193,36 @@ pub fn process_is_running(pid: u32) -> Option<bool> {
     }
 }
 
-/// Ask the CLI directly. Used only to reconcile when the registry directory is
-/// unreadable, because it costs a process spawn.
-pub fn enumerate_via_cli(binary: &Path) -> Option<Vec<ExternalSession>> {
-    use std::process::{Command, Stdio};
+fn collect_cli_output(mut child: Child) -> Option<Vec<u8>> {
+    use std::io::Read;
 
-    let mut command = Command::new(binary);
+    let mut stdout = child.stdout.take()?;
+    // Drain while the parent watches the deadline. Waiting first would let a
+    // sufficiently large JSON response fill the pipe and deadlock the child.
+    let reader = std::thread::spawn(move || {
+        let mut output = Vec::new();
+        stdout.read_to_end(&mut output).map(|_| output)
+    });
+    let deadline = std::time::Instant::now() + ENUMERATION_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Ok(None) | Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return None;
+            }
+        }
+    }
+    reader.join().ok()?.ok()
+}
+
+fn enumerate_command(mut command: Command) -> Option<Vec<ExternalSession>> {
     command
-        .args(["agents", "--json"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -210,29 +231,22 @@ pub fn enumerate_via_cli(binary: &Path) -> Option<Vec<ExternalSession>> {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000);
     }
-    let mut child = command.spawn().ok()?;
-    let deadline = std::time::Instant::now() + ENUMERATION_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-            Err(_) => return None,
-        }
-    }
-    let output = child.wait_with_output().ok()?;
-    let raw: Vec<RawClaudeSession> = serde_json::from_slice(&output.stdout).ok()?;
+    let child = command.spawn().ok()?;
+    let output = collect_cli_output(child)?;
+    let raw: Vec<RawClaudeSession> = serde_json::from_slice(&output).ok()?;
     Some(
         raw.into_iter()
             .filter_map(|session| to_session(session, &process_is_running))
             .collect(),
     )
+}
+
+/// Ask the CLI directly. Used only to reconcile when the registry directory is
+/// unreadable, because it costs a process spawn.
+pub fn enumerate_via_cli(binary: &Path) -> Option<Vec<ExternalSession>> {
+    let mut command = Command::new(binary);
+    command.args(["agents", "--json"]);
+    enumerate_command(command)
 }
 
 #[cfg(test)]
@@ -266,7 +280,7 @@ mod tests {
             r#"{"pid":20196,"sessionId":"9e496a1d-a49b-4201-b808-0e06da543200","cwd":"C:\\Users\\me","startedAt":1785774955558,"procStart":"639213573550673230","version":"2.1.220","kind":"interactive","entrypoint":"claude-vscode","name":"claude-0d"}"#,
         );
 
-        let sessions = claude_sessions(&home, &|_| Some(true));
+        let sessions = claude_sessions(&home, &|_| Some(true)).expect("readable registry");
         assert_eq!(sessions.len(), 1);
         let session = &sessions[0];
         assert_eq!(session.agent, Agent::Claude);
@@ -313,10 +327,10 @@ mod tests {
             4242,
             r#"{"pid":4242,"cwd":"/tmp/x","procStart":"1"}"#,
         );
-        let sessions = claude_sessions(&home, &|_| None);
+        let sessions = claude_sessions(&home, &|_| None).expect("readable registry");
         assert_eq!(sessions[0].state, ExternalState::Unknown);
 
-        let sessions = claude_sessions(&home, &|_| Some(false));
+        let sessions = claude_sessions(&home, &|_| Some(false)).expect("readable registry");
         assert_eq!(sessions[0].state, ExternalState::Ended);
         std::fs::remove_dir_all(home).ok();
     }
@@ -325,19 +339,54 @@ mod tests {
     fn an_unreadable_or_absent_registry_reports_nothing_rather_than_guessing() {
         let home = scratch("absent");
         // No registry directory at all.
-        assert!(claude_sessions(&home, &|_| Some(true)).is_empty());
+        assert!(claude_sessions(&home, &|_| Some(true)).is_none());
 
         // A malformed file is skipped; a valid sibling still resolves.
         let dir = home.join(CLAUDE_SESSION_DIR);
         write_registry(&dir, 1, "{ not json");
         write_registry(&dir, 2, r#"{"pid":2,"cwd":"/tmp/y"}"#);
         std::fs::write(dir.join("notes.txt"), "ignored").expect("write non-json");
-        let sessions = claude_sessions(&home, &|_| Some(true));
+        let sessions = claude_sessions(&home, &|_| Some(true)).expect("readable registry");
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].pid, 2);
         // A file without procStart still yields a usable, if weaker, identity.
         assert_eq!(sessions[0].identity(), "claude:2");
         std::fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn a_readable_empty_registry_is_not_unavailable() {
+        let home = scratch("empty");
+        std::fs::create_dir_all(home.join(CLAUDE_SESSION_DIR)).expect("create empty registry");
+
+        let sessions = claude_sessions(&home, &|_| Some(true)).expect("readable registry");
+
+        assert!(sessions.is_empty());
+        std::fs::remove_dir_all(home).ok();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_large_cli_response_is_drained_before_parsing() {
+        let script =
+            r#"$json='[{"pid":1,"cwd":"C:\\temp"}]'; [Console]::Write($json + (' ' * 200000))"#;
+        let mut command = Command::new("powershell.exe");
+        command.args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            script,
+        ]);
+        let started = std::time::Instant::now();
+
+        let sessions = enumerate_command(command).expect("large CLI response");
+
+        assert_eq!(sessions.len(), 1);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the reader must drain the pipe instead of waiting for the timeout"
+        );
     }
 
     #[test]
@@ -351,7 +400,7 @@ mod tests {
         );
         write_registry(&dir, 10000, r#"{"pid":10000,"cwd":"C:\\Users\\me"}"#);
 
-        let sessions = claude_sessions(&home, &|_| Some(true));
+        let sessions = claude_sessions(&home, &|_| Some(true)).expect("readable registry");
 
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].pid, 10000);
@@ -368,13 +417,15 @@ mod tests {
         if !home.join(CLAUDE_SESSION_DIR).is_dir() {
             return;
         }
-        for session in claude_sessions(&home, &process_is_running) {
-            assert!(session.pid > 0);
-            assert_ne!(
-                session.identity(),
-                "claude:0",
-                "a registry entry produced an unusable identity"
-            );
+        if let Some(sessions) = claude_sessions(&home, &process_is_running) {
+            for session in sessions {
+                assert!(session.pid > 0);
+                assert_ne!(
+                    session.identity(),
+                    "claude:0",
+                    "a registry entry produced an unusable identity"
+                );
+            }
         }
     }
 }

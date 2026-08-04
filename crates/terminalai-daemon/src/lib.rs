@@ -45,7 +45,7 @@ pub mod app_server;
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -115,16 +115,23 @@ fn external_sessions() -> Vec<terminalai_core::ExternalSession> {
     let Some(home) = dirs::home_dir() else {
         return Vec::new();
     };
-    let sessions =
-        terminalai_core::claude_sessions(&home, &terminalai_core::external::process_is_running);
-    if !sessions.is_empty() {
-        return sessions;
+    external_sessions_from(&home, || {
+        // The registry directory was missing or unreadable. Ask the CLI once.
+        agent::resolve(Agent::Claude, None)
+            .ok()
+            .and_then(|binary| terminalai_core::external::enumerate_via_cli(&binary.path))
+            .unwrap_or_default()
+    })
+}
+
+fn external_sessions_from<F>(home: &Path, fallback: F) -> Vec<terminalai_core::ExternalSession>
+where
+    F: FnOnce() -> Vec<terminalai_core::ExternalSession>,
+{
+    match terminalai_core::claude_sessions(home, &terminalai_core::external::process_is_running) {
+        Some(sessions) => sessions,
+        None => fallback(),
     }
-    // The registry directory was missing or unreadable. Ask the CLI once.
-    agent::resolve(Agent::Claude, None)
-        .ok()
-        .and_then(|binary| terminalai_core::external::enumerate_via_cli(&binary.path))
-        .unwrap_or_default()
 }
 
 /// Read one newline-delimited frame, refusing anything over [`MAX_FRAME_BYTES`].
@@ -1757,6 +1764,31 @@ mod tests {
             MAX_FRAME_BYTES >= (MAX_HISTORY_BYTES as usize).saturating_mul(4),
             "JSON byte arrays need several times their raw history size"
         );
+    }
+
+    #[test]
+    fn readable_empty_external_registry_does_not_invoke_cli_fallback() {
+        let home = std::env::temp_dir().join(format!(
+            "terminalai-daemon-external-empty-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(home.join(".claude").join("sessions"))
+            .expect("create readable empty registry");
+        let fallback_called = Arc::new(AtomicBool::new(false));
+        let marker = fallback_called.clone();
+
+        let sessions = external_sessions_from(&home, move || {
+            marker.store(true, Ordering::Relaxed);
+            Vec::new()
+        });
+
+        assert!(sessions.is_empty());
+        assert!(
+            !fallback_called.load(Ordering::Relaxed),
+            "a readable empty registry must not spawn the CLI fallback"
+        );
+        let _ = fs::remove_dir_all(home);
     }
 
     #[test]

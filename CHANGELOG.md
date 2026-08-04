@@ -95,6 +95,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   in a burst exactly once, then stops when the renderer is attached or the
   startup handshake has been answered. This prevents the focused xterm from
   receiving a second, incorrect `1;1` response.
+- External-session discovery now distinguishes an unavailable registry from a
+  readable empty one, and drains large CLI responses while enforcing its
+  timeout, avoiding repeated spawns and pipe deadlocks.
 
 - Persistent attention states suppressed during startup or long-tool grace are now rechecked and
   raised when the grace period ends, even without another status transition.
