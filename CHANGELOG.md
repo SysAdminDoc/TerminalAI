@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- The restart budget is a rolling window rather than a lifetime counter. Five restarts spread over
+  a week used to permanently kill a session that had run healthily in between, because nothing ever
+  reset the count. A process that runs for ten continuous minutes now clears the budget — the
+  number and the reason are Kubernetes' CrashLoopBackOff reset — while a genuine crash loop still
+  exhausts it in five.
+
+- Restart backoff is now fully jittered. Failures here are correlated by construction: one provider
+  rate limit or one dropped network takes every session at the same instant, and a deterministic
+  delay guaranteed all of them retried at the same instants against the service that had just
+  refused them. The delay is drawn uniformly from zero to the same exponential ceiling, which is
+  the variant AWS measured as spreading a synchronised fleet fastest. A random source that fails
+  yields the full ceiling rather than zero.
+
 - Stopping a session now gives the agent a chance to shut itself down. `TerminateJobObject` fired
   immediately, so the `SessionEnd` hook — one of the sixteen this app installs — never ran, and the
   transcript the fleet reads for cost never flushed its final usage records. The stop is now a

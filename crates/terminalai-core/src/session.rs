@@ -23,6 +23,20 @@ pub const MAX_RESTARTS: u32 = 5;
 pub const RESTART_BACKOFF_BASE: Duration = Duration::from_millis(250);
 pub const RESTART_BACKOFF_MAX: Duration = Duration::from_secs(30);
 
+/// How long a process must run before its predecessors' restarts stop counting
+/// against it.
+///
+/// Every mature supervisor scopes the budget to a window rather than to the
+/// lifetime of the thing it supervises: OTP pairs `intensity` with `period`,
+/// systemd pairs `StartLimitBurst` with `StartLimitIntervalSec`, and Kubernetes
+/// resets the CrashLoopBackOff counter after ten minutes of successful running.
+/// Ten minutes is Kubernetes' number, chosen for the same reason: it is long
+/// enough that a genuine crash loop cannot hide inside it, and short enough that
+/// a session which crashes once a day recovers every day. Without it, five
+/// restarts spread over a week permanently kill a session that ran healthily in
+/// between.
+pub const RESTART_WINDOW: Duration = Duration::from_secs(10 * 60);
+
 /// `STATUS_CONTROL_C_EXIT` — what a Windows console process reports after the
 /// operator pressed Ctrl-C in its pane. It is a deliberate stop by a person,
 /// not a fault, so the supervisor treats it as one.
@@ -278,6 +292,11 @@ pub struct Session {
     pub phase: SessionPhase,
     pub health: SessionHealth,
     pub restarts: u32,
+    /// When the current process started, so the restart budget can be scoped to
+    /// a window instead of counting for the life of the session. `None` before
+    /// the first spawn and after every exit.
+    #[serde(default)]
+    pub process_started_at: Option<SystemTime>,
     pub last_exit_code: Option<u32>,
     pub backoff_until: Option<SystemTime>,
     pub state_since: SystemTime,
@@ -361,6 +380,7 @@ impl Session {
             phase: SessionPhase::Starting,
             health: SessionHealth::Starting,
             restarts: 0,
+            process_started_at: None,
             last_exit_code: None,
             backoff_until: None,
             state_since: now,
@@ -466,6 +486,7 @@ impl Session {
     /// startup phase, but the supervision boundary is now healthy.
     pub fn mark_spawned_at(&mut self, pid: Option<u32>, now: SystemTime) {
         self.pid = pid;
+        self.process_started_at = Some(now);
         self.backoff_until = None;
         self.set_status_at(
             SessionStatus::Starting,
@@ -568,6 +589,17 @@ impl Session {
         // Classify before counting. An agent that finished its work is not
         // spending a restart from the budget, and it is not coming back on its
         // own — it is done, and the row says so.
+        // A process that ran for a full window earned a clean slate. Scoping the
+        // budget this way is what stops five restarts spread over a week from
+        // permanently killing a session that ran healthily in between.
+        if self
+            .process_started_at
+            .and_then(|started| now.duration_since(started).ok())
+            .is_some_and(|ran_for| ran_for >= RESTART_WINDOW)
+        {
+            self.restarts = 0;
+        }
+        self.process_started_at = None;
         if classify_exit(exit_code) == ExitClass::Finished {
             self.backoff_until = None;
             self.set_status_at(SessionStatus::Exited, now, source, true);
@@ -658,12 +690,43 @@ pub(crate) fn fresh_native_session_id() -> Option<String> {
     ))
 }
 
+/// Full jitter: `random(0, min(cap, base·2^n))`.
+///
+/// Failures here are correlated by construction — one provider rate limit or one
+/// network drop takes every session in the fleet at the same instant — so a
+/// deterministic delay guarantees all of them retry together against the service
+/// that just refused them. AWS measured full jitter beating un-jittered backoff
+/// by over 50% on contending calls, and it is the variant that spreads a
+/// synchronised fleet fastest.
 fn restart_backoff(attempt: u32) -> Duration {
+    Duration::from_millis(jitter(restart_backoff_ceiling(attempt).as_millis() as u64))
+}
+
+/// The un-jittered ceiling the delay is drawn from. Separate so a test can pin
+/// the exponential growth without depending on the random draw.
+fn restart_backoff_ceiling(attempt: u32) -> Duration {
     let exponent = attempt.saturating_sub(1).min(63);
     let multiplier = 1u128 << exponent;
     let millis = RESTART_BACKOFF_BASE.as_millis().saturating_mul(multiplier);
     let capped = millis.min(RESTART_BACKOFF_MAX.as_millis());
     Duration::from_millis(capped as u64)
+}
+
+/// Uniform draw from `0..=ceiling`.
+///
+/// `getrandom` is already a workspace dependency, so this costs no new crate. A
+/// random source that fails returns the ceiling rather than zero: an immediate
+/// unjittered retry into a provider that just refused the whole fleet is the one
+/// outcome worth avoiding.
+fn jitter(ceiling_millis: u64) -> u64 {
+    if ceiling_millis == 0 {
+        return 0;
+    }
+    let mut bytes = [0u8; 8];
+    if getrandom::fill(&mut bytes).is_err() {
+        return ceiling_millis;
+    }
+    u64::from_le_bytes(bytes) % (ceiling_millis + 1)
 }
 
 /// Sort key for the fleet list: attention first, then longest-waiting.
@@ -869,18 +932,20 @@ mod tests {
         let spec = spec_for(Agent::Claude, Path::new("."));
         let mut session = Session::new(SessionId::new(4), &spec);
         let mut now = SystemTime::UNIX_EPOCH;
-        for expected in [250, 500, 1_000, 2_000, 4_000] {
-            assert_eq!(
-                session.schedule_restart_at(Some(17), now),
-                RestartDecision::Backoff(Duration::from_millis(expected))
+        for ceiling in [250, 500, 1_000, 2_000, 4_000] {
+            let RestartDecision::Backoff(delay) = session.schedule_restart_at(Some(17), now) else {
+                panic!("attempt {} did not schedule a restart", session.restarts);
+            };
+            // Full jitter: the delay is drawn from zero up to the exponential
+            // ceiling, so pin the ceiling rather than the draw.
+            assert!(
+                delay <= Duration::from_millis(ceiling),
+                "delay {delay:?} exceeded its ceiling of {ceiling}ms"
             );
             assert_eq!(session.phase, SessionPhase::Backoff);
             assert_eq!(session.health, SessionHealth::Degraded);
-            assert_eq!(
-                session.backoff_until,
-                Some(now + Duration::from_millis(expected))
-            );
-            now += Duration::from_millis(expected);
+            assert_eq!(session.backoff_until, Some(now + delay));
+            now += Duration::from_millis(ceiling);
         }
         assert_eq!(session.restarts, MAX_RESTARTS);
         assert_eq!(
@@ -904,6 +969,85 @@ mod tests {
         assert_eq!(session.pid, None);
         assert_eq!(session.last_exit_code, Some(3));
         assert_eq!(session.restarts, 0);
+    }
+
+    #[test]
+    fn the_restart_budget_resets_after_a_window_of_continuous_running() {
+        let spec = spec_for(Agent::Claude, Path::new("."));
+        let mut session = Session::new(SessionId::new(20), &spec);
+        let mut now = SystemTime::UNIX_EPOCH;
+
+        // Four crashes in quick succession spend four of the five.
+        for _ in 0..4 {
+            session.mark_spawned_at(Some(1), now);
+            now += Duration::from_secs(5);
+            assert!(matches!(
+                session.schedule_restart_at(Some(1), now),
+                RestartDecision::Backoff(_)
+            ));
+            now += Duration::from_secs(1);
+        }
+        assert_eq!(session.restarts, 4);
+
+        // The fifth process runs out a full window before it dies. Without the
+        // window that crash is the sixth strike and the session is dead forever;
+        // with it, the budget starts over.
+        session.mark_spawned_at(Some(2), now);
+        now += RESTART_WINDOW + Duration::from_secs(1);
+        assert!(matches!(
+            session.schedule_restart_at(Some(1), now),
+            RestartDecision::Backoff(_)
+        ));
+        assert_eq!(session.restarts, 1, "a healthy run did not clear the budget");
+    }
+
+    #[test]
+    fn a_short_lived_process_does_not_clear_the_budget() {
+        let spec = spec_for(Agent::Codex, Path::new("."));
+        let mut session = Session::new(SessionId::new(21), &spec);
+        let mut now = SystemTime::UNIX_EPOCH;
+        for _ in 0..MAX_RESTARTS {
+            session.mark_spawned_at(Some(1), now);
+            now += RESTART_WINDOW - Duration::from_secs(1);
+            assert!(matches!(
+                session.schedule_restart_at(Some(1), now),
+                RestartDecision::Backoff(_)
+            ));
+            now += Duration::from_secs(1);
+        }
+        session.mark_spawned_at(Some(1), now);
+        now += Duration::from_secs(1);
+        assert_eq!(
+            session.schedule_restart_at(Some(1), now),
+            RestartDecision::Failed,
+            "a crash loop escaped the budget"
+        );
+    }
+
+    /// One provider rate limit takes every session at once, so a deterministic
+    /// backoff would have all of them retry at the same instants against the
+    /// service that just refused them.
+    #[test]
+    fn a_fleet_failing_together_does_not_retry_in_lockstep() {
+        let spec = spec_for(Agent::Claude, Path::new("."));
+        let now = SystemTime::UNIX_EPOCH;
+        let delays: std::collections::BTreeSet<_> = (0..24)
+            .map(|index| {
+                let mut session = Session::new(SessionId::new(index), &spec);
+                // Third attempt: a 1s ceiling leaves ample room to distinguish.
+                session.restarts = 2;
+                match session.schedule_restart_at(Some(1), now) {
+                    RestartDecision::Backoff(delay) => delay,
+                    other => panic!("expected a backoff, got {other:?}"),
+                }
+            })
+            .collect();
+        assert!(
+            delays.len() > 12,
+            "24 sessions failing in the same instant produced only {} distinct delays",
+            delays.len()
+        );
+        assert!(delays.iter().all(|delay| *delay <= Duration::from_secs(1)));
     }
 
     #[test]
@@ -958,10 +1102,12 @@ mod tests {
     fn an_abnormal_exit_still_restarts() {
         let spec = spec_for(Agent::Claude, Path::new("."));
         let mut session = Session::new(SessionId::new(8), &spec);
-        assert_eq!(
-            session.schedule_restart_at(Some(1), SystemTime::UNIX_EPOCH),
-            RestartDecision::Backoff(RESTART_BACKOFF_BASE)
-        );
+        let RestartDecision::Backoff(delay) =
+            session.schedule_restart_at(Some(1), SystemTime::UNIX_EPOCH)
+        else {
+            panic!("an abnormal exit did not schedule a restart");
+        };
+        assert!(delay <= RESTART_BACKOFF_BASE);
         assert_eq!(session.restarts, 1);
         assert_eq!(session.phase, SessionPhase::Backoff);
     }
