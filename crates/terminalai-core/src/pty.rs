@@ -618,8 +618,14 @@ pub fn default_size() -> PtySize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The pty tests that need these drive a real ConPTY child, so they are
+    // Windows-only; without the gate the imports read as dead on every other
+    // target and hide a genuinely unused one.
+    #[cfg(windows)]
     use std::path::PathBuf;
+    #[cfg(windows)]
     use std::sync::mpsc;
+    #[cfg(windows)]
     use std::time::{Duration, Instant};
 
     #[test]

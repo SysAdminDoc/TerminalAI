@@ -12,6 +12,9 @@
 //! Exit codes: 0 success, 1 usage error, 2 resolution failure, 3 spawn failure.
 
 use std::path::PathBuf;
+// Spawning a child directly is the Windows-only `exec` path; the control-plane
+// commands go through the daemon.
+#[cfg(windows)]
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;

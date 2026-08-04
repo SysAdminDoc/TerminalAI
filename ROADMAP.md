@@ -160,13 +160,6 @@ additions; where they touch, the note says so.
 
 ### P2
 
-- [ ] P2 — 24 `cfg(unix)` code paths have never been compiled
-  Why: no non-Windows target is installed, so the cross-platform branches are not merely untested — they have never been type-checked, and nothing would catch a syntax or signature error in them.
-  Evidence: `rustup target list --installed` returns empty and `rustup toolchain list` shows only the linked `terminalai` toolchain. 24 `cfg(unix)`/`cfg(not(windows))` occurrences across 8 files: `pty.rs`, `atomic_file.rs`, `environment.rs`, `external.rs`, `review.rs`, `terminalai-app/src/main.rs`, `terminalai-daemon/src/lib.rs`, `terminalai-probe/src/main.rs`. The roadmap's own "Unaudited — needs a pass" item names non-Windows paths as uncovered.
-  Touches: `scripts/verify-installer.ps1` or a new check script; no source changes required to start
-  Acceptance: `rustup target add x86_64-unknown-linux-gnu` and `cargo check --target x86_64-unknown-linux-gnu --workspace` run clean and are part of the pre-release checks. Running those branches is a separate step (WSL2); compiling them is the cheap half and closes the larger hole.
-  Complexity: S
-
 - [ ] P2 — The active Rust toolchain cannot install components, blocking coverage and Miri
   Why: `llvm-tools-preview` cannot be added to a rustup *linked* toolchain, so `cargo-llvm-cov` and `cargo miri` are unavailable — two of the cheapest ways to find untested error arms and UB in the `windows-sys` FFI glue.
   Evidence: `rustup toolchain list` shows only `terminalai (active, default)`, which is the standalone MSI install linked into rustup; `rustup component add llvm-tools-preview` fails with "toolchain 'terminalai' does not support components", and no `llvm-cov`/`llvm-profdata` exists under that toolchain's `bin`. This is also the root cause of the previously recorded `cargo tauri build` toolchain trap in `CLAUDE.md`.

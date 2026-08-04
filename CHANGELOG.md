@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Fixed
+
+- The daemon's peer-PID check did not compile on Unix. `interprocess` reports the peer's process id
+  as the platform's own type — a signed `pid_t` on Unix, `u32` on Windows — and the handshake
+  compared it against the client-declared `u32`, so the connection-authentication path had a type
+  error nothing on this machine could see. Found by compiling the non-Windows branches for the first
+  time. The conversion now lives at the one boundary, and a negative `pid_t` (which names a process
+  group, never a peer) becomes `None` rather than wrapping into a large positive id that could
+  collide with a real one.
+
 ### Added
 
 - A history of finished sessions. The store has written an archive record for every retired row
@@ -19,6 +29,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   carries no handle to anything live.
 
 ### Changed
+
+- The non-Windows code paths are compiled. 24 `cfg(unix)` / `cfg(not(windows))` branches across
+  eight files had never been type-checked, because no non-Windows target was installed — so an error
+  in any of them survived a full green suite, which is how the peer-PID defect above lived here.
+  `scripts/check-cross-targets.ps1` builds `terminalai-core`, `terminalai-daemon` and
+  `terminalai-probe` for `x86_64-unknown-linux-gnu` and exits non-zero on failure. Two pins in it are
+  load-bearing and were each found the hard way: the toolchain must be a managed rustup one, because
+  the linked standalone install refuses to add targets at all; and `RUSTC` must be set explicitly,
+  because that standalone install sits earlier on PATH and cargo would otherwise drive a rustc whose
+  sysroot has no Linux std — reporting the target as missing when it is installed. `terminalai-app`
+  is excluded and says so: on Linux its Tauri tree pulls `libdbus-sys`, whose build script needs a
+  Linux pkg-config that cross-checking from Windows cannot supply.
 
 - The stylesheet is one declaration per line. `styles.css` shipped as 293 lines whose longest was
   2,204 characters, with whole rules concatenated onto one line — and a literal `\n` inside one of

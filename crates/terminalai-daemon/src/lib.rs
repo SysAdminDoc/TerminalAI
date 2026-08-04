@@ -846,6 +846,23 @@ fn console_shutdown_requested() -> bool {
     false
 }
 
+/// Normalize the peer's process id to the type the handshake compares against.
+///
+/// `interprocess` reports it as the platform's own: `pid_t` — a *signed* `i32` —
+/// on Unix, and `u32` on Windows. The client declares a `u32`, so the conversion
+/// belongs at this one boundary rather than at each use. A negative `pid_t`
+/// names a process group, never a peer, so it becomes `None` rather than
+/// wrapping into a large positive id that could collide with a real one.
+#[cfg(unix)]
+fn normalize_peer_pid(pid: Option<i32>) -> Option<u32> {
+    pid.and_then(|pid| u32::try_from(pid).ok())
+}
+
+#[cfg(windows)]
+fn normalize_peer_pid(pid: Option<u32>) -> Option<u32> {
+    pid
+}
+
 fn handle_connection(
     stream: LocalSocketStream,
     registry: SessionRegistry,
@@ -854,7 +871,7 @@ fn handle_connection(
     shutdown: Arc<AtomicBool>,
     hook_endpoint: HookEndpoint,
 ) -> Result<(), IpcError> {
-    let peer_pid = stream.peer_creds()?.pid();
+    let peer_pid = normalize_peer_pid(stream.peer_creds()?.pid());
     tracing::debug!(peer_pid = ?peer_pid, "control connection accepted");
     let (receive, send) = stream.split();
     let (outgoing_tx, outgoing_rx) = mpsc::sync_channel::<WireMessage>(OUTGOING_QUEUE_CAPACITY);

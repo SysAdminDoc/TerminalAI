@@ -219,6 +219,7 @@ cargo tauri build --ci --no-sign --bundles nsis,msi -- --manifest-path Cargo.tom
 
 # Release gate: install into a scratch prefix, launch, assert the window and the
 # daemon, then uninstall. Non-zero exit means do not publish.
+pwsh -NoProfile -File scripts/check-cross-targets.ps1
 pwsh -NoProfile -File scripts/verify-installer.ps1
 
 # Re-derive the MSRV floor after any dependency bump. The workspace rust-version
