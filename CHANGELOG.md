@@ -7,6 +7,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- The grid no longer gives zero-width characters a cell of their own. Combining marks, zero-width
+  joiners and variation selectors were forced to width 1, so `e` + U+0301 occupied two columns here
+  and one in every real terminal — and this grid is what the pinned split view draws. They now
+  attach to the glyph they modify, stepping back over a wide character's filler half to land on the
+  character rather than beside it. A mark with nothing to attach to is dropped, and a control
+  character that reaches the same path is ignored the way a real terminal ignores it.
+
+- Shrinking the grid keeps the newest rows instead of the oldest, and a resize no longer discards
+  the scrolling region. Copying from the top-left threw away the cursor line and the last output —
+  the part anyone is actually looking at — while xterm.js, drawing the same stream in the focused
+  pane, reflowed and kept them; ConPTY's quirky resize means nothing re-emits the buffer, so the
+  consumer decides what survives. A DECSTBM region set by a TUI agent is now clamped to the new
+  screen rather than reset, because agents set it once and never send it again.
+
 - Every production thread now starts through `thread::Builder` and degrades instead of panicking.
   The workspace standardised on the builder because `std::thread::spawn` panics exactly where the
   builder returns an error — thread exhaustion, which is what a thirty-session fleet with a reader,

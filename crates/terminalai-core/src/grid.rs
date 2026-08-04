@@ -31,9 +31,25 @@ pub struct TerminalGridSnapshot {
     pub lines: Vec<String>,
 }
 
+/// How many zero-width characters one cell retains.
+///
+/// Inline rather than a `Vec` because scrolling moves whole rows with
+/// `copy_within`, which needs `Copy` — a heap-backed cell would turn every
+/// linefeed into an allocation on the hot path. Four covers what actually
+/// arrives: a base plus an accent, or an emoji plus a variation selector and a
+/// zero-width joiner. Marks past the cap are dropped, which changes what the
+/// text renders as but never what it *measures* as, and measurement is what
+/// this grid exists for.
+const MAX_COMBINING: usize = 4;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Cell {
     character: char,
+    /// Zero-width characters that belong to this cell — combining marks, ZWJ,
+    /// variation selectors. They occupy no column of their own in any real
+    /// terminal, so they attach here rather than consuming the next cell.
+    combining: [char; MAX_COMBINING],
+    combining_len: u8,
     continuation: bool,
 }
 
@@ -41,7 +57,21 @@ impl Cell {
     const fn blank() -> Self {
         Self {
             character: ' ',
+            combining: [' '; MAX_COMBINING],
+            combining_len: 0,
             continuation: false,
+        }
+    }
+
+    fn combining(&self) -> &[char] {
+        &self.combining[..self.combining_len as usize]
+    }
+
+    fn push_combining(&mut self, c: char) {
+        let index = self.combining_len as usize;
+        if index < MAX_COMBINING {
+            self.combining[index] = c;
+            self.combining_len += 1;
         }
     }
 }
@@ -76,26 +106,51 @@ impl Screen {
         }
     }
 
+    /// Resize the screen, keeping the newest rows and the scrolling region.
+    ///
+    /// ConPTY's "quirky resize" means nothing re-emits the buffer, so the
+    /// consumer owns what survives. Copying from row zero threw away the bottom
+    /// of the screen on every shrink — the cursor line and the last output, the
+    /// only part anyone was looking at — while xterm.js, which draws the same
+    /// stream in the focused pane, keeps them. Rows are taken from the bottom
+    /// so the two agree.
+    ///
+    /// The scrolling region is clamped rather than reset. A TUI agent sets
+    /// DECSTBM once and does not re-send it, so discarding it on a window drag
+    /// silently turned its scrolling area back into the whole screen.
     fn resize(&mut self, rows: usize, cols: usize) {
         let rows = rows.max(1);
         let cols = cols.max(1);
         let mut cells = vec![Cell::blank(); rows * cols];
         let copy_rows = self.rows.min(rows);
         let copy_cols = self.cols.min(cols);
+        // Bottom-anchored on both sides: the last `copy_rows` of the old screen
+        // become the last `copy_rows` of the new one.
+        let old_offset = self.rows - copy_rows;
+        let new_offset = rows - copy_rows;
         for row in 0..copy_rows {
-            let old_start = row * self.cols;
-            let new_start = row * cols;
+            let old_start = (old_offset + row) * self.cols;
+            let new_start = (new_offset + row) * cols;
             cells[new_start..new_start + copy_cols]
                 .copy_from_slice(&self.cells[old_start..old_start + copy_cols]);
         }
+        // The cursor moves with the content it sits in, not with the row index.
+        self.cursor_row = (self.cursor_row + new_offset).saturating_sub(old_offset);
+        let previous_rows = self.rows;
         self.rows = rows;
         self.cols = cols;
         self.cells = cells;
         self.cursor_row = self.cursor_row.min(rows - 1);
         self.cursor_col = self.cursor_col.min(cols - 1);
         self.wrap_pending = false;
-        self.scroll_top = 0;
-        self.scroll_bottom = rows;
+        if self.scroll_top == 0 && self.scroll_bottom >= previous_rows {
+            // The whole screen was the region; it still is.
+            self.scroll_top = 0;
+            self.scroll_bottom = rows;
+        } else {
+            self.scroll_top = self.scroll_top.min(rows - 1);
+            self.scroll_bottom = self.scroll_bottom.clamp(self.scroll_top + 1, rows);
+        }
         self.tabstops = default_tabstops(cols);
     }
 
@@ -118,6 +173,31 @@ impl Screen {
         row * self.cols + col
     }
 
+    /// Attach a zero-width character to the cell the cursor last wrote.
+    ///
+    /// `e` followed by U+0301 is one column everywhere else; giving the mark a
+    /// cell of its own made the grid disagree with the renderer about where a
+    /// line wraps, and the pinned split view draws this grid directly. A mark
+    /// arriving with nothing to attach to is dropped — there is no preceding
+    /// glyph for it to modify, and inventing a base character would be worse.
+    fn put_zero_width(&mut self, c: char) {
+        if self.cursor_col == 0 && !self.wrap_pending {
+            return;
+        }
+        let col = if self.wrap_pending {
+            self.cursor_col
+        } else {
+            self.cursor_col - 1
+        };
+        let mut index = self.cell_index(self.cursor_row, col);
+        // Step back over a wide character's continuation half so the mark lands
+        // on the glyph rather than on its filler.
+        if self.cells[index].continuation && col > 0 {
+            index -= 1;
+        }
+        self.cells[index].push_combining(c);
+    }
+
     fn put(&mut self, c: char, width: usize) {
         if self.wrap_pending {
             self.linefeed();
@@ -134,13 +214,13 @@ impl Screen {
         let index = self.cell_index(self.cursor_row, self.cursor_col);
         self.cells[index] = Cell {
             character: c,
-            continuation: false,
+            ..Cell::blank()
         };
         if width == 2 {
             self.clear_wide_at(self.cursor_row, self.cursor_col + 1);
             self.cells[index + 1] = Cell {
-                character: ' ',
                 continuation: true,
+                ..Cell::blank()
             };
         }
         if self.cursor_col + width >= self.cols {
@@ -241,12 +321,15 @@ impl Screen {
             .cells
             .chunks(self.cols)
             .map(|line| {
-                line.iter()
-                    .filter(|cell| !cell.continuation)
-                    .map(|cell| cell.character)
-                    .collect::<String>()
-                    .trim_end()
-                    .to_owned()
+                let mut text = String::with_capacity(self.cols);
+                for cell in line.iter().filter(|cell| !cell.continuation) {
+                    text.push(cell.character);
+                    text.extend(cell.combining().iter().copied());
+                }
+                // `trim_end` on the whole line, not per cell: a combining mark
+                // never trails a blank, because it is only ever attached to a
+                // cell that already held a glyph.
+                text.trim_end().to_owned()
             })
             .collect();
         TerminalGridSnapshot {
@@ -443,7 +526,20 @@ impl GridState {
 
 impl Handler for GridState {
     fn input(&mut self, c: char) {
-        let width = UnicodeWidthChar::width(c).unwrap_or(1).max(1);
+        // `unwrap_or(1)` still covers `None` — an unassigned code point takes a
+        // cell. But `Some(0)` is a legitimate answer for a combining mark, and
+        // the old `.max(1)` turned it into 1, which is wrong under every width
+        // model.
+        let width = UnicodeWidthChar::width(c).unwrap_or(1);
+        if width == 0 {
+            // A control character that reached `input` is one `vte` had no
+            // dedicated handler for — NUL, most often. Real terminals ignore
+            // those rather than attaching them to a glyph.
+            if !c.is_control() {
+                self.screen.put_zero_width(c);
+            }
+            return;
+        }
         if self.insert_mode {
             self.screen.insert_blank(width);
         }
@@ -803,9 +899,12 @@ mod tests {
     }
 
     #[test]
-    fn resize_retains_the_top_left_region_and_resets_margins() {
+    /// A shrink keeps the *newest* rows. Copying from the top threw away the
+    /// cursor line and the last output — the only part anyone is looking at —
+    /// while xterm.js, drawing the same stream in the focused pane, keeps them.
+    fn resize_keeps_the_newest_rows_and_the_cursor_line() {
         let mut grid = TerminalGrid::new(3, 5);
-        grid.advance(b"abcde\x1b[2;1Hf");
+        grid.advance(b"abcde\x1b[2;1Hfg\x1b[3;1Hlast");
         grid.resize(2, 3);
         assert_eq!(
             grid.snapshot(),
@@ -813,12 +912,73 @@ mod tests {
                 rows: 2,
                 cols: 3,
                 cursor_row: 1,
-                cursor_col: 1,
-                lines: vec!["abc".into(), "f".into()],
+                cursor_col: 2,
+                // "abcde" fell off the top; the cursor line survived.
+                lines: vec!["fg".into(), "las".into()],
             }
         );
         grid.resize(4, 6);
-        assert_eq!(grid.snapshot().lines, vec!["abc", "f", "", ""]);
+        assert_eq!(grid.snapshot().lines, vec!["", "", "fg", "las"]);
+    }
+
+    /// A TUI agent sets DECSTBM once and never re-sends it, so a resize that
+    /// reset the region silently turned its scrolling area back into the whole
+    /// screen — and every subsequent scroll moved the header and footer it was
+    /// set to protect.
+    #[test]
+    fn resize_preserves_a_scrolling_region_instead_of_discarding_it() {
+        let mut grid = TerminalGrid::new(4, 12);
+        grid.advance(b"header\x1b[2;1Hrow-one\x1b[3;1Hrow-two\x1b[4;1Hfooter");
+        grid.advance(b"\x1b[2;3r");
+
+        // Same row count, so the region still fits exactly as it was set.
+        grid.resize(4, 12);
+        grid.advance(b"\x1b[2;1H\x1b[1S");
+        assert_eq!(
+            grid.snapshot().lines,
+            vec!["header", "row-two", "", "footer"],
+            "the scrolling region was discarded by the resize"
+        );
+    }
+
+    #[test]
+    fn a_full_screen_region_follows_the_screen_through_a_resize() {
+        let mut grid = TerminalGrid::new(3, 6);
+        grid.advance(b"one\x1b[2;1Htwo\x1b[3;1Hthree");
+        grid.resize(4, 6);
+        // Nothing set a region, so scrolling still moves the whole screen.
+        grid.advance(b"\x1b[4;1H\n");
+        assert_eq!(grid.snapshot().lines, vec!["one", "two", "three", ""]);
+    }
+
+    /// A combining mark is one column everywhere else. Giving it a cell of its
+    /// own made this grid disagree with the renderer about where a line wraps.
+    #[test]
+    fn a_zero_width_character_attaches_instead_of_taking_a_cell() {
+        let mut grid = TerminalGrid::new(1, 4);
+        grid.advance("e\u{0301}x".as_bytes());
+        let snapshot = grid.snapshot();
+        assert_eq!(snapshot.lines[0], "e\u{0301}x");
+        assert_eq!(
+            snapshot.cursor_col, 2,
+            "the mark consumed a column it does not occupy"
+        );
+    }
+
+    #[test]
+    fn a_zero_width_character_attaches_to_a_wide_glyph_not_its_filler() {
+        let mut grid = TerminalGrid::new(1, 6);
+        grid.advance("\u{754c}\u{fe0f}z".as_bytes());
+        let snapshot = grid.snapshot();
+        assert_eq!(snapshot.lines[0], "\u{754c}\u{fe0f}z");
+        assert_eq!(snapshot.cursor_col, 3);
+    }
+
+    #[test]
+    fn a_zero_width_character_with_nothing_to_attach_to_is_dropped() {
+        let mut grid = TerminalGrid::new(1, 4);
+        grid.advance("\u{0301}a".as_bytes());
+        assert_eq!(grid.snapshot().lines[0], "a");
     }
 
     #[test]
@@ -897,7 +1057,13 @@ mod tests {
             grid.advance(&bytes);
             let snapshot = grid.snapshot();
             prop_assert_eq!(snapshot.lines.len(), 4);
-            prop_assert!(snapshot.lines.iter().all(|line| line.chars().count() <= 9));
+            // Display width, not character count: a zero-width combining mark
+            // now attaches to the cell it modifies rather than taking one, so a
+            // line can hold more chars than columns while still measuring 9.
+            prop_assert!(snapshot
+                .lines
+                .iter()
+                .all(|line| unicode_width::UnicodeWidthStr::width(line.as_str()) <= 9));
             prop_assert!(snapshot.cursor_row < 4);
             prop_assert!(snapshot.cursor_col < 9);
         }
