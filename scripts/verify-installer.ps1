@@ -43,6 +43,34 @@ function Pass([string]$message) {
     Write-Host "ok    $message" -ForegroundColor Green
 }
 
+function Get-PeSubsystem([string]$path) {
+    $stream = [System.IO.File]::OpenRead($path)
+    try {
+        $reader = [System.IO.BinaryReader]::new($stream)
+        $stream.Seek(0x3c, [System.IO.SeekOrigin]::Begin) | Out-Null
+        $peOffset = $reader.ReadInt32()
+        if ($peOffset -lt 0) { throw "invalid PE header offset in $path" }
+
+        $stream.Seek($peOffset, [System.IO.SeekOrigin]::Begin) | Out-Null
+        if ($reader.ReadUInt32() -ne 0x00004550) { throw "$path is not a PE image" }
+
+        # Signature (4) plus IMAGE_FILE_HEADER (20) leads to the optional header.
+        $optionalHeader = $peOffset + 24
+        $stream.Seek($optionalHeader, [System.IO.SeekOrigin]::Begin) | Out-Null
+        $magic = $reader.ReadUInt16()
+        if ($magic -ne 0x010b -and $magic -ne 0x020b) {
+            throw "$path has an unsupported PE optional-header magic 0x$('{0:x4}' -f $magic)"
+        }
+
+        # IMAGE_OPTIONAL_HEADER32 and IMAGE_OPTIONAL_HEADER64 both place
+        # Subsystem at offset 0x44 from the optional-header start.
+        $stream.Seek($optionalHeader + 0x44, [System.IO.SeekOrigin]::Begin) | Out-Null
+        return [int]$reader.ReadUInt16()
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 <#
 Run the visual-isolation helper without ever sharing a pipe with it.
 
@@ -129,6 +157,12 @@ try {
         Fail "installed application binary is missing: $appExe"
     } else {
         Pass 'terminalai.exe installed'
+        $subsystem = Get-PeSubsystem $appExe
+        if ($subsystem -ne 2) {
+            Fail "installed terminalai.exe uses PE subsystem $subsystem; expected GUI subsystem 2"
+        } else {
+            Pass 'terminalai.exe uses the Windows GUI subsystem'
+        }
     }
 
     foreach ($sidecar in $declaredSidecars) {

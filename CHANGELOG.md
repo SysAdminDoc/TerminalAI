@@ -89,6 +89,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Release `terminalai.exe` now uses the Windows GUI subsystem, so Explorer and Start-Menu launches
+  do not allocate a companion console. The installer gate reads the installed PE header and fails
+  unless it reports subsystem 2.
 - The Preflight and Review views now open correctly. Their visibility synchronizers reference the
   column-label element by an id that exists in the shell, with a DOM regression test covering every
   element named by both synchronizers.
