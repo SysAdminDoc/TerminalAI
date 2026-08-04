@@ -1150,7 +1150,7 @@ function renderRow(session) {
   return `<article class="fleet-row${escapeHtml(active)}${escapeHtml(unread)}" data-id="${escapeHtml(session.id)}" role="option" tabindex="-1" aria-posinset="1" aria-setsize="1" aria-selected="false" aria-keyshortcuts="Enter Space ArrowUp ArrowDown Home End" aria-label="${escapeHtml(accessibleLabel)}">
     <div class="row-identity"><span class="status-glyph tone-${escapeHtml(meta.tone)}" title="${escapeHtml(label)}" aria-hidden="true">${meta.glyph}</span><div class="row-name-wrap"><div class="row-name"><span class="row-name-text">${escapeHtml(session.name)}</span>${session.unread ? `<span class="unread-dot" title="${escapeHtml(t("action-unread-attention"))}"></span>` : ""}</div><div class="row-folder"><span class="row-repo" title="${escapeHtml(t("action-repository"))}">${escapeHtml(repo)}</span><span class="row-branch" title="${escapeHtml(t("action-branch"))}">${escapeHtml(branch)}</span><span class="row-status-label">${escapeHtml(label)}</span>${groupChip(session)}<span class="row-ports" title="${escapeHtml(t("action-allocated-ports"))}">${escapeHtml(t("action-allocated-ports"))} ${escapeHtml(portsLabel)}</span></div></div></div>
     <div class="row-metrics"><span class="agent-badge agent-${escapeHtml(session.agent)}" title="${session.agent === "codex" ? "Codex" : "Claude Code"}" aria-label="${session.agent === "codex" ? "Codex" : "Claude Code"}">${agentLabel}</span><span class="row-progress" title="${escapeHtml(t("action-tool-progress"))}"><small>PROG</small><b>${escapeHtml(progress)}</b></span><span class="row-restarts" title="${escapeHtml(t("action-restart-count"))}">↻ ${restartCount}</span></div>
-    <div class="row-dwell"><span>${dwell(session.status_since)}</span><small class="row-last-line" title="${escapeHtml(lastLine)}">${escapeHtml(lastLine)}</small></div>
+    <div class="row-dwell"><span title="${escapeHtml(t("dwell-explained"))}">${dwell(session.status_since)}</span><small class="row-last-line" title="${escapeHtml(lastLine)}">${escapeHtml(lastLine)}</small></div>
     <div class="row-actions"><button type="button" data-action="pin" class="row-action ${session.pinned ? "row-action-active" : ""}" title="${escapeHtml(pinLabel)}" aria-label="${escapeHtml(pinLabel)} ${escapeHtml(session.name)}">${session.pinned ? "◆" : "◇"}</button><button type="button" data-action="focus" class="row-action" title="${escapeHtml(t("action-focus-terminal"))}" aria-label="${escapeHtml(t("action-focus-session", { name: session.name }))}">↗</button><button type="button" data-action="revive" class="row-action" title="${escapeHtml(t("action-revive", { name: session.name }))}" aria-label="${escapeHtml(t("action-revive", { name: session.name }))}"${reviveHidden}>↻</button><button type="button" data-action="archive" class="row-action" title="${escapeHtml(t("action-archive-stopped"))}" aria-label="${escapeHtml(t("action-archive", { name: session.name }))}"${archiveHidden}>▣</button><button type="button" data-action="queue" class="row-action row-action-queue" title="${escapeHtml(t("action-queue", { name: session.name }))}" aria-label="${escapeHtml(t("action-queue", { name: session.name }))}">${escapeHtml(queueGlyph(session))}</button><button type="button" data-action="kill" class="row-action row-action-danger" title="${escapeHtml(stopLabel)}" aria-label="${escapeHtml(stopLabel)}"${stopHidden}>×</button></div>
     <div class="row-wide-meta"${wideHidden}><span><small>MODEL</small><b data-row-model>${escapeHtml(model)}</b></span><span><small>EFFORT</small><b data-row-effort>${escapeHtml(effort)}</b></span><span><small>COST</small><b data-row-cost>${escapeHtml(cost(session.cost_usd))}</b></span></div>
     <div class="row-reply"${replyHidden}><input data-reply type="text" maxlength="500" placeholder="${escapeHtml(t("action-reply", { name: session.name }))}" aria-label="${escapeHtml(t("action-reply", { name: session.name }))}" /><button type="button" data-action="reply" class="row-reply-send" title="${escapeHtml(t("button-send-reply"))}" aria-label="${escapeHtml(t("action-send-reply", { name: session.name }))}">↵</button></div>
@@ -1896,6 +1896,26 @@ async function addQueuedPrompt() {
     showToast(String(error));
   }
   await refreshQueue();
+}
+
+/**
+ * The in-app explanation of the row -> focused-terminal model.
+ *
+ * The one thing that makes this tool different is also the thing nobody
+ * guesses from looking at it: a row is not a terminal. An operator who assumes
+ * it is spends their first minutes wondering why clicking a row does not open
+ * anything, and concludes the app is broken rather than dense on purpose.
+ *
+ * The state list is generated from the same table the rows are drawn from, so a
+ * status added later cannot appear on a row while missing from the explanation.
+ */
+function openExplainer() {
+  $("explainer-states").innerHTML = STATUS_KEYS.map((status) => {
+    const meta = STATUS_META[status];
+    return `<div class="explainer-state"><dt><span class="state-chip tone-${escapeHtml(meta.tone)}"><span class="state-chip-glyph" aria-hidden="true">${meta.glyph}</span><span>${escapeHtml(t(meta.short))}</span></span></dt><dd>${escapeHtml(t(`${meta.short}-explained`))}</dd></div>`;
+  }).join("");
+  const dialog = $("explainer-dialog");
+  if (!dialog.open) dialog.showModal();
 }
 
 function createOutputChannel(id) {
@@ -2701,6 +2721,10 @@ function bindEvents() {
     }
     await refreshQueue();
   });
+  $("explainer-toggle").addEventListener("click", () => openExplainer());
+  $("empty-explainer-button").addEventListener("click", () => openExplainer());
+  $("close-explainer-button").addEventListener("click", () => $("explainer-dialog").close());
+  $("empty-root-button").addEventListener("click", () => void registerProjectRoot());
   $("projects-toggle").addEventListener("click", () => void openProjects());
   $("close-projects-button").addEventListener("click", () => $("projects-dialog").close());
   $("projects-open-only").addEventListener("change", () => renderProjects());

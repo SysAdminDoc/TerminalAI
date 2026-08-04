@@ -3,9 +3,18 @@
 All notable changes to TerminalAI are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [0.6.0] — 2026-08-03
 
 ### Added
+
+- A comprehension pass over the fleet screen. The empty state now points at registering a project
+  root rather than only offering to launch one session, and `?` in the toolbar opens a short
+  explainer of the thing nobody guesses from looking at the screen: a row is not a terminal, which
+  is exactly what lets thirty sessions share one. Its list of states is generated from the same
+  table the rows are drawn from, so a status added later cannot appear on a row while missing from
+  the explanation. Every status and the dwell timer carry a plain-language description, and a test
+  now asserts that every icon-only control — in the markup and in the rows built at runtime —
+  carries both a tooltip and an accessible name.
 
 - A stored prompt library and a work queue that runs one prompt across many projects, creating a
   session per project as the fleet has room. Distinct from broadcast, which targets sessions that

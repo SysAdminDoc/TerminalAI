@@ -93,6 +93,16 @@ button { cursor: pointer; }
    expected path and should not compete for attention. */
 .work-entry-flagged .work-entry-state { color: var(--peach); }
 .work-entry-failed .work-entry-state { color: var(--red); }
+.explainer-dialog { max-width: 640px; width: min(640px, 92vw); }
+.explainer-body { display: grid; gap: 16px; max-height: 62vh; overflow-y: auto; }
+.explainer-body h3 { margin: 0 0 4px; font-size: 13px; }
+.explainer-body p { margin: 0; color: var(--subtext0); font-size: 13px; line-height: 1.5; }
+.explainer-states { display: grid; gap: 6px; margin: 0; }
+.explainer-state { display: grid; grid-template-columns: 130px 1fr; gap: 10px; align-items: baseline; }
+.explainer-state dt { margin: 0; }
+.explainer-state dd { margin: 0; color: var(--subtext0); font-size: 12px; }
+.empty-next { color: var(--subtext0); font-size: 13px; max-width: 46ch; }
+.empty-actions { display: flex; gap: 8px; justify-content: center; }
 .top-actions { display: flex; align-items: center; gap: 8px; }
 .button { border: 1px solid transparent; border-radius: 7px; padding: 8px 12px; color: var(--text); font-size: 12px; font-weight: 650; transition: border-color .16s ease, background .16s ease, transform .16s ease; }.button:hover { transform: translateY(-1px); }.button:active { transform: translateY(0); }
 .button-primary { background: linear-gradient(135deg, #cba6f7, #b4befe); color: #1e1e2e; box-shadow: 0 6px 20px rgba(203, 166, 247, .16); }.button-primary:hover { background: linear-gradient(135deg, #d8b9ff, #c3ccff); }

@@ -12,6 +12,20 @@ and click-to-focus through the in-process `on_activated` handler. Delivery is no
 one operator run on the interactive desktop with the Start-Menu shortcut present: confirm the toast
 appears, names the session, and that clicking it focuses that row.
 
+## Usability acceptance test with a person who has not seen the tool
+
+The implementation shipped in v0.6.0: first-run guidance that points at registering a root, an
+in-app explainer of the row → focused-terminal model whose state list is generated from the same
+table the rows are drawn from, a plain-language description for every status and for the dwell
+timer, and a test that every icon-only control — static or built at runtime — carries a tooltip
+and an accessible name.
+
+What cannot be done here is the item's own acceptance criterion: *someone unfamiliar with the tool
+can launch a session, read its state, and answer an attention request unaided*. That needs a person
+who has not seen it, and this agent is the worst possible judge of whether its own explanation is
+clear. Watch one run, note where they hesitate, and reopen the item against what they got stuck on
+rather than against a checklist.
+
 ## ACP transport as an alternative to the pty
 
 Gated on a product decision this agent cannot make, not on effort. The item's own 2026-08-02

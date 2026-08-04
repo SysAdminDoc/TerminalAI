@@ -63,12 +63,23 @@ fn scanning_every_real_project_is_quick_and_never_claims_unknown_work_is_none() 
         }
     }
 
-    // This repository is one of them, and it definitely has a checklist.
+    // This repository is one of them, and it has a roadmap file whatever state
+    // the tracker is in. Which of the two readable states it lands in depends
+    // on whether anything is currently queued — a fully drained roadmap has no
+    // checkboxes left, and reporting that as `NoChecklist` rather than as
+    // "0 open" is precisely the distinction this module exists for.
     if let Some((_, ours)) = summaries.iter().find(|(name, _)| name == "TerminalAI") {
         assert!(
-            matches!(ours.state, RoadmapState::Counted { .. }),
-            "our own roadmap did not parse: {:?}",
-            ours.state
+            ours.path.is_some(),
+            "our own roadmap file was not found at all"
         );
+        assert_ne!(ours.state, RoadmapState::Absent);
+        if let RoadmapState::NoChecklist = ours.state {
+            assert_eq!(
+                ours.open_items(),
+                None,
+                "a roadmap with no checkboxes must not report a count"
+            );
+        }
     }
 }
