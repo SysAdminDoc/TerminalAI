@@ -1624,7 +1624,9 @@ fn bridge_daemon_events(
                         }
                         flush_output_batches(&output_channels);
                         next_output_flush = Instant::now() + OUTPUT_BATCH_INTERVAL;
-                        if app.emit("terminalai:event", event).is_err() {
+                        if !matches!(&event, RegistryEvent::AgentEvent { .. })
+                            && app.emit("terminalai:event", event).is_err()
+                        {
                             break;
                         }
                     }
@@ -1676,7 +1678,7 @@ fn maybe_toast(
             // the cause is always the same missing Start Menu shortcut.
             *failed = true;
             eprintln!(
-                "terminalai: desktop notifications unavailable ({error});                  run the Start-Menu shortcut preflight fix"
+                "terminalai: desktop notifications unavailable ({error}); run the Start-Menu shortcut preflight fix"
             );
         }
     }
@@ -2050,7 +2052,7 @@ fn run_hook_cli(args: &[String]) -> i32 {
 }
 
 fn main() {
-    let _logging = terminalai_daemon::init_logging();
+    let _logging = terminalai_daemon::init_logging_with_prefix("terminalai-app");
     terminalai_daemon::install_panic_hook();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if is_hook_invocation(&args) {

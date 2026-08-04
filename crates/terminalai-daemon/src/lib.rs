@@ -38,7 +38,9 @@ mod logging;
 mod persistence;
 
 pub use http_hooks::HookEndpoint;
-pub use logging::{init_logging, log_directory, LogHub, LoggingGuard, MAX_LOG_FILES};
+pub use logging::{
+    init_logging, init_logging_with_prefix, log_directory, LogHub, LoggingGuard, MAX_LOG_FILES,
+};
 
 #[cfg(feature = "codex-app-server")]
 pub mod app_server;
@@ -609,6 +611,7 @@ impl DaemonServer {
                             break;
                         }
                         eprintln!("terminalai-daemon accept: {error}");
+                        thread::sleep(Duration::from_millis(25));
                         continue;
                     }
                     None => break,

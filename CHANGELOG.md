@@ -91,6 +91,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Daemon accept retries now back off after persistent listener errors, the optional Codex app-server
+  transport rejects oversized frames, and session-store quarantine moves cannot replace a same-name
+  file. App and daemon logs now have distinct prefixes, while the app's notification diagnostic no
+  longer contains a garbled spacing run.
+- The Tauri bridge no longer serializes per-tool-call agent events that the renderer discards, and
+  the unreachable output-event branch is gone because terminal bytes already use the dedicated
+  channel. Session cost labels now share the rollup's below-one-cent formatting, and all renderer
+  timestamp consumers decode serde objects plus numeric seconds or milliseconds consistently.
+- Cargo-deny now checks the workspace's explicit license allowlist, duplicate-version policy, wildcard
+  dependencies, and registry/source provenance in addition to advisories.
+
 - The pty's headless cursor-position fallback now answers every startup query
   in a burst exactly once, then stops when the renderer is attached or the
   startup handshake has been answered. This prevents the focused xterm from

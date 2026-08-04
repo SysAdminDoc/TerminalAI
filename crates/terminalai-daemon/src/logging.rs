@@ -76,13 +76,17 @@ pub fn log_directory() -> Option<PathBuf> {
 }
 
 pub fn init_logging() -> Option<LoggingGuard> {
+    init_logging_with_prefix("terminalai")
+}
+
+pub fn init_logging_with_prefix(prefix: &str) -> Option<LoggingGuard> {
     let directory = log_directory()?;
     if create_dir_all(&directory).is_err() {
         return None;
     }
     let appender = RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
-        .filename_prefix("terminalai")
+        .filename_prefix(prefix)
         .filename_suffix("log")
         .max_log_files(MAX_LOG_FILES)
         .build(&directory)

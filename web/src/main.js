@@ -11,6 +11,7 @@ import { rateLimitTitle, rateLimitedLabel } from "./rateLimit.js";
 import { coverage, fleetTotals, folderOf, formatCost, formatTokens, rollupBy, TOKEN_FIELDS } from "./rollup.js";
 import { defaultSelection, isEligible, summarize, targets } from "./broadcast.js";
 import { hasOpenWork, openItemsCell, sortProjects, stalenessLabel, summarize as summarizeProjects } from "./projects.js";
+import { systemTimeMs } from "./time.js";
 import "./styles.css";
 
 const WDIO_BUILD = import.meta.env.VITE_TERMINALAI_WDIO === "1";
@@ -242,14 +243,6 @@ function retractAttentionToast(dedupKey) {
   setTimeout(() => entry.toast.remove(), 240);
 }
 
-function systemTimeMs(value) {
-  if (typeof value === "number") return value;
-  if (value && typeof value.secs_since_epoch === "number") {
-    return value.secs_since_epoch * 1000 + Math.floor((value.nanos_since_epoch ?? 0) / 1e6);
-  }
-  return Date.now();
-}
-
 function dwell(value) {
   return relativeDwell(value);
 }
@@ -264,9 +257,7 @@ function toolProgress(value) {
 // Number(null) is 0, so a session that has never reported a cost used to render
 // "$0.00" — a computed-looking zero is worse than an honest em dash.
 function cost(value) {
-  if (value === null || value === undefined || value === "") return "—";
-  const amount = Number(value);
-  return Number.isFinite(amount) ? `$${amount.toFixed(2)}` : "—";
+  return value === "" ? "—" : formatCost(value);
 }
 
 function reviewNumber(value) {
@@ -2975,9 +2966,6 @@ async function handleDaemonEvent(event) {
     case "notification":
       if (event.event?.kind === "raised") showAttentionToast(event.event.notification);
       if (event.event?.kind === "retracted") retractAttentionToast(event.event.dedup_key);
-      break;
-    case "output":
-      writeTerminalBytes(event.data, event.id);
       break;
     default:
       break;

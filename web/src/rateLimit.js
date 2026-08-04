@@ -11,6 +11,8 @@
  * still refusing, which is worse than admitting the agent did not say.
  */
 
+import { optionalSystemTimeMs } from "./time.js";
+
 /**
  * Milliseconds since the epoch for a limit's reset, or null when there is none.
  *
@@ -21,8 +23,7 @@
 export function resetMillis(rateLimit) {
   const resets = rateLimit?.resets_at;
   if (resets === null || resets === undefined) return null;
-  const seconds = Number(resets.secs_since_epoch ?? resets);
-  return Number.isFinite(seconds) ? seconds * 1000 : null;
+  return optionalSystemTimeMs(resets);
 }
 
 /** Whole minutes until `millis`, never negative — a window past due reads "0". */

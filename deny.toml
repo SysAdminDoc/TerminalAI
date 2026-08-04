@@ -16,3 +16,31 @@ ignore = [
     { id = "RUSTSEC-2025-0098", reason = "Transitive through Tauri's urlpattern dependency; no safe upgrade is available. Upstream: https://rustsec.org/advisories/RUSTSEC-2025-0098" },
     { id = "RUSTSEC-2025-0100", reason = "Transitive through Tauri's urlpattern dependency; no safe upgrade is available. Upstream: https://rustsec.org/advisories/RUSTSEC-2025-0100" },
 ]
+
+[licenses]
+# cargo-deny 0.20 denies licenses that are not explicitly listed in `allow`.
+confidence-threshold = 0.8
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

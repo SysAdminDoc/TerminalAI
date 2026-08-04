@@ -1,3 +1,4 @@
+#[cfg(not(windows))]
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
@@ -146,7 +147,7 @@ fn quarantine(path: &Path) -> std::io::Result<PathBuf> {
     let base_name = format!("sessions.corrupt-{stamp}.json");
     let mut candidate = parent.join(&base_name);
     for suffix in 1..1000 {
-        match fs::rename(path, &candidate) {
+        match rename_without_replacing(path, &candidate) {
             Ok(()) => return Ok(candidate),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 candidate = parent.join(format!("sessions.corrupt-{stamp}-{suffix}.json"));
@@ -158,6 +159,27 @@ fn quarantine(path: &Path) -> std::io::Result<PathBuf> {
         std::io::ErrorKind::AlreadyExists,
         "could not choose a unique quarantine path",
     ))
+}
+
+#[cfg(windows)]
+fn rename_without_replacing(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+
+    let from: Vec<u16> = from.as_os_str().encode_wide().chain(Some(0)).collect();
+    let to: Vec<u16> = to.as_os_str().encode_wide().chain(Some(0)).collect();
+    let moved = unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), 0) };
+    if moved == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn rename_without_replacing(from: &Path, to: &Path) -> std::io::Result<()> {
+    fs::hard_link(from, to)?;
+    fs::remove_file(from)
 }
 
 /// RFC 3339 uses colons in its time component, which Windows rejects in file names.
@@ -213,6 +235,7 @@ fn run_writer(path: &Path, registry: SessionRegistry, receiver: mpsc::Receiver<(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::sync::atomic::{AtomicU64, Ordering};
     use terminalai_core::store::{ArchivedSession, StoredSession};
     use terminalai_core::{
@@ -305,6 +328,27 @@ mod tests {
     #[test]
     fn future_store_schema_is_quarantined_and_loads_empty() {
         assert_fixture_is_quarantined("schema-999");
+    }
+
+    #[test]
+    fn quarantine_candidate_never_replaces_an_existing_file() {
+        let dir = test_dir();
+        let source = dir.join("sessions.json");
+        let candidate = dir.join("sessions.corrupt-fixed.json");
+        fs::write(&source, "source").expect("source");
+        fs::write(&candidate, "existing").expect("candidate");
+
+        let error = rename_without_replacing(&source, &candidate).expect_err("collision");
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            fs::read_to_string(&source).expect("source remains"),
+            "source"
+        );
+        assert_eq!(
+            fs::read_to_string(&candidate).expect("candidate remains"),
+            "existing"
+        );
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

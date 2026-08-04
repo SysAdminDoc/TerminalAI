@@ -16,6 +16,21 @@ use terminalai_core::{
     AppServerRequest, AppServerResponse,
 };
 
+const MAX_APP_SERVER_FRAME_BYTES: usize = 4 * 1024 * 1024;
+
+fn read_frame<R: BufRead>(reader: &mut R, line: &mut String) -> io::Result<usize> {
+    line.clear();
+    let mut limited = std::io::Read::take(&mut *reader, MAX_APP_SERVER_FRAME_BYTES as u64 + 1);
+    let read = limited.read_line(line)?;
+    if read > MAX_APP_SERVER_FRAME_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Codex app-server frame exceeded {MAX_APP_SERVER_FRAME_BYTES} bytes"),
+        ));
+    }
+    Ok(read)
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CodexAppServerConfig {
     pub configured_path: Option<PathBuf>,
@@ -85,7 +100,7 @@ impl CodexAppServer {
     /// issue requests can correlate them; [`Self::next_event`] skips them.
     pub fn next_message(&mut self) -> Result<Option<AppServerMessage>, AppServerError> {
         let mut line = String::new();
-        if self.stdout.read_line(&mut line)? == 0 {
+        if read_frame(&mut self.stdout, &mut line)? == 0 {
             return Ok(None);
         }
         Ok(Some(terminalai_core::parse_app_server_message(
@@ -138,6 +153,7 @@ impl Drop for CodexAppServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{BufReader, Cursor};
 
     #[test]
     fn feature_gated_transport_exposes_typed_commands_without_spawning() {
@@ -158,5 +174,13 @@ mod tests {
                 .expect("notification JSON");
         assert_eq!(json["method"], "initialized");
         assert_eq!(json["params"], serde_json::json!({}));
+    }
+
+    #[test]
+    fn app_server_frame_reader_rejects_oversized_frame() {
+        let mut reader = BufReader::new(Cursor::new(vec![b'x'; MAX_APP_SERVER_FRAME_BYTES + 1]));
+        let mut line = String::new();
+        let error = read_frame(&mut reader, &mut line).expect_err("oversized frame");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 }

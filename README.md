@@ -195,7 +195,7 @@ cargo build --release
 cargo test
 cargo test --workspace --all-features  # includes the experimental app-server adapter
 npm --prefix web test
-cargo deny --target x86_64-pc-windows-msvc check advisories
+cargo deny --target x86_64-pc-windows-msvc check advisories bans licenses sources
 
 # Build unsigned Windows NSIS and MSI installers (from the repository root).
 cargo tauri build --ci --no-sign --bundles nsis,msi -- --manifest-path Cargo.toml

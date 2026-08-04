@@ -1,5 +1,6 @@
 import { FluentBundle, FluentResource } from "@fluent/bundle";
 import catalogSource from "./i18n/terminalai.ftl?raw";
+import { systemTimeMs } from "./time.js";
 
 export const DEFAULT_LOCALE = "en-US";
 export const LOCALE = typeof navigator !== "undefined" && navigator.language
@@ -45,14 +46,6 @@ export function relativeDwell(value, now = Date.now()) {
   const elapsedDays = Math.floor(elapsedHours / 24);
   if (elapsedDays < 7) return relativeTime.format(-elapsedDays, "day");
   return relativeTime.format(-Math.floor(elapsedDays / 7), "week");
-}
-
-function systemTimeMs(value) {
-  if (typeof value === "number") return value;
-  if (value && typeof value.secs_since_epoch === "number") {
-    return value.secs_since_epoch * 1000 + Math.floor((value.nanos_since_epoch ?? 0) / 1e6);
-  }
-  return Date.now();
 }
 
 export function localizeDom(root = document) {
