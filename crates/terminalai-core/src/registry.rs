@@ -2575,6 +2575,33 @@ impl SessionRegistry {
         }
     }
 
+    /// Checkouts under the worktree root that no live session owns.
+    ///
+    /// Teardown deliberately keeps a branch holding unmerged work, which is
+    /// right, but nothing ever revisited it — so worktrees, branches and their
+    /// registrations accumulated silently. Reports rather than deletes: what to
+    /// do about unmerged work is the operator's call, not the supervisor's.
+    pub fn stale_worktrees(&self) -> Vec<crate::worktree::StaleWorktree> {
+        let Some(root) = self
+            .inner
+            .worktree_root
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone())
+        else {
+            return Vec::new();
+        };
+        let live: Vec<crate::worktree::Worktree> = {
+            let state = lock_state(&self.inner);
+            state
+                .entries
+                .values()
+                .filter_map(|entry| entry.session.worktree.clone())
+                .collect()
+        };
+        crate::worktree::survey(&root, &live)
+    }
+
     /// Create this session's worktree, if it asked for one.
     ///
     /// Runs on the worker thread that starts the session, because `git worktree
@@ -3947,6 +3974,13 @@ mod tests {
             .collect::<std::collections::BTreeSet<_>>();
         let unexpected = child_environment
             .keys()
+            // The profiling runtime sets its own variables inside the child,
+            // after `env_clear()` has already run — so they are not inherited
+            // and say nothing about the allowlist. Without this the suite cannot
+            // run under `cargo llvm-cov` at all, and narrowing the assertion to
+            // this one prefix keeps it strict about everything that is actually
+            // passed in.
+            .filter(|key| !key.starts_with("__LLVM_PROFILE") && key.as_str() != "LLVM_PROFILE_FILE")
             .filter(|key| !allowed.contains(key.as_str()))
             .collect::<Vec<_>>();
         assert!(

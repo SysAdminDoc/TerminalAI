@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reap-worktree"
+description = "Enables the reap_worktree command without any pre-configured scope."
+commands.allow = ["reap_worktree"]
+
+[[permission]]
+identifier = "deny-reap-worktree"
+description = "Denies the reap_worktree command without any pre-configured scope."
+commands.deny = ["reap_worktree"]

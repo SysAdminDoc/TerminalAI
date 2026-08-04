@@ -17,6 +17,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Leftover session checkouts are surveyed and the safe ones can be reaped. Teardown deliberately
+  keeps a branch that holds unmerged work — which is right — but nothing ever revisited it, so
+  worktrees, branches and their registrations accumulated silently, and a registration outliving its
+  directory makes every later `git worktree add` for that path fail. The history dialog now lists
+  every checkout under this tool's worktree root that no live session owns, marking each fully
+  merged, unmerged with a commit count, or unknown, and naming the ones that are registrations only.
+  **Only a fully merged checkout gets a Remove button.** A branch holding commits is listed and left
+  alone: this view cannot show what those commits contain, so offering to delete them here would ask
+  for a decision on evidence it has not presented. `Unknown` is treated the same way — "we could not
+  tell" must never resolve to "delete it" — and the refusal lives in the core, so a caller that
+  skipped the window cannot delete commits either. Only branches under this tool's own `terminalai/`
+  prefix are surveyed, so a worktree an operator put under the same root by hand is never offered.
+  `terminalai-probe worktrees` drives the survey headlessly.
+
 - A history of finished sessions. The store has written an archive record for every retired row
   since the first release — id, agent, label, folder and the exact command — and read it back only
   to advance the id counter, so a finished-work view existed as data with no renderer. **History**
@@ -29,6 +43,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   carries no handle to anything live.
 
 ### Changed
+
+- A managed `stable-x86_64-pc-windows-msvc` toolchain is installed alongside the standalone one, so
+  targets and components can be added at all — the linked `terminalai` toolchain accepts neither.
+  It is deliberately **not** the rustup default: making it so would shadow the standalone install for
+  every shim-resolved tool. `cargo llvm-cov --workspace` now produces a report (72.15% of regions,
+  71.28% of lines), run once to find untested arms rather than to chase a number; what it found is
+  filed on the roadmap. The suite only runs under coverage because the lease-environment allowlist
+  test now ignores the profiling runtime's own `__LLVM_PROFILE*` variables, which the instrumented
+  child sets on itself *after* `env_clear()` — they were never inherited, and reading them as a leak
+  would have made the strict allowlist look broken when it is not.
 
 - The non-Windows code paths are compiled. 24 `cfg(unix)` / `cfg(not(windows))` branches across
   eight files had never been type-checked, because no non-Windows target was installed — so an error

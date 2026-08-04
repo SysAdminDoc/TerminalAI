@@ -48,6 +48,7 @@ USAGE:
   terminalai-probe history <session-id> [bytes] [--json]  (output the memory ring has dropped)
   terminalai-probe archives --json                   (sessions this supervisor finished)
   terminalai-probe archive <session-id> [--json]     (retire a stopped row into the history)
+  terminalai-probe worktrees [--json]                (checkouts no live session owns)
   terminalai-probe mcp     [--write-token <t> --write-session <id>]...  (MCP server on stdio)
   terminalai-probe land    --source <dir> --target <dir> [--expect-head <sha>]
                            [--verify <program> [--verify-arg <arg>]...] [--verify-timeout <s>]
@@ -104,6 +105,7 @@ fn main() {
         Some("history") => cmd_history(&args[1..]),
         Some("archives") => cmd_archives(&args[1..]),
         Some("archive") => cmd_archive(&args[1..]),
+        Some("worktrees") => cmd_worktrees(&args[1..]),
         Some("hook") => cmd_hook(&args[1..]),
         Some("hooks") => cmd_hooks(&args[1..]),
         Some("--help") | Some("-h") | None => {
@@ -619,6 +621,29 @@ fn cmd_grid(args: &[String]) -> i32 {
 
 /// Read a session's output history, including bytes the in-memory ring has
 /// already dropped. The one way to see the disk tier from outside the GUI.
+/// Survey the checkouts this tool created that no live session owns.
+fn cmd_worktrees(args: &[String]) -> i32 {
+    let (machine, _) = without_json(args);
+    match control_call(Request::StaleWorktrees) {
+        Ok(Response::StaleWorktrees { worktrees }) if machine => {
+            print_json(serde_json::json!({ "worktrees": worktrees }));
+            0
+        }
+        Ok(Response::StaleWorktrees { worktrees }) => {
+            if worktrees.is_empty() {
+                println!("no leftover checkouts");
+                return 0;
+            }
+            for stale in worktrees {
+                println!("{:<28} {:?}  {}", stale.branch, stale.state, stale.path.display());
+            }
+            0
+        }
+        Ok(other) => print_control_response(other, machine),
+        Err(error) => print_control_error(error, machine),
+    }
+}
+
 /// Retire one stopped row into the history, the same request the row's button
 /// sends. Present so the whole archive path can be driven without a WebView.
 fn cmd_archive(args: &[String]) -> i32 {

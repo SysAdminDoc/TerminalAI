@@ -13,6 +13,7 @@ import { coverage, fleetTotals, folderOf, formatCost, formatTokens, rollupBy, TO
 import { defaultSelection, isEligible, summarize, targets } from "./broadcast.js";
 import { hasOpenWork, openItemsCell, sortProjects, stalenessLabel, summarize as summarizeProjects } from "./projects.js";
 import { renderSessionHistory } from "./sessionHistory.js";
+import { renderWorktrees } from "./worktrees.js";
 import { systemTimeMs } from "./time.js";
 import "./styles.css";
 
@@ -2319,6 +2320,7 @@ async function openSessionHistory() {
     translate: t,
     formatTime: (ms) => new Date(ms).toLocaleString(),
   });
+  await refreshWorktrees();
   for (const button of $("history-body").querySelectorAll("[data-relaunch]")) {
     button.addEventListener("click", () => {
       const archive = archives.find((item) => item.id === button.dataset.relaunch);
@@ -2333,6 +2335,40 @@ async function openSessionHistory() {
       $("cwd-input").value = archive.cwd ?? "";
       schedulePreview();
       void loadProjectTemplates();
+    });
+  }
+}
+
+/** Survey leftover checkouts inside the history dialog, which is where a
+ * finished session's leavings belong. */
+async function refreshWorktrees() {
+  let worktrees = [];
+  try {
+    worktrees = await invoke("stale_worktrees");
+  } catch (error) {
+    $("worktrees-count").textContent = "";
+    $("worktrees-body").innerHTML =
+      `<p class="rollup-total">${escapeHtml(t("worktrees-error", { error: String(error) }))}</p>`;
+    return;
+  }
+  $("worktrees-count").textContent = t("worktrees-count", { count: worktrees.length });
+  $("worktrees-body").innerHTML = renderWorktrees(worktrees, { escape: escapeHtml, translate: t });
+  for (const button of $("worktrees-body").querySelectorAll("[data-reap]")) {
+    button.addEventListener("click", async () => {
+      const stale = worktrees[Number(button.dataset.reap)];
+      if (!stale) return;
+      button.disabled = true;
+      try {
+        await invoke("reap_worktree", { stale });
+        showToast(t("worktrees-removed"), "success");
+      } catch (error) {
+        // The core refuses unmerged and unknown states too, so a refusal that
+        // reaches here is worth reading rather than retrying.
+        showToast(String(error));
+        button.disabled = false;
+        return;
+      }
+      await refreshWorktrees();
     });
   }
 }

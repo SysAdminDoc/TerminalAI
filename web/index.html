@@ -119,6 +119,9 @@
       <div class="broadcast-body">
         <p class="settings-note" data-i18n="session-history-note">What this supervisor archived, newest first. Only the layout and the exact command are kept — never the output.</p>
         <div id="history-body" class="rollup-body"></div>
+        <div class="dialog-head"><h2 data-i18n="worktrees-title">Leftover checkouts</h2><span id="worktrees-count" class="rollup-coverage"></span></div>
+        <p class="settings-note" data-i18n="worktrees-note">Private checkouts this tool created that no live session owns. A branch still holding work is listed and never removed here — take it up in Git, where you can see the commits first.</p>
+        <div id="worktrees-body" class="rollup-body"></div>
       </div>
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-history-button" data-i18n="button-close">Close</button></div></div>
     </dialog>

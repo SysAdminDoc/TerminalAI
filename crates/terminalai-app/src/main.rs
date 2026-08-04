@@ -272,6 +272,48 @@ async fn session_history(
     .await
 }
 
+/// Checkouts this tool created that no live session owns.
+///
+/// Reporting only. What to do about a branch holding unmerged work is the
+/// operator's call, and the refusal for that case lives in the core so a caller
+/// that skipped this view cannot delete commits either.
+#[tauri::command]
+async fn stale_worktrees(
+    state: State<'_, AppState>,
+) -> Result<Vec<terminalai_core::worktree::StaleWorktree>, String> {
+    let client = daemon_client(&state)?;
+    run_blocking("stale_worktrees", move || {
+        match daemon_response(&client, Request::StaleWorktrees)? {
+            Response::StaleWorktrees { worktrees } => Ok(worktrees),
+            Response::Error { message } => Err(message),
+            other => Err(format!("unexpected stale-worktree response: {other:?}")),
+        }
+    })
+    .await
+}
+
+/// Remove one surveyed checkout, refusing anything that still holds work.
+#[tauri::command]
+async fn reap_worktree(
+    state: State<'_, AppState>,
+    stale: terminalai_core::worktree::StaleWorktree,
+) -> Result<(), String> {
+    let client = daemon_client(&state)?;
+    run_blocking("reap_worktree", move || {
+        match daemon_response(
+            &client,
+            Request::ReapWorktree {
+                stale: Box::new(stale),
+            },
+        )? {
+            Response::Ok => Ok(()),
+            Response::Error { message } => Err(message),
+            other => Err(format!("unexpected reap response: {other:?}")),
+        }
+    })
+    .await
+}
+
 /// Read the daemon-wide admission policy for the settings dialog.
 #[tauri::command]
 fn admission_config(
@@ -2081,6 +2123,8 @@ fn run_app() -> Result<(), String> {
             review_snapshot,
             external_sessions,
             session_history,
+            stale_worktrees,
+            reap_worktree,
             mark_reviewed,
             admission_config,
             set_admission,

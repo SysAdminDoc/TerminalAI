@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stale-worktrees"
+description = "Enables the stale_worktrees command without any pre-configured scope."
+commands.allow = ["stale_worktrees"]
+
+[[permission]]
+identifier = "deny-stale-worktrees"
+description = "Denies the stale_worktrees command without any pre-configured scope."
+commands.deny = ["stale_worktrees"]

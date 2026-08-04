@@ -220,6 +220,13 @@ pub enum Request {
     MarkReviewed {
         id: SessionId,
     },
+    /// Checkouts under the worktree root that no live session owns.
+    StaleWorktrees,
+    /// Remove one surveyed checkout. Refused unless the branch is fully merged;
+    /// the core enforces that, not only the window.
+    ReapWorktree {
+        stale: Box<terminalai_core::worktree::StaleWorktree>,
+    },
     /// Sessions this supervisor finished and archived. Read-only history: the
     /// records carry no handle, only enough to relaunch the same command.
     SessionHistory,
@@ -400,6 +407,9 @@ pub enum Response {
     },
     SessionHistory {
         archives: Vec<terminalai_core::ArchivedSession>,
+    },
+    StaleWorktrees {
+        worktrees: Vec<terminalai_core::worktree::StaleWorktree>,
     },
     Status {
         session: Session,
@@ -1246,6 +1256,15 @@ fn dispatch_with_endpoint(
         },
         Request::SessionHistory => Response::SessionHistory {
             archives: registry.archives(),
+        },
+        Request::StaleWorktrees => Response::StaleWorktrees {
+            worktrees: registry.stale_worktrees(),
+        },
+        Request::ReapWorktree { stale } => match terminalai_core::worktree::reap(&stale) {
+            Ok(()) => Response::Ok,
+            Err(failures) => Response::Error {
+                message: failures.join("; "),
+            },
         },
         Request::Land { request } => Response::Land {
             outcome: land_queue().land(&request),

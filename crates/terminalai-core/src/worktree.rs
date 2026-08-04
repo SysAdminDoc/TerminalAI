@@ -287,4 +287,209 @@ mod tests {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         assert!(!name.contains(".."), "{name}");
     }
+
+    fn stale(state: BranchState) -> StaleWorktree {
+        StaleWorktree {
+            path: PathBuf::from(r"C:\data\worktrees\shop-s0001"),
+            repo: PathBuf::from("C:/repos/shop"),
+            branch: "terminalai/s0001".to_owned(),
+            state,
+            missing_directory: false,
+        }
+    }
+
+    #[test]
+    fn only_a_fully_merged_branch_is_offered_for_removal() {
+        assert!(stale(BranchState::Merged).is_safe_to_remove());
+        assert!(!stale(BranchState::Unmerged { commits: 3 }).is_safe_to_remove());
+    }
+
+    #[test]
+    fn an_unknown_state_is_never_treated_as_merged() {
+        // "We could not tell" resolving to "delete it" is the one mistake in
+        // this program that cannot be undone.
+        let unknown = stale(BranchState::Unknown {
+            detail: "git timed out".to_owned(),
+        });
+        assert!(!unknown.is_safe_to_remove());
+        let refusal = reap(&unknown).expect_err("an unknown state must refuse");
+        assert!(refusal[0].contains("unknown"), "{refusal:?}");
+    }
+
+    #[test]
+    fn reaping_refuses_unmerged_work_in_the_core_not_only_in_the_window() {
+        // A caller that skipped the check would otherwise delete commits, so the
+        // refusal lives where every caller reaches it.
+        let refusal = reap(&stale(BranchState::Unmerged { commits: 2 }))
+            .expect_err("unmerged work must refuse");
+        assert!(refusal[0].contains("2 commit"), "{refusal:?}");
+        assert!(refusal[0].contains("terminalai/s0001"), "{refusal:?}");
+    }
+
+    #[test]
+    fn a_missing_worktree_root_surveys_to_nothing_rather_than_failing() {
+        let missing = Path::new(r"C:\data\definitely-not-here-9f3a");
+        assert!(survey(missing, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_live_session_s_checkout_is_never_reported_as_stale() {
+        let root = std::env::temp_dir().join("terminalai-survey-live");
+        let owned = root.join("shop-s0001");
+        std::fs::create_dir_all(&owned).expect("create fixture");
+        let live = vec![Worktree {
+            repo: PathBuf::from("C:/repos/shop"),
+            path: owned.clone(),
+            branch: "terminalai/s0001".to_owned(),
+        }];
+        assert!(survey(&root, &live).is_empty());
+        // And with nothing live it is still not reported, because it is not a
+        // git worktree at all — the survey inspects rather than assumes.
+        assert!(survey(&root, &[]).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+/// What a leftover checkout is holding.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case", tag = "kind")]
+pub enum BranchState {
+    /// Every commit on the branch is reachable from the repository's HEAD, so
+    /// removing it loses nothing.
+    Merged,
+    /// The branch holds commits HEAD cannot reach. This is somebody's work.
+    Unmerged { commits: u32 },
+    /// The question could not be answered — an unreadable repository, a missing
+    /// branch, a git that timed out. Never treated as merged: the whole point of
+    /// this survey is that deleting on a guess is the one unrecoverable mistake.
+    Unknown { detail: String },
+}
+
+/// A checkout this tool created that no live session owns.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StaleWorktree {
+    pub path: PathBuf,
+    pub repo: PathBuf,
+    pub branch: String,
+    pub state: BranchState,
+    /// True when the directory is gone but git still has the registration —
+    /// the case that makes every later `worktree add` for that path fail.
+    pub missing_directory: bool,
+}
+
+impl StaleWorktree {
+    /// Whether reaping this one can be offered without asking anything.
+    pub fn is_safe_to_remove(&self) -> bool {
+        matches!(self.state, BranchState::Merged)
+    }
+}
+
+/// Every checkout under `root` that no live session owns.
+///
+/// Teardown deliberately keeps a branch holding unmerged work, which is right —
+/// but nothing ever revisited it, so worktrees and branches accumulated silently
+/// and their registrations outlived the directories. This is the revisit.
+///
+/// `live` is the set of worktrees the registry still owns; anything under the
+/// root that is not in it is stale by definition, because the root belongs to
+/// this tool alone.
+pub fn survey(root: &Path, live: &[Worktree]) -> Vec<StaleWorktree> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let owned: std::collections::BTreeSet<&Path> = live.iter().map(|item| item.path.as_path()).collect();
+    let mut stale = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() || owned.contains(path.as_path()) {
+            continue;
+        }
+        if let Some(found) = inspect(&path) {
+            stale.push(found);
+        }
+    }
+    stale.sort_by(|a, b| a.path.cmp(&b.path));
+    stale
+}
+
+/// Read one leftover directory: which repository it came from, which branch it
+/// is on, and whether that branch still holds work.
+fn inspect(path: &Path) -> Option<StaleWorktree> {
+    let repo = git(path, &["rev-parse", "--path-format=absolute", "--git-common-dir"])
+        .ok()
+        .map(|dir| PathBuf::from(dir.trim()))
+        .and_then(|git_dir| git_dir.parent().map(Path::to_path_buf))?;
+    let branch = git(path, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .ok()
+        .map(|name| name.trim().to_owned())
+        .filter(|name| !name.is_empty() && name != "HEAD")?;
+    // Only branches this tool created. A worktree an operator put under the same
+    // root by hand is left alone rather than offered for deletion.
+    if !branch.starts_with(BRANCH_PREFIX) {
+        return None;
+    }
+    Some(StaleWorktree {
+        state: branch_state(&repo, &branch),
+        missing_directory: !path.exists(),
+        path: path.to_path_buf(),
+        repo,
+        branch,
+    })
+}
+
+/// Commits on `branch` that the repository's HEAD cannot reach.
+///
+/// `rev-list --count <branch> --not HEAD` answers exactly the question that
+/// matters — not "was it merged into the branch it was cut from", which goes
+/// wrong the moment the operator rebases or renames.
+fn branch_state(repo: &Path, branch: &str) -> BranchState {
+    if !branch_exists(repo, branch) {
+        return BranchState::Unknown {
+            detail: format!("branch {branch} no longer exists in {}", repo.display()),
+        };
+    }
+    match git(repo, &["rev-list", "--count", branch, "--not", "HEAD"]) {
+        Ok(count) => match count.trim().parse::<u32>() {
+            Ok(0) => BranchState::Merged,
+            Ok(commits) => BranchState::Unmerged { commits },
+            Err(error) => BranchState::Unknown {
+                detail: format!("could not read the commit count: {error}"),
+            },
+        },
+        Err(error) => BranchState::Unknown {
+            detail: error.to_string(),
+        },
+    }
+}
+
+/// Remove one surveyed worktree, refusing anything that still holds work.
+///
+/// The refusal is here rather than only in the window: a caller that skipped the
+/// check would otherwise delete commits, and this is the one mistake in the whole
+/// program that cannot be undone. `Unknown` is refused for the same reason —
+/// "we could not tell" must not resolve to "delete it".
+pub fn reap(stale: &StaleWorktree) -> Result<(), Vec<String>> {
+    if !stale.is_safe_to_remove() {
+        return Err(vec![match &stale.state {
+            BranchState::Unmerged { commits } => format!(
+                "{} holds {commits} commit(s) that {} cannot reach; remove it with git if you mean to lose them",
+                stale.branch,
+                stale.repo.display()
+            ),
+            BranchState::Unknown { detail } => {
+                format!("{} was not removed because its state is unknown: {detail}", stale.branch)
+            }
+            BranchState::Merged => unreachable!("checked above"),
+        }]);
+    }
+    let failures = remove(&Worktree {
+        repo: stale.repo.clone(),
+        path: stale.path.clone(),
+        branch: stale.branch.clone(),
+    });
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures)
+    }
 }

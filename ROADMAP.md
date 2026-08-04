@@ -68,13 +68,6 @@ item above; where the two touch, the note says so.
   Acceptance: the server answers `server/discover`, negotiates via `_meta`, and returns `resultType` on every result; a test pins the declared revision against the constant so the two cannot drift. Decide explicitly whether to keep the old handshake for one release.
   Complexity: M
 
-- [ ] P2 — Report and reap stale and fully-merged session worktrees
-  Why: teardown deliberately keeps a branch holding unmerged work, which is correct, but nothing ever revisits it — so worktrees and branches accumulate silently and their registrations outlive the directories.
-  Evidence: `crates/terminalai-core/src/registry.rs:973-978` releases the worktree and logs failures without follow-up; `crates/terminalai-core/src/worktree.rs` has no sweep. The same accumulation is filed against competitors: https://github.com/superset-sh/superset/issues/2863, https://github.com/getpaseo/paseo/issues/1227, and branch cleanup is asked for at https://github.com/Untrivial-ai/agent-orchestrator/issues/3411
-  Touches: `crates/terminalai-core/src/worktree.rs`, `crates/terminalai-core/src/registry.rs`, `crates/terminalai-app/src/projects.rs`, `web/src/main.js`
-  Acceptance: a view lists worktrees this tool created that no live session owns, marking each merged or unmerged; removing a merged one prunes the registration too. Nothing with unmerged commits is ever removed without an explicit, individually confirmed action.
-  Complexity: M
-
 - [ ] P2 — Pass through the launcher flags that control tools, MCP and plugins
   Why: permission-prompt fatigue is a top community complaint and `--allowed-tools`/`--disallowed-tools` is the precise lever for it; passing plugin and MCP flags was already identified as the right extension point and never shipped.
   Evidence: `crates/terminalai-core/src/launch.rs` maps 18 flags; absent are `--allowed-tools`, `--disallowed-tools`, `--settings`, `--setting-sources`, `--mcp-config`, `--strict-mcp-config`, `--plugin-dir`, `--plugin-url`, `--fallback-model`, `--max-turns` (code.claude.com/docs/en/cli-reference). The prior research pass rejected a plugin architecture but explicitly endorsed flag passthrough as belonging "in the existing flag-mapping table". Permission fatigue: https://news.ycombinator.com/item?id=48308376 (386 points).
@@ -160,13 +153,6 @@ additions; where they touch, the note says so.
 
 ### P2
 
-- [ ] P2 — The active Rust toolchain cannot install components, blocking coverage and Miri
-  Why: `llvm-tools-preview` cannot be added to a rustup *linked* toolchain, so `cargo-llvm-cov` and `cargo miri` are unavailable — two of the cheapest ways to find untested error arms and UB in the `windows-sys` FFI glue.
-  Evidence: `rustup toolchain list` shows only `terminalai (active, default)`, which is the standalone MSI install linked into rustup; `rustup component add llvm-tools-preview` fails with "toolchain 'terminalai' does not support components", and no `llvm-cov`/`llvm-profdata` exists under that toolchain's `bin`. This is also the root cause of the previously recorded `cargo tauri build` toolchain trap in `CLAUDE.md`.
-  Touches: machine toolchain configuration; record the change in the machine-state notes, not in the repo
-  Acceptance: a managed `stable-x86_64-pc-windows-msvc` toolchain is installed and used for tooling, `cargo llvm-cov --workspace` produces a report, and the existing build path still works. Coverage is used once to find zero-coverage error arms and `cfg` branches, not as a number to chase.
-  Complexity: S
-
 - [ ] P2 — A VT conformance corpus for the grid
   Why: `grid.rs` has property tests but no conformance cases, and it is the renderer for the pinned split view — so every divergence from a real terminal is currently invisible until someone looks at a pane.
   Evidence: alacritty's ref-test harness is raw recording bytes plus `size.json` and a serialized `grid.json`, replayed in-process with `parser.advance()` — no GUI, no PTY: https://github.com/alacritty/alacritty/blob/master/alacritty_terminal/tests/ref.rs . Its case list covers exactly this grid's untested areas (`vttest_origin_mode_1/2`, `vttest_insert`, `vttest_scroll`, `vttest_tab_clear_set`, `saved_cursor_alt`, `wrapline_alt_toggle`, `zerowidth`, `csi_rep`, `decaln_reset`, plus real captures `tmux_htop`, `vim_*`). Apache-2.0, so the corpus is reusable with attribution.
@@ -196,6 +182,13 @@ additions; where they touch, the note says so.
   Complexity: M
 
 ### P3
+
+- [ ] P3 — Close the coverage gaps the first `llvm-cov` run named
+  Why: coverage was run once on 2026-08-04 (72.15% regions, 71.28% lines workspace-wide) to find untested arms rather than to chase a number, and it named two modules whose low figures are not explained by being entry points.
+  Evidence: `crates/terminalai-daemon/src/lib.rs` is at **58.07%** line coverage — the control plane, where every request arm and every framing error lives — and `crates/terminalai-daemon/src/logging.rs` at **31.29%**. `terminalai-daemon/src/main.rs` (0%) and `terminalai-probe/src/main.rs` (12%) are process entry points and a CLI harness, and are not the target. Re-run with `pwsh`-free `RUSTC=<managed>/bin/rustc.exe cargo-llvm-cov llvm-cov --workspace --summary-only`; note the suite only runs under coverage because `lease_command_uses_the_allowlist_without_putting_connection_in_argv` now ignores the profiling runtime's own `__LLVM_PROFILE*` variables.
+  Touches: `crates/terminalai-daemon/src/lib.rs`, `crates/terminalai-daemon/src/logging.rs`, `crates/terminalai-daemon/tests/`
+  Acceptance: the uncovered request arms and error branches in the daemon's control plane are either covered or individually recorded as unreachable with a reason. The number itself is not the goal and must not become one.
+  Complexity: M
 
 - [ ] P3 — Snapshot-test the golden argv and grid renders
   Why: the launch golden fixtures and grid reference output are hand-maintained string literals, so a deliberate change to either means editing expectations by hand and a drift means editing them wrongly.
