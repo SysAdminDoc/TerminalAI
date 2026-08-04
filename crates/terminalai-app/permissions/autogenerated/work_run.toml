@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-work-run"
+description = "Enables the work_run command without any pre-configured scope."
+commands.allow = ["work_run"]
+
+[[permission]]
+identifier = "deny-work-run"
+description = "Denies the work_run command without any pre-configured scope."
+commands.deny = ["work_run"]

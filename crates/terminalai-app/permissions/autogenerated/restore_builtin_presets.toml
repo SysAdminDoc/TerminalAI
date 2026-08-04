@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-restore-builtin-presets"
+description = "Enables the restore_builtin_presets command without any pre-configured scope."
+commands.allow = ["restore_builtin_presets"]
+
+[[permission]]
+identifier = "deny-restore-builtin-presets"
+description = "Denies the restore_builtin_presets command without any pre-configured scope."
+commands.deny = ["restore_builtin_presets"]

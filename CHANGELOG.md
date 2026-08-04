@@ -89,6 +89,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- All 55 Tauri commands now have grants in every desktop capability profile. The build checks both
+  the `generate_handler!` registration and the capability files, so a newly registered command
+  cannot compile into an unusable invoke path or leave a stale permission behind.
 - Applying a preset that names no working directory no longer blanks the folder. Which
   configuration to use and which project to run it on are separate choices.
 

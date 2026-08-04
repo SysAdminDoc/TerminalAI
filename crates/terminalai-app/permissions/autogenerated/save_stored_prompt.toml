@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-stored-prompt"
+description = "Enables the save_stored_prompt command without any pre-configured scope."
+commands.allow = ["save_stored_prompt"]
+
+[[permission]]
+identifier = "deny-save-stored-prompt"
+description = "Denies the save_stored_prompt command without any pre-configured scope."
+commands.deny = ["save_stored_prompt"]

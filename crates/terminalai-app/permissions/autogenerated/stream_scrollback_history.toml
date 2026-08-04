@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stream-scrollback-history"
+description = "Enables the stream_scrollback_history command without any pre-configured scope."
+commands.allow = ["stream_scrollback_history"]
+
+[[permission]]
+identifier = "deny-stream-scrollback-history"
+description = "Denies the stream_scrollback_history command without any pre-configured scope."
+commands.deny = ["stream_scrollback_history"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-add-project-root"
+description = "Enables the add_project_root command without any pre-configured scope."
+commands.allow = ["add_project_root"]
+
+[[permission]]
+identifier = "deny-add-project-root"
+description = "Denies the add_project_root command without any pre-configured scope."
+commands.deny = ["add_project_root"]
