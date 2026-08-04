@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { JSDOM } from "jsdom";
+
 const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
@@ -27,6 +29,20 @@ test("reduced motion disables the remaining spinner and glow effects", () => {
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)/);
   assert.match(css, /\.fleet-loading::before \{ animation: none !important; \}/);
   assert.match(css, /\.unread-dot, \.pulse-peach, \.pulse-yellow, \.pulse-mauve \{ box-shadow: none !important; \}/);
+});
+
+test("the review view owns its scroll surface", () => {
+  // Reading the CSSOM catches the exact failure mode where a literal escape
+  // turns the selector into `n .review-view` while the source still looks
+  // plausibly close to correct.
+  const dom = new JSDOM(`<style>${css}</style>`);
+  const rules = [...dom.window.document.styleSheets[0].cssRules].filter(
+    (rule) => rule.selectorText === ".review-view",
+  );
+  assert.equal(rules.length, 1, "the stylesheet must contain one real .review-view rule");
+  assert.equal(rules[0].style.height, "calc(100% - 54px)");
+  assert.equal(rules[0].style.overflow, "auto");
+  assert.equal(rules[0].style.padding, "12px 18px 18px");
 });
 
 test("screen reader mode is explicit and opt-in", () => {
