@@ -334,14 +334,47 @@ function renderDiagnostics() {
   const host = $("diagnostics-host");
   const session = state.sessions.find((item) => item.id === state.focused);
   if (!session) {
-    host.innerHTML = `<div class="diagnostics-empty">${escapeHtml(t("empty-focus-diagnostics"))}</div>`;
+    const structure = "empty";
+    const message = t("empty-focus-diagnostics");
+    const empty = host.querySelector(".diagnostics-empty");
+    if (host.dataset.diagnosticsStructure !== structure || !empty) {
+      host.innerHTML = '<div class="diagnostics-empty">' + escapeHtml(message) + "</div>";
+      host.dataset.diagnosticsStructure = structure;
+    } else if (empty.textContent !== message) {
+      empty.textContent = message;
+    }
     return;
   }
+
   const history = Array.isArray(session.status_history) ? [...session.status_history].reverse() : [];
+  const structure = JSON.stringify([session.id, history]);
   const latest = history[0];
   const meta = STATUS_META[session.status] ?? STATUS_META.exited;
   const label = lifecycleLabel(session);
   const source = latest?.source ? diagnosticSource(latest.source) : t("diagnostics-unavailable");
+
+  // Status dwell changes every second, but the timeline does not. Update only
+  // the small live fields so selecting a reason never loses its DOM node.
+  if (host.dataset.diagnosticsStructure === structure) {
+    const heading = host.querySelector(".diagnostics-heading");
+    const headingName = heading?.querySelector("h2");
+    const headingPath = heading?.querySelector("p");
+    const glyph = heading?.querySelector(".status-glyph");
+    const current = host.querySelector(".diagnostics-current");
+    const currentStatus = current?.querySelector("b");
+    const currentDetail = current?.querySelector("span:last-child");
+    if (headingName && headingPath && glyph && currentStatus && currentDetail) {
+      headingName.textContent = session.name;
+      headingPath.textContent = session.cwd;
+      glyph.className = "status-glyph tone-" + meta.tone;
+      glyph.title = label;
+      glyph.textContent = meta.glyph;
+      currentStatus.textContent = label;
+      currentDetail.textContent = t("diagnostics-for", { dwell: dwell(session.status_since) }) + " · " + t("diagnostics-source", { source });
+      return;
+    }
+  }
+
   const timeline = history.length
     ? history.map((entry) => {
       const entryMeta = STATUS_META[entry.to] ?? STATUS_META.exited;
@@ -349,12 +382,13 @@ function renderDiagnostics() {
       const reason = formatReason(entry.reason, entry.detail);
       return '<li class="diagnostic-event"><span class="diagnostic-event-glyph tone-' + entryMeta.tone + '" aria-hidden="true">' + entryMeta.glyph + '</span><div class="diagnostic-event-body"><div><b>' + escapeHtml(metaLabel(entryMeta)) + '</b><span>' + escapeHtml(t("diagnostics-from", { status: from })) + '</span></div><small>' + escapeHtml(diagnosticSource(entry.source)) + ' · ' + escapeHtml(diagnosticTime(entry.at)) + '</small>' + (reason ? '<p>' + escapeHtml(reason) + '</p>' : '') + '</div></li>';
     }).join("")
-    : `<li class="diagnostics-empty">${escapeHtml(t("empty-no-transition-history"))}</li>`;
-  host.innerHTML = '<div class="diagnostics-heading"><div><span class="eyebrow">' + escapeHtml(t("diagnostics-why-this-state")) + '</span><h2>' + escapeHtml(session.name) + '</h2><p>' + escapeHtml(session.cwd) + '</p></div><div class="diagnostics-heading-actions"><button type="button" class="button button-quiet" data-diagnostics-action="preflight">' + escapeHtml(t("button-preflight")) + '</button><span class="status-glyph tone-' + meta.tone + '" title="' + escapeHtml(label) + '" aria-hidden="true">' + meta.glyph + '</span></div></div>' +
+    : '<li class="diagnostics-empty">' + escapeHtml(t("empty-no-transition-history")) + "</li>";
+  host.innerHTML =
+    '<div class="diagnostics-heading"><div><span class="eyebrow">' + escapeHtml(t("diagnostics-why-this-state")) + '</span><h2>' + escapeHtml(session.name) + '</h2><p>' + escapeHtml(session.cwd) + '</p></div><div class="diagnostics-heading-actions"><button type="button" class="button button-quiet" data-diagnostics-action="preflight">' + escapeHtml(t("button-preflight")) + '</button><span class="status-glyph tone-' + meta.tone + '" title="' + escapeHtml(label) + '" aria-hidden="true">' + meta.glyph + '</span></div></div>' +
     '<div class="diagnostics-current"><span>' + escapeHtml(t("diagnostics-current-status")) + '</span><b>' + escapeHtml(label) + '</b><span>' + escapeHtml(t("diagnostics-for", { dwell: dwell(session.status_since) })) + ' · ' + escapeHtml(t("diagnostics-source", { source })) + '</span></div>' +
-    '<ol class="diagnostics-timeline">' + timeline + '</ol>';
+    '<ol class="diagnostics-timeline">' + timeline + "</ol>";
+  host.dataset.diagnosticsStructure = structure;
 }
-
 function formatReason(reason, legacyDetail = null) {
   if (!reason?.kind) return legacyDetail || t("reason-unknown");
   const args = reason.args ?? {};
@@ -641,22 +675,33 @@ function renderSummary() {
     : t("pricing-none", { pricing: pricingVersion });
   const maxLive = state.admission.max_live_sessions ?? 3;
   const limitedSummary = limited.length
-    ? `<span class="summary-separator">/</span><span class="summary-item summary-limited" title="${escapeHtml(rateLimitTitle(limited, t))}">${escapeHtml(countMessage("count-rate-limited", limited.length))}</span>`
+    ? '<span class="summary-separator">/</span><span class="summary-item summary-limited" title="' + escapeHtml(rateLimitTitle(limited, t)) + '">' + escapeHtml(countMessage("count-rate-limited", limited.length)) + "</span>"
     : "";
-  $("fleet-summary").innerHTML = `<span class="summary-item"><b>${live}/${maxLive}</b> ${escapeHtml(t("fleet-live"))}</span><span class="summary-separator">/</span><span class="summary-item">${escapeHtml(countMessage("count-queued", queued))}</span><span class="summary-separator">/</span><span class="summary-item summary-attention">${escapeHtml(countMessage("count-needs-you", needsYou))}</span><span class="summary-separator">/</span><span class="summary-item">${escapeHtml(countMessage("count-active", working))}</span>${limitedSummary}<span class="summary-separator">/</span><button type="button" class="summary-item summary-spend" id="fleet-spend" title="${escapeHtml(spendTitle)}" aria-label="${escapeHtml(t("button-open-rollup"))}"><b>${spendLabel}</b> ${escapeHtml(t("fleet-spent"))}</button>`;
-  $("fleet-spend")?.addEventListener("click", () => openRollup());
+  const summaryMarkup =
+    '<span class="summary-item"><b>' + live + "/" + maxLive + "</b> " + escapeHtml(t("fleet-live")) + "</span>" +
+    '<span class="summary-separator">/</span><span class="summary-item">' + escapeHtml(countMessage("count-queued", queued)) + "</span>" +
+    '<span class="summary-separator">/</span><span class="summary-item summary-attention">' + escapeHtml(countMessage("count-needs-you", needsYou)) + "</span>" +
+    '<span class="summary-separator">/</span><span class="summary-item">' + escapeHtml(countMessage("count-active", working)) + "</span>" +
+    limitedSummary +
+    '<span class="summary-separator">/</span><button type="button" class="summary-item summary-spend" id="fleet-spend" title="' + escapeHtml(spendTitle) + '" aria-label="' + escapeHtml(t("button-open-rollup")) + '"><b>' + spendLabel + "</b> " + escapeHtml(t("fleet-spent")) + "</button>";
+  const summary = $("fleet-summary");
+  if (summary.innerHTML !== summaryMarkup) summary.innerHTML = summaryMarkup;
   const droppedEvents = Number(state.admission.dropped_events) || 0;
-  $("fleet-count").textContent = droppedEvents
-    ? `${countMessage("count-session", state.sessions.length)} · ${t("event-drops", { count: droppedEvents })}`
+  const fleetCountText = droppedEvents
+    ? countMessage("count-session", state.sessions.length) + " · " + t("event-drops", { count: droppedEvents })
     : t("tracked-sessions", { count: state.sessions.length });
+  const fleetCount = $("fleet-count");
+  if (fleetCount.textContent !== fleetCountText) fleetCount.textContent = fleetCountText;
   const counts = Object.fromEntries(STATUS_KEYS.map((status) => [status, 0]));
   for (const session of state.sessions) {
     if (session.status in counts) counts[session.status] += 1;
   }
-  $("fleet-state-strip").innerHTML = STATUS_KEYS.map((status) => {
+  const stateMarkup = STATUS_KEYS.map((status) => {
     const meta = STATUS_META[status];
-    return `<span class="state-chip tone-${escapeHtml(meta.tone)}" role="listitem" title="${escapeHtml(metaLabel(meta))}: ${escapeHtml(counts[status])}" aria-label="${escapeHtml(metaLabel(meta))}: ${escapeHtml(counts[status])}"><span class="state-chip-glyph" aria-hidden="true">${meta.glyph}</span><b>${counts[status]}</b><span>${escapeHtml(t(meta.short))}</span></span>`;
+    return '<span class="state-chip tone-' + escapeHtml(meta.tone) + '" role="listitem" title="' + escapeHtml(metaLabel(meta)) + ': ' + escapeHtml(counts[status]) + '" aria-label="' + escapeHtml(metaLabel(meta)) + ': ' + escapeHtml(counts[status]) + '"><span class="state-chip-glyph" aria-hidden="true">' + meta.glyph + '</span><b>' + counts[status] + '</b><span>' + escapeHtml(t(meta.short)) + "</span></span>";
   }).join("");
+  const stateStrip = $("fleet-state-strip");
+  if (stateStrip.innerHTML !== stateMarkup) stateStrip.innerHTML = stateMarkup;
 }
 
 /// How often pinned panes re-read their grid.
@@ -2649,6 +2694,9 @@ async function handleDaemonEvent(event) {
 function bindEvents() {
   $("new-session-button").addEventListener("click", openLauncher);
   $("empty-new-button").addEventListener("click", openLauncher);
+  $("fleet-summary").addEventListener("click", (event) => {
+    if (event.target?.closest?.("#fleet-spend")) openRollup();
+  });
   $("refresh-button").addEventListener("click", () => {
     void loadSnapshot();
     void loadExternal();

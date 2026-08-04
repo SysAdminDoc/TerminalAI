@@ -95,6 +95,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   including Windows root-relative and drive-relative paths that could escape the repository.
 - Review landing refusals now stay in the review entry as an accessible error, preserving
   the full reason after the transient action feedback has disappeared.
+- Fleet summary and diagnostics updates now avoid unnecessary DOM replacement, preserving
+  keyboard focus and text selection across the one-second status tick.
 - Fleet and queue row actions now use 24×24px hit boxes while preserving the compact fleet row pitch.
 
 - The Presets selector now keeps a visible keyboard focus indicator in both themes.

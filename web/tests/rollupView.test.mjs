@@ -16,14 +16,15 @@ test("the fleet's spend figure is the way into the breakdown", () => {
   // A rollup nobody can find is a rollup nobody uses, and the aggregate is
   // exactly where the question "on what?" occurs to the operator.
   assert.match(main, /id="fleet-spend"/);
-  assert.match(main, /\$\("fleet-spend"\)\?\.addEventListener\("click", \(\) => openRollup\(\)\);/);
+  assert.match(main, /\$\("fleet-summary"\)\.addEventListener\("click", \(event\) => \{/);
+  assert.doesNotMatch(main, /\$\("fleet-spend"\)\?\.addEventListener/);
   assert.match(html, /id="rollup-dialog"/);
 });
 
 test("the entry point is a button, not a span with a handler", () => {
   // It is keyboard reachable and announced as a control only if it is one.
   assert.match(main, /<button type="button" class="summary-item summary-spend"/);
-  assert.match(main, /aria-label="\$\{escapeHtml\(t\("button-open-rollup"\)\)\}"/);
+  assert.match(main, /escapeHtml\(t\("button-open-rollup"\)\)/);
   assert.match(css, /\.summary-spend:focus-visible/);
 });
 
