@@ -582,33 +582,23 @@ button {
   margin-right: 3px;
 }
 
-.preset-control {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  border: 1px solid var(--surface0);
-  border-radius: 7px;
-  overflow: hidden;
-}
-
-.preset-control:focus-within {
-  border-color: var(--mauve);
-  outline: 2px solid var(--blue);
-  outline-offset: 2px;
-}
-
-.preset-control select {
-  max-width: 140px;
-  border: 0;
+/* The preset selector moved into the overflow menu, but the reason it was
+   styled separately has not changed: a bare <select> here loses the focus ring
+   the rest of the app has, and it is reachable by keyboard. */
+.menu-section select {
+  width: 100%;
   padding: 7px 8px;
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
   color: var(--subtext1);
   background: var(--mantle);
   font-size: 11px;
 }
 
-.preset-control .button {
-  border-radius: 0;
-  padding: 7px 9px;
+.menu-section select:focus-visible {
+  border-color: var(--mauve);
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
 }
 
 .workspace {
@@ -634,13 +624,22 @@ button {
   background: #11111b;
 }
 
+/* `min-width: 0` on both children is what stops this row overflowing its panel
+   and painting on top of the terminal pane: without it a flex item refuses to
+   shrink below its content width, and the surplus is drawn rather than clipped.
+   The toolbar was doing exactly that at the documented 1440px default. */
 .panel-toolbar, .terminal-toolbar {
-  height: 54px;
+  min-height: 54px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 0 18px;
   border-bottom: 1px solid rgba(88, 91, 112, .28);
+}
+
+.panel-toolbar > *, .terminal-toolbar > * {
+  min-width: 0;
 }
 
 .toolbar-title {
@@ -656,9 +655,102 @@ button {
 }
 
 .fleet-tools {
+  min-width: 0;
   display: flex;
+  flex: 0 1 auto;
   align-items: center;
   gap: 6px;
+}
+
+/* The overflow menu. A relatively-positioned wrapper rather than the popover
+   API: the panel has to escape a toolbar that is now allowed to shrink, and an
+   absolutely-positioned child of a positioned ancestor does that without
+   depending on anchor positioning being available in this WebView. */
+.menu-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 208px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--surface0);
+  border-radius: 9px;
+  background: var(--mantle);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .45);
+}
+
+/* Anchored to the right edge when the trigger sits near the window edge, so the
+   panel opens inward instead of off-screen. */
+.menu-right {
+  left: auto;
+  right: 0;
+}
+
+.menu[hidden] {
+  display: none;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--subtext1);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  transition: background .14s ease, color .14s ease;
+}
+
+.menu-item:hover, .menu-item:focus-visible {
+  color: var(--text);
+  background: var(--surface0);
+}
+
+.menu-item[aria-pressed="true"] {
+  color: var(--mauve);
+}
+
+.menu-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 10px 8px;
+}
+
+.menu-heading {
+  color: var(--subtext0);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.menu-inline {
+  display: flex;
+  gap: 4px;
+}
+
+.menu-inline .button {
+  flex: 1 1 auto;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+
+.menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--surface0);
 }
 
 .filter-wrap {
@@ -2763,7 +2855,7 @@ button {
   .terminal-panel {
     background: var(--base);
   }
-  .filter-wrap, .preset-control select {
+  .filter-wrap, .menu-section select {
     background: rgba(255, 255, 255, .78);
   }
   .row-focused {

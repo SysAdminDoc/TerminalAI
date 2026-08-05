@@ -85,13 +85,15 @@ test("dialog content shares the action footer inset", () => {
 });
 
 test("the preset selector keeps a visible keyboard focus indicator", () => {
-  assert.match(html, /class="preset-control"[^>]*>.*id="preset-select"/s);
-  assert.doesNotMatch(css, /\.preset-control select \{[^}]*outline\s*:/);
+  // The selector moved into the overflow menu, but it is still reachable by
+  // keyboard, and a bare <select> there would lose the ring the rest of the app
+  // has. The assertion follows the control; the guarantee does not change.
+  assert.match(html, /class="menu-section"[^>]*>[\s\S]*?id="preset-select"/);
   const dom = new JSDOM(`<style>${css}</style>`);
   const rule = [...dom.window.document.styleSheets[0].cssRules].find(
-    (candidate) => candidate.selectorText === ".preset-control:focus-within",
+    (candidate) => candidate.selectorText === ".menu-section select:focus-visible",
   );
-  assert.ok(rule, "preset control must style its focused state");
+  assert.ok(rule, "the menu's select must style its focused state");
   assert.equal(rule.style.borderColor, "var(--mauve)");
   assert.equal(rule.style.outline, "2px solid var(--blue)");
   assert.match(css, /--mauve: #cba6f7;/);

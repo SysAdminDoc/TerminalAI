@@ -3,7 +3,28 @@
 All notable changes to TerminalAI are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
-## [0.9.0] — 2026-08-04
+## [Unreleased]
+
+### Fixed
+
+- The fleet toolbar overflowed its own panel and painted on top of the terminal pane. At the
+  documented 1440×900 default window size, "Limits", "History" and the help button were drawn over
+  the "No focused session" heading as overlapping, illegible text, and "Review" and "New session"
+  were pushed off the right edge of the header. Cause: `.panel-toolbar` is a flex row whose children
+  had no `min-width: 0`, so a flex item refuses to shrink below its content width and the surplus is
+  painted rather than clipped. Both toolbars now allow their children to shrink.
+
+### Changed
+
+- The chrome went from 21 controls to 9. The row that is always on screen now holds only what is
+  used while scanning the fleet — the filter, the agent and status filters, "Needs input" and
+  "Wide" — and the header holds "Review", "New session" and a menu. Everything else moved behind two
+  overflow triggers: **Tools** (grouping, Projects, Prompts, Broadcast, History, Limits, and the
+  explainer) and a header menu (presets, Refresh, Preflight, Check updates). Nothing was removed and
+  every control kept its element id, so each one is still driven by the handler it always had. The
+  four-button preset cluster became a labelled section with real words instead of `▶ × ↺`. The menus
+  close on outside click and on Escape, return focus to their trigger, and close behind an item that
+  opens a dialog — covered by ten tests against the real `index.html`.
 
 ### Fixed
 

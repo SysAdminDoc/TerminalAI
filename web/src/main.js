@@ -14,6 +14,7 @@ import { defaultSelection, isEligible, summarize, targets } from "./broadcast.js
 import { hasOpenWork, openItemsCell, sortProjects, stalenessLabel, summarize as summarizeProjects } from "./projects.js";
 import { renderSessionHistory } from "./sessionHistory.js";
 import { renderWorktrees } from "./worktrees.js";
+import { wireOverflowMenus } from "./menus.js";
 import { systemTimeMs } from "./time.js";
 import "./styles.css";
 
@@ -3484,6 +3485,7 @@ function bindEvents() {
     }
     await refreshQueue();
   });
+  wireOverflowMenus($("app-menu-button").ownerDocument);
   $("explainer-toggle").addEventListener("click", () => openExplainer());
   $("settings-toggle").addEventListener("click", () => void openSettings());
   $("history-toggle").addEventListener("click", () => void openSessionHistory());
