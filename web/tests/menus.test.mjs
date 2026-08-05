@@ -133,3 +133,41 @@ test("the toolbar keeps only the controls used while scanning the fleet", () => 
     "wide-toggle",
   ]);
 });
+
+test("the launcher shows what decides a launch and folds the rest away", () => {
+  const { doc } = mount();
+  const grid = doc.querySelector(".launcher-grid");
+  const advanced = grid.querySelector("details.launcher-advanced");
+  assert.ok(advanced, "the launcher must group its rarely-set fields");
+  assert.equal(advanced.open, false, "advanced options start closed");
+
+  const inside = advanced.querySelectorAll("input, select, textarea, button").length;
+  const total = grid.querySelectorAll("input, select, textarea, button").length;
+  assert.ok(inside >= 15, `expected the bulk of the fields to be folded away, found ${inside}`);
+  assert.ok(total - inside <= 8, `too many controls left at rest: ${total - inside}`);
+});
+
+test("folding the launcher hid no field and renamed no id", () => {
+  // Every one of these is read by readSpec/writeSpec by id; losing one would
+  // silently drop a launch option rather than fail loudly.
+  const { id } = mount();
+  for (const control of [
+    "agent-input", "name-input", "cwd-input", "prompt-input",
+    "model-input", "effort-input", "permission-input", "sandbox-input",
+    "profile-input", "resume-input", "resume-id-input", "budget-input",
+    "search-input", "extra-dirs-input", "template-select", "worktree-input",
+    "port-count-input", "port-base-input", "setup-hook-input", "teardown-hook-input",
+  ]) {
+    assert.ok(id(control), `${control} disappeared from the launcher`);
+  }
+});
+
+test("the advanced summary says what is inside it", () => {
+  // A disclosure that only says "Advanced" makes the operator open it to find
+  // out whether the thing they want is in there.
+  const { doc } = mount();
+  const hint = doc.querySelector(".launcher-advanced-hint");
+  assert.ok(hint, "the summary must name its contents");
+  assert.match(hint.textContent, /model/);
+  assert.match(hint.textContent, /sandbox/);
+});

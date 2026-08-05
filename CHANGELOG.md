@@ -16,6 +16,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Changed
 
+- The launcher shows the four things that decide a launch and folds the other seventeen away. Agent,
+  session label, project folder and the initial prompt are what a session is actually chosen by; the
+  rest — model, effort, permission, sandbox, profile, resume, budget, web search, extra directories,
+  template, worktree, both port fields and both hooks — now sit behind one **Advanced options**
+  disclosure that starts closed. The summary lists what is inside it, so nothing has to be opened to
+  find out whether the wanted field is in there. Every field kept its id and is still read by the
+  same `readSpec`/`writeSpec` code, which a test enforces field by field.
+
 - The chrome went from 21 controls to 9. The row that is always on screen now holds only what is
   used while scanning the fleet — the filter, the agent and status filters, "Needs input" and
   "Wide" — and the header holds "Review", "New session" and a menu. Everything else moved behind two

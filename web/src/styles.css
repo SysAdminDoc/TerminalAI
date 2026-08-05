@@ -1649,6 +1649,69 @@ button {
   padding: 20px 26px;
 }
 
+/* Seventeen of the launcher's twenty-five controls are ones a session rarely
+   sets. They stay one click away rather than competing with the four that
+   decide what actually launches. The summary names what is inside, so nothing
+   has to be opened to find out whether it is in there. */
+.launcher-advanced {
+  grid-column: 1 / -1;
+  border: 1px solid var(--surface0);
+  border-radius: 9px;
+  background: rgba(17, 17, 27, .35);
+}
+
+.launcher-advanced > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 13px;
+  border-radius: 8px;
+  color: var(--subtext1);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+
+.launcher-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* A disclosure with no affordance reads as a heading, so the caret is drawn
+   rather than inherited from the UA. */
+.launcher-advanced > summary::before {
+  content: "▸";
+  color: var(--subtext0);
+  font-size: 10px;
+  transition: transform .16s ease;
+}
+
+.launcher-advanced[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.launcher-advanced > summary:hover,
+.launcher-advanced > summary:focus-visible {
+  color: var(--text);
+}
+
+.launcher-advanced-hint {
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--subtext0);
+  font-size: 10px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.launcher-advanced-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 13px 15px;
+  padding: 4px 13px 14px;
+}
+
 .field {
   display: flex;
   flex-direction: column;
