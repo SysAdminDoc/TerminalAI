@@ -337,7 +337,7 @@ Verified flags, not guesses.
 | Effort | `--effort <runtime value>` | `--config model_reasoning_effort="…"` |
 | Project folder | process cwd | `--cd` |
 | Extra writable dirs | `--add-dir` | `--add-dir` |
-| Permission | `--permission-mode default\|plan\|acceptEdits\|bypassPermissions` | Plan: `--config collaboration_mode.mode="Plan"`; otherwise `--ask-for-approval on-request\|untrusted\|never` |
+| Permission | `--permission-mode default\|plan\|acceptEdits\|bypassPermissions` | Plan: `--config collaboration_mode.mode="Plan"`; Accept edits: `--ask-for-approval on-request` with `--sandbox workspace-write`; otherwise `--ask-for-approval on-request\|never` |
 | Sandbox | — | `--sandbox read-only\|workspace-write\|danger-full-access` |
 | Session label | `--name` | TerminalAI-side |
 | Config profile | — | `--profile` |
@@ -346,6 +346,13 @@ Verified flags, not guesses.
 | Fork | `--resume <id> --fork-session` | `fork <id>` |
 | Spend cap | `--max-budget-usd` | — |
 | Web search | — | `--search` |
+
+Codex has no single flag that means "accept edits". Its documented equivalent is the auto preset —
+`on-request` approvals inside the workspace-write sandbox — so that is what the control maps to, and
+asking for accept-edits together with the read-only sandbox is refused rather than resolved
+silently: an agent told to accept edits it cannot make is a session that fails on its first write.
+Codex's `untrusted` policy is deliberately not used here; it runs only known-safe reads without
+asking, so it interrupts *more* than the default, not less.
 
 Options an agent cannot express are **refused, not dropped**. Asking for a read-only sandbox and
 silently getting an unsandboxed Claude session is the kind of thing that costs you a repo. Prompts

@@ -8,7 +8,7 @@
     "--config",
     "model_reasoning_effort=\"xhigh\"",
     "--ask-for-approval",
-    "untrusted",
+    "on-request",
     "--sandbox",
     "workspace-write",
     "--profile",

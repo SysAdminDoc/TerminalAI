@@ -7,6 +7,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Choosing "accept edits" for a Codex session put it in Codex's *most* interrupting approval mode.
+  The control mapped to `--ask-for-approval untrusted`, which runs only known-safe read operations
+  without asking and requires approval for anything that mutates state — so it prompted more than
+  "Ask" (`on-request`) did, and the whole permission ladder ran backwards for one agent. The shipped
+  "Codex · Build" preset, described as writing inside the workspace, was launching that way. Accept
+  edits now maps to Codex's own documented auto preset: `on-request` approvals paired with the
+  `workspace-write` sandbox. Asking for accept edits together with the read-only sandbox is now
+  refused by name instead of launching a session that would fail on its first write. A test ranks
+  each agent's emitted approval value by how often the vendor documents it as prompting and asserts
+  the ladder cannot invert again; it fails against the previous mapping.
+
 - The fleet toolbar overflowed its own panel and painted on top of the terminal pane. At the
   documented 1440×900 default window size, "Limits", "History" and the help button were drawn over
   the "No focused session" heading as overlapping, illegible text, and "Review" and "New session"

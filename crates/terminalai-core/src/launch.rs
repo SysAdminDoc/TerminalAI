@@ -78,7 +78,11 @@ pub enum Permission {
     /// Claude `plan` — read and propose, never edit. No Codex equivalent, so
     /// Codex sessions pair this with the read-only sandbox.
     Plan,
-    /// Claude `acceptEdits` / Codex `untrusted`.
+    /// Claude `acceptEdits` / Codex `on-request` paired with the
+    /// workspace-write sandbox, which is Codex's own auto preset. Deliberately
+    /// *not* Codex `untrusted`: that policy runs only known-safe reads without
+    /// asking, so it prompts more than [`Permission::Ask`] does rather than
+    /// less, and mapping to it inverted the whole ladder.
     AcceptEdits,
     /// Claude `bypassPermissions` / Codex `never`.
     Bypass,
@@ -218,6 +222,8 @@ pub enum LaunchError {
     InvalidResumeId,
     #[error("max_budget_usd must be finite and non-negative")]
     InvalidBudget,
+    #[error("accept-edits cannot be combined with the read-only sandbox: the agent would accept edits it is not permitted to make")]
+    AcceptEditsUnderReadOnlySandbox,
     #[error(transparent)]
     Environment(#[from] EnvironmentError),
 }
@@ -245,6 +251,11 @@ impl LaunchSpec {
             .is_some_and(|id| !is_valid_resume_id(id))
         {
             return Err(LaunchError::InvalidResumeId);
+        }
+        if self.permission == Some(Permission::AcceptEdits)
+            && self.sandbox == Some(Sandbox::ReadOnly)
+        {
+            return Err(LaunchError::AcceptEditsUnderReadOnlySandbox);
         }
         self.environment.validate()?;
         let args = match self.agent {
@@ -381,15 +392,27 @@ impl LaunchSpec {
             a.push("--ask-for-approval".into());
             a.push(
                 match p {
-                    Permission::Ask => "on-request",
-                    Permission::AcceptEdits => "untrusted",
+                    // `untrusted` is Codex's *most* prompting policy — it runs
+                    // only known-safe reads without asking — so it is not the
+                    // analogue of "accept edits", it is the opposite of one.
+                    // Codex expresses auto-editing as `on-request` paired with
+                    // the workspace-write sandbox, which is its own auto preset.
+                    Permission::Ask | Permission::AcceptEdits => "on-request",
                     Permission::Bypass => "never",
                     Permission::Plan => unreachable!("rejected above"),
                 }
                 .into(),
             );
         }
-        if let Some(s) = self.sandbox {
+        // The other half of that pair. Codex's default sandbox is not
+        // guaranteed to permit writes, so accept-edits without a sandbox would
+        // ask the agent to accept edits it cannot make. The contradictory
+        // combination is refused in `resolve`, so an explicit choice here is
+        // always one that can write.
+        let sandbox = self.sandbox.or_else(|| {
+            (self.permission == Some(Permission::AcceptEdits)).then_some(Sandbox::WorkspaceWrite)
+        });
+        if let Some(s) = sandbox {
             a.push("--sandbox".into());
             a.push(s.as_str().into());
         }

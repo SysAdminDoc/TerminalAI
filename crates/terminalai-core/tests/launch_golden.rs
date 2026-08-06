@@ -88,3 +88,122 @@ fn codex_cli_0_146_0_arguments_match_golden() {
         include_str!("fixtures/launch/codex-cli-0.146.0.json"),
     );
 }
+
+/// How often each agent's emitted approval value stops to ask, from the vendor
+/// documentation rather than from this crate's opinion. Higher prompts more.
+///
+/// Claude: `default` asks per tool call, `acceptEdits` stops asking for file
+/// edits only, `bypassPermissions` never asks.
+/// Codex: `untrusted` "runs only known-safe read operations automatically" and
+/// requires approval for anything that mutates state — its most prompting
+/// policy, above `on-request`, which asks only on escalation. `never` asks
+/// nothing.
+fn prompt_frequency(agent: Agent, emitted: &str) -> u8 {
+    match (agent, emitted) {
+        (Agent::Claude, "default") => 3,
+        (Agent::Claude, "acceptEdits") => 2,
+        (Agent::Claude, "bypassPermissions") => 0,
+        (Agent::Codex, "untrusted") => 4,
+        (Agent::Codex, "on-request") => 3,
+        (Agent::Codex, "never") => 0,
+        other => panic!("unranked approval value {other:?}; rank it against the vendor docs"),
+    }
+}
+
+/// The emitted approval value for one permission, or `None` when the agent
+/// expresses that permission some other way than an approval flag.
+fn emitted_approval(agent: Agent, permission: Permission) -> Option<String> {
+    let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let spec = LaunchSpec {
+        agent,
+        cwd: cwd.to_path_buf(),
+        permission: Some(permission),
+        ..Default::default()
+    };
+    let args = spec
+        .resolve(&binary(agent))
+        .expect("resolve permission-only launch")
+        .args;
+    let flag = match agent {
+        Agent::Claude => "--permission-mode",
+        Agent::Codex => "--ask-for-approval",
+    };
+    args.iter()
+        .position(|arg| arg == flag)
+        .map(|at| args[at + 1].clone())
+}
+
+/// Asking for *less* interruption must never produce *more* of it. This is the
+/// one property the per-agent mapping table cannot state about itself, and the
+/// Codex column violated it: `AcceptEdits` mapped to `untrusted`, which asks
+/// more than the `on-request` that `Ask` maps to.
+#[test]
+fn asking_for_less_interruption_never_produces_more_of_it() {
+    for agent in [Agent::Claude, Agent::Codex] {
+        let ladder = [
+            Permission::Ask,
+            Permission::AcceptEdits,
+            Permission::Bypass,
+        ];
+        let mut previous: Option<(Permission, u8)> = None;
+        for permission in ladder {
+            let Some(emitted) = emitted_approval(agent, permission) else {
+                continue;
+            };
+            let rank = prompt_frequency(agent, &emitted);
+            if let Some((looser, earlier)) = previous {
+                assert!(
+                    earlier >= rank,
+                    "{agent:?}: {permission:?} emits {emitted:?} which prompts more than \
+                     {looser:?} does — the ladder is inverted"
+                );
+            }
+            previous = Some((permission, rank));
+        }
+    }
+}
+
+/// `acceptEdits` means "make the edits without asking". A sandbox that forbids
+/// writing makes that impossible, so the pair is refused rather than launched
+/// into a session that will fail on its first edit.
+#[test]
+fn accept_edits_under_a_read_only_sandbox_is_refused() {
+    let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let error = LaunchSpec {
+        agent: Agent::Codex,
+        cwd: cwd.to_path_buf(),
+        permission: Some(Permission::AcceptEdits),
+        sandbox: Some(Sandbox::ReadOnly),
+        ..Default::default()
+    }
+    .resolve(&binary(Agent::Codex))
+    .expect_err("a read-only sandbox cannot accept edits");
+    let message = error.to_string();
+    assert!(
+        message.contains("accept-edits") && message.contains("read-only"),
+        "refusal must name both halves of the contradiction: {message}"
+    );
+}
+
+/// Without an explicit sandbox, accept-edits pairs with the workspace-write
+/// sandbox — Codex's own documented auto preset. Codex's default sandbox is not
+/// guaranteed to permit writes, so leaving it unset would ask the agent to
+/// accept edits it cannot make.
+#[test]
+fn accept_edits_pairs_with_the_workspace_write_sandbox_by_default() {
+    let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let args = LaunchSpec {
+        agent: Agent::Codex,
+        cwd: cwd.to_path_buf(),
+        permission: Some(Permission::AcceptEdits),
+        ..Default::default()
+    }
+    .resolve(&binary(Agent::Codex))
+    .expect("resolve accept-edits launch")
+    .args;
+    let at = args
+        .iter()
+        .position(|arg| arg == "--sandbox")
+        .expect("accept-edits supplies a sandbox");
+    assert_eq!(args[at + 1], "workspace-write");
+}

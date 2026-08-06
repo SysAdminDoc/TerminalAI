@@ -238,13 +238,6 @@ the historical `R-NN` scheme and the entries below follow the current convention
 
 ### P0
 
-- [ ] P0 — Stop mapping "accept edits" to Codex's strictest approval policy
-  Why: an operator who asks for fewer prompts gets more of them, and the substitution is silent — which is precisely what `LaunchError::Unsupported` exists to prevent.
-  Evidence: `crates/terminalai-core/src/launch.rs:83-84` documents `AcceptEdits` as "Claude `acceptEdits` / Codex `untrusted`" and `:384-386` emits it. Codex documents `untrusted` as "Codex runs only known-safe read operations automatically. Commands that can mutate state or trigger external execution paths require approval" — its *most* prompting policy, stricter than the `on-request` that `Permission::Ask` maps to. Codex's own auto-editing behaviour is `workspace-write` + `on-request` (https://learn.chatgpt.com/docs/agent-approvals-security). No test compares the two mappings, so the ordering violation is invisible.
-  Touches: `crates/terminalai-core/src/launch.rs`, `crates/terminalai-core/tests/launch_golden.rs`
-  Acceptance: selecting AcceptEdits for Codex either emits `--ask-for-approval on-request` paired with `--sandbox workspace-write`, or refuses with `LaunchError::Unsupported` naming the reason — decided deliberately and written in the README's mapping table. A test asserts the mappings are monotonic: for both agents, Ask must never prompt less than AcceptEdits, and AcceptEdits never less than Bypass.
-  Complexity: S
-
 - [ ] P0 — Gate a release on its own changelog, badge and test counts
   Why: v0.9.0 shipped and the string "0.9.0" appears nowhere in `CHANGELOG.md`, so the version badge links to a file that has no entry for the version it declares.
   Evidence: `a01b2b9` renamed `## [Unreleased]` to `## [0.9.0] — 2026-08-04`; `d0dacb0` renamed that same heading straight back to `## [Unreleased]` instead of inserting a new section above it, so the released notes are now co-mingled with post-release work and the section has two `### Fixed` and two `### Changed` blocks. Meanwhile `Cargo.toml:11`, `crates/terminalai-app/tauri.conf.json:4`, `web/package.json:4` and `README.md:3` all say 0.9.0. The same class of drift is already present elsewhere: `README.md:104` claims 287 frontend tests and the suite runs 300.
