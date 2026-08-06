@@ -227,6 +227,8 @@
             <label class="field field-wide check-field"><input id="worktree-input" type="checkbox" /><span>Isolate in its own Git worktree <em>private checkout and branch, so two sessions on one repo cannot see each other's edits</em></span></label>
             <label class="field"><span>Port slots <em>per session</em></span><input id="port-count-input" type="number" min="0" max="16" step="1" value="4" /></label>
             <label class="field"><span>Port base <em>deterministic</em></span><input id="port-base-input" type="number" min="1024" max="65535" step="1" value="42000" /></label>
+            <label class="field field-wide"><span>Agent config directory <em>optional; a different directory is a different account</em></span><input id="agent-home-input" placeholder="Leave empty to use the signed-in account" /></label>
+            <label class="field field-wide"><span>Inherit these variables <em>optional; comma separated names, nothing is inherited by default</em></span><input id="env-passthrough-input" placeholder="e.g. ANTHROPIC_API_KEY, NODE_EXTRA_CA_CERTS" /></label>
             <label class="field field-wide"><span>Setup hook <em>optional local code</em></span><input id="setup-hook-input" placeholder="e.g. pnpm install --frozen-lockfile" /></label>
             <label class="field field-wide"><span>Teardown hook <em>optional local code</em></span><input id="teardown-hook-input" placeholder="e.g. pnpm run env:down" /></label>
               </div>

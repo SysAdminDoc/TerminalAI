@@ -27,6 +27,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   Repository-declared templates keep the closed vocabulary on purpose — an operator choosing an
   unmodelled mode is informed consent, a file that arrives with a clone choosing one is not.
 
+- Sessions can name their own agent config directory and the parent variables they inherit. The
+  child-environment allowlist carries no credential of any kind, which is right as a default and
+  left API-key, Bedrock and Vertex operators with an agent that could not authenticate and a symptom
+  that read as an expired login. A launch may now set `CLAUDE_CONFIG_DIR` / `CODEX_HOME` — two
+  directories are two accounts — and name parent variables one at a time. Nothing is inherited by
+  being present in the parent: an unnamed variable never crosses, and a name that is malformed,
+  reserved to the supervisor, or unset in this process refuses the launch instead of producing a
+  session quietly missing its credential. `terminalai-probe start` takes `--agent-home` and a
+  repeatable `--env-passthrough`.
+
 ### Fixed
 
 - The v0.9.0 changelog section is restored, and the entries written after that release now sit under
@@ -54,7 +64,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   had no `min-width: 0`, so a flex item refuses to shrink below its content width and the surplus is
   painted rather than clipped. Both toolbars now allow their children to shrink.
 
-### Changed
 
 - The launcher shows the four things that decide a launch and folds the other seventeen away. Agent,
   session label, project folder and the initial prompt are what a session is actually chosen by; the

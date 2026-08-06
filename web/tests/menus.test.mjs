@@ -157,6 +157,7 @@ test("folding the launcher hid no field and renamed no id", () => {
     "profile-input", "resume-input", "resume-id-input", "budget-input",
     "search-input", "extra-dirs-input", "template-select", "worktree-input",
     "port-count-input", "port-base-input", "setup-hook-input", "teardown-hook-input",
+    "agent-home-input", "env-passthrough-input",
   ]) {
     assert.ok(id(control), `${control} disappeared from the launcher`);
   }

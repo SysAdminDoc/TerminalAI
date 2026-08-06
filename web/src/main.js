@@ -2683,6 +2683,13 @@ function readSpec() {
     initial_prompt: $("prompt-input").value.trim() || null,
     extra_args: [],
     worktree: $("worktree-input").checked,
+    agent_home: $("agent-home-input").value.trim() || null,
+    // Names only. The core reads each value from this process and refuses a
+    // name that is unset, so an empty entry must not reach it as one.
+    env_passthrough: $("env-passthrough-input")
+      .value.split(",")
+      .map((name) => name.trim())
+      .filter(Boolean),
     environment: {
       setup: $("setup-hook-input").value.trim() || null,
       teardown: $("teardown-hook-input").value.trim() || null,
@@ -2732,6 +2739,8 @@ function writeSpec(spec) {
   $("budget-input").value = spec.max_budget_usd ?? "";
   $("search-input").checked = Boolean(spec.web_search);
   $("worktree-input").checked = Boolean(spec.worktree);
+  $("agent-home-input").value = spec.agent_home ?? "";
+  $("env-passthrough-input").value = (spec.env_passthrough ?? []).join(", ");
   $("port-base-input").value = spec.environment?.port_base ?? 42000;
   $("port-count-input").value = spec.environment?.port_count ?? 4;
   $("setup-hook-input").value = spec.environment?.setup ?? "";

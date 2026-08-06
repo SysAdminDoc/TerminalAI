@@ -140,3 +140,21 @@ generate`), keeps the secret key out of the repository, and publishes the public
 The release step then emits `SHA256SUMS` plus `SHA256SUMS.minisig`. Minisign is Ed25519 with no CA
 and no PKI, so this is not code signing and does not touch the no-signing rule — and it changes
 nothing about SmartScreen, which reads signatures and per-hash download volume only.
+
+## Live validation of a redirected agent config directory — 2026-08-06
+
+The mechanism shipped: a launch may set `CLAUDE_CONFIG_DIR` / `CODEX_HOME` and name parent variables
+to inherit, refusing any name that is malformed, reserved or unset. It is covered by the workspace
+suite and driven headlessly by `terminalai-probe start --agent-home <dir> --env-passthrough <NAME>`.
+
+What cannot be settled here is whether a redirected config directory fragments the agent's own
+state. `~/.claude.json` holds the OAuth session, the MCP server list *and* per-project state
+together, so pointing two sessions at two directories may also split what `--resume` can see and
+which MCP servers a session gets. This machine has no authenticated agent, so the question cannot be
+answered by running it.
+
+What closes it: one operator-owned launch with `--agent-home` pointing at a fresh directory,
+confirming that the session signs in independently, that `--resume` inside it lists only that
+directory's sessions, and that MCP servers configured in the default directory are absent rather
+than silently inherited. If they are inherited, the README's "two directories are two accounts"
+needs qualifying to name exactly what is and is not separated.

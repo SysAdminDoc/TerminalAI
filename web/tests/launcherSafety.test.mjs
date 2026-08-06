@@ -135,3 +135,17 @@ test("every path that writes a permission mode goes through the setter", () => {
   // A bare assignment on either would reintroduce the silent drop.
   assert.doesNotMatch(main, /\$\("permission-input"\)\.value = /);
 });
+
+test("the credential fields default to inheriting nothing", () => {
+  // The core refuses a name that is unset, so an empty text box must produce an
+  // empty list rather than one entry that is the empty string.
+  const { dom } = launcherForm();
+  const home = dom.window.document.getElementById("agent-home-input");
+  const passthrough = dom.window.document.getElementById("env-passthrough-input");
+  assert.equal(home.value, "", "no config directory is the signed-in account");
+  assert.equal(passthrough.value, "", "nothing is inherited unless named");
+
+  const readSpec = main.slice(main.indexOf("function readSpec()"), main.indexOf("function setPermissionValue"));
+  assert.match(readSpec, /agent_home: \$\("agent-home-input"\)\.value\.trim\(\) \|\| null/);
+  assert.match(readSpec, /\.map\(\(name\) => name\.trim\(\)\)\s*\n\s*\.filter\(Boolean\)/);
+});

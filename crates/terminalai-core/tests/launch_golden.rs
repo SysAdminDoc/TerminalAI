@@ -258,3 +258,111 @@ fn accept_edits_pairs_with_the_workspace_write_sandbox_by_default() {
         .expect("accept-edits supplies a sandbox");
     assert_eq!(args[at + 1], "workspace-write");
 }
+
+/// Two sessions pointed at different config directories are two accounts. The
+/// variable differs per agent, so the spec names a directory and the launch
+/// names the variable.
+#[test]
+fn the_agent_home_becomes_that_agents_own_config_variable() {
+    let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for (agent, key) in [
+        (Agent::Claude, "CLAUDE_CONFIG_DIR"),
+        (Agent::Codex, "CODEX_HOME"),
+    ] {
+        let spec = LaunchSpec {
+            agent,
+            cwd: cwd.to_path_buf(),
+            agent_home: Some(cwd.to_path_buf()),
+            ..Default::default()
+        };
+        spec.resolve(&binary(agent)).expect("resolve with an agent home");
+        let environment = spec.agent_environment().expect("agent environment");
+        assert!(
+            environment
+                .iter()
+                .any(|(name, value)| name == key && value == &cwd.to_string_lossy()),
+            "{agent:?} did not receive {key}: {environment:?}"
+        );
+    }
+}
+
+/// A directory that does not exist is refused at resolve time. Passing it on
+/// would start an agent whose config lives nowhere, which reads as a signed-out
+/// session rather than as a bad path.
+#[test]
+fn a_missing_agent_home_is_refused() {
+    let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let error = LaunchSpec {
+        agent: Agent::Claude,
+        cwd: cwd.to_path_buf(),
+        agent_home: Some(cwd.join("no-such-config-dir")),
+        ..Default::default()
+    }
+    .resolve(&binary(Agent::Claude))
+    .expect_err("a missing agent home is refused");
+    assert!(matches!(error, terminalai_core::launch::LaunchError::MissingAgentHome(_)));
+}
+
+/// Nothing is inherited by being present in the parent. A named variable is the
+/// operator's consent for this session, and every way that name can fail is a
+/// refusal rather than a session quietly missing its credential.
+#[test]
+fn only_named_parent_variables_cross_and_every_bad_name_is_refused() {
+    use terminalai_core::launch::LaunchError;
+
+    let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let spec_with = |names: Vec<String>| LaunchSpec {
+        agent: Agent::Claude,
+        cwd: cwd.to_path_buf(),
+        env_passthrough: names,
+        ..Default::default()
+    };
+
+    // Nothing named, nothing added — the baseline allowlist is untouched.
+    assert!(spec_with(Vec::new())
+        .agent_environment()
+        .expect("no passthrough")
+        .is_empty());
+
+    std::env::set_var("TERMINALAI_TEST_PASSTHROUGH_KEY", "secret-value");
+    let resolved = spec_with(vec!["TERMINALAI_TEST_PASSTHROUGH_KEY".into()]);
+    // Reserved: the supervisor's own namespace carries the per-session hook
+    // secret, so a parent value must never be able to displace one.
+    assert!(matches!(
+        resolved.agent_environment().expect_err("reserved"),
+        LaunchError::ReservedEnvironmentName(_)
+    ));
+
+    std::env::set_var("TERMINALAI_LAUNCH_TEST_TOKEN", "secret-value");
+    let allowed = LaunchSpec {
+        agent: Agent::Claude,
+        cwd: cwd.to_path_buf(),
+        env_passthrough: vec!["PATH".into()],
+        ..Default::default()
+    }
+    .agent_environment()
+    .expect("PATH is set in every test process");
+    assert_eq!(allowed.len(), 1);
+    assert_eq!(allowed[0].0, "PATH");
+    std::env::remove_var("TERMINALAI_TEST_PASSTHROUGH_KEY");
+    std::env::remove_var("TERMINALAI_LAUNCH_TEST_TOKEN");
+
+    assert!(matches!(
+        spec_with(vec!["not a name".into()])
+            .agent_environment()
+            .expect_err("malformed"),
+        LaunchError::InvalidEnvironmentName(_)
+    ));
+    assert!(matches!(
+        spec_with(vec!["TERMINALAI_UNSET_FOR_THIS_TEST_ONLY_X".into()])
+            .agent_environment()
+            .expect_err("reserved beats unset"),
+        LaunchError::ReservedEnvironmentName(_)
+    ));
+    assert!(matches!(
+        spec_with(vec!["NO_SUCH_VARIABLE_FOR_THIS_TEST_ONLY".into()])
+            .agent_environment()
+            .expect_err("unset is a refusal, not an omission"),
+        LaunchError::UnsetEnvironmentName(_)
+    ));
+}

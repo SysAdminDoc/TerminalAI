@@ -212,6 +212,21 @@ pub struct LaunchSpec {
     /// repository's working tree with every other session on it.
     #[serde(default)]
     pub worktree: bool,
+    /// Where the agent keeps its own configuration and signed-in session:
+    /// `CLAUDE_CONFIG_DIR` for Claude Code, `CODEX_HOME` for Codex. Two sessions
+    /// pointed at different directories are two accounts.
+    #[serde(default)]
+    pub agent_home: Option<PathBuf>,
+    /// Parent variables this launch may inherit, named one at a time.
+    ///
+    /// The baseline allowlist carries no credential of any kind, which is
+    /// correct as a default and leaves API-key, Bedrock and Vertex operators
+    /// with an agent that cannot authenticate — a failure that surfaces as an
+    /// expired login rather than as an unsupported configuration. Naming a
+    /// variable here is the operator's explicit consent for this session; a
+    /// variable absent from the parent is a refusal, not a silent omission.
+    #[serde(default)]
+    pub env_passthrough: Vec<String>,
     pub model: Option<String>,
     pub effort: Option<Effort>,
     pub permission: Option<Permission>,
@@ -284,6 +299,14 @@ pub enum LaunchError {
     InvalidBudget,
     #[error("accept-edits cannot be combined with the read-only sandbox: the agent would accept edits it is not permitted to make")]
     AcceptEditsUnderReadOnlySandbox,
+    #[error("environment variable name {0:?} is not a plain name")]
+    InvalidEnvironmentName(String),
+    #[error("{0} is set by the supervisor and cannot be inherited from the parent")]
+    ReservedEnvironmentName(String),
+    #[error("{0} is not set in this process, so there is nothing to pass through")]
+    UnsetEnvironmentName(String),
+    #[error("agent home directory does not exist: {0}")]
+    MissingAgentHome(PathBuf),
     #[error(transparent)]
     Environment(#[from] EnvironmentError),
 }
@@ -318,6 +341,9 @@ impl LaunchSpec {
             return Err(LaunchError::AcceptEditsUnderReadOnlySandbox);
         }
         self.environment.validate()?;
+        // Validated here so a bad passthrough name refuses the launch rather
+        // than surfacing later as an agent that cannot authenticate.
+        self.agent_environment()?;
         let args = match self.agent {
             Agent::Claude => self.claude_args()?,
             Agent::Codex => self.codex_args()?,
@@ -327,6 +353,47 @@ impl LaunchSpec {
             args,
             cwd: self.cwd.clone(),
         })
+    }
+
+    /// The variables this launch adds on top of the sanitized baseline.
+    ///
+    /// Every one is here because the spec asked for it. Nothing is read from the
+    /// parent unless named, and a name that is reserved, malformed or unset is
+    /// refused rather than dropped — an operator who asked to pass a credential
+    /// through and silently got a session without it would debug the agent.
+    pub fn agent_environment(&self) -> Result<Vec<(String, String)>, LaunchError> {
+        let mut pairs = Vec::new();
+        if let Some(home) = &self.agent_home {
+            if !home.is_dir() {
+                return Err(LaunchError::MissingAgentHome(home.clone()));
+            }
+            let key = match self.agent {
+                Agent::Claude => "CLAUDE_CONFIG_DIR",
+                Agent::Codex => "CODEX_HOME",
+            };
+            pairs.push((key.to_owned(), home.to_string_lossy().into_owned()));
+        }
+        for name in &self.env_passthrough {
+            if name.is_empty()
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                || name.chars().next().is_some_and(|c| c.is_ascii_digit())
+            {
+                return Err(LaunchError::InvalidEnvironmentName(name.clone()));
+            }
+            // The supervisor's own variables carry the per-session hook secret
+            // and the identity a hook is trusted by. A parent value overwriting
+            // one would let an unrelated process's environment rebind this row.
+            if name.starts_with("TERMINALAI_") {
+                return Err(LaunchError::ReservedEnvironmentName(name.clone()));
+            }
+            let Some(value) = std::env::var_os(name) else {
+                return Err(LaunchError::UnsetEnvironmentName(name.clone()));
+            };
+            pairs.push((name.clone(), value.to_string_lossy().into_owned()));
+        }
+        Ok(pairs)
     }
 
     fn claude_args(&self) -> Result<Vec<String>, LaunchError> {

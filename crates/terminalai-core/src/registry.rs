@@ -347,6 +347,17 @@ pub enum RegistryEvent {
     SessionRemoved { id: SessionId },
 }
 
+/// What a session needs from its spec at spawn time: working directory, the
+/// hook and port spec, the reserved ports, the per-session hook secret, and the
+/// variables the launch itself asked for.
+type RuntimeEnvironment = (
+    std::path::PathBuf,
+    EnvironmentSpec,
+    Vec<u16>,
+    String,
+    Vec<(String, String)>,
+);
+
 #[derive(Debug, thiserror::Error)]
 pub enum RegistryError {
     #[error(transparent)]
@@ -2338,7 +2349,8 @@ impl SessionRegistry {
         // its own checkout must have one by the time the lease copies config
         // into it and the agent is told where to run.
         self.provision_worktree(id)?;
-        let (cwd, environment_spec, ports, hook_token) = self.runtime_environment(id)?;
+        let (cwd, environment_spec, ports, hook_token, launch_environment) =
+            self.runtime_environment(id)?;
         let command = &ResolvedCommand {
             cwd: cwd.clone(),
             ..command.clone()
@@ -2346,6 +2358,12 @@ impl SessionRegistry {
         tracing::debug!("preparing session environment");
         let mut environment = environment::variables(&id.0, &ports);
         environment.push(("TERMINALAI_HOOK_TOKEN".into(), hook_token));
+        // The launch's own additions — the agent's config directory and any
+        // parent variables the operator named. Applied before the lease and the
+        // setup hook so both see the account this session is actually running
+        // as, and after the supervisor's own variables so a passthrough name
+        // cannot displace one (`agent_environment` refuses TERMINALAI_* anyway).
+        environment.extend(launch_environment);
 
         // The repository's own lease, applied before the raw setup hook so the
         // hook sees the copied config, the compose project name and the session
@@ -2932,7 +2950,7 @@ impl SessionRegistry {
     fn runtime_environment(
         &self,
         id: &SessionId,
-    ) -> Result<(std::path::PathBuf, EnvironmentSpec, Vec<u16>, String), RegistryError> {
+    ) -> Result<RuntimeEnvironment, RegistryError> {
         let state = lock_state(&self.inner);
         let entry = state
             .entries
@@ -2943,6 +2961,10 @@ impl SessionRegistry {
             entry.spec.environment.clone(),
             entry.session.ports.clone(),
             entry.session.hook_token.clone(),
+            // Spec-derived, so a launch that names a config directory or a
+            // parent variable is honoured on every restart of that session and
+            // not only on its first spawn.
+            entry.spec.agent_environment()?,
         ))
     }
 

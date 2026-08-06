@@ -66,6 +66,8 @@ OPTIONS:
   --name <label>                                             (claude only)
   --prompt <text>
   --worktree                                                 (private Git checkout + branch)
+  --agent-home <dir>                                         (CLAUDE_CONFIG_DIR / CODEX_HOME)
+  --env-passthrough <NAME>                                   (inherit one parent variable; repeatable)
   --setup-hook <command>                                     (optional per-session setup)
   --teardown-hook <command>                                  (optional per-session teardown)
   --port-base <1024..65535>                                  (default 42000)
@@ -1777,6 +1779,15 @@ fn parse_launch_spec(
             "--prompt" => spec.initial_prompt = Some(take_value(args, &mut index, flag)?),
             "--worktree" => {
                 spec.worktree = true;
+            }
+            "--agent-home" => {
+                spec.agent_home = Some(PathBuf::from(take_value(args, &mut index, flag)?));
+            }
+            "--env-passthrough" => {
+                // Repeatable, one name per use. A list separator would make the
+                // names ambiguous on the one platform whose PATH uses both.
+                spec.env_passthrough
+                    .push(take_value(args, &mut index, flag)?);
             }
             "--setup-hook" => {
                 spec.environment.setup = Some(take_value(args, &mut index, flag)?);

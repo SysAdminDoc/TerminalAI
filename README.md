@@ -89,7 +89,7 @@ Working today (`terminalai-probe`, headless):
   answering a permission prompt blind
 - Runs one stored prompt across many projects, flagging repositories with uncommitted changes
   instead of launching into them
-- 525 default Rust tests over agent identification and resolution against an injected filesystem,
+- 528 default Rust tests over agent identification and resolution against an injected filesystem,
   the flag mapping, real-pty boundary and blocking exit wait, supervision state machine, registry,
   diagnostics, review aggregation and reviewed-mark expiry, the land gate against real
   repositories, environment leases, transcript tailing, the MCP boundary, cost model and vendored
@@ -100,8 +100,8 @@ Working today (`terminalai-probe`, headless):
   discovery and roadmap scanning against this machine's own repositories, the prompt queue's state
   machine and the work queue's dirty-tree refusal, the fleet spend ledger and its admission ceiling,
   memory-aware admission and job limits, agent authentication state, the bounded session
-  archive and the leftover-checkout survey; 528 with the opt-in
-  app-server transport enabled, plus 302 frontend tests (`npm --prefix web test`)
+  archive and the leftover-checkout survey; 531 with the opt-in
+  app-server transport enabled, plus 303 frontend tests (`npm --prefix web test`)
 
 `Roadmap_Blocked.md` records what is waiting on something external. The experimental
 Codex app-server adapter is available only when the daemon is built with the explicit
@@ -353,6 +353,26 @@ Verified flags, not guesses.
 | Fork | `--resume <id> --fork-session` | `fork <id>` |
 | Spend cap | `--max-budget-usd` | — |
 | Web search | — | `--search` |
+
+### Which authentication a session runs as
+
+The agent inherits a sanitized environment allowlist that carries no credential of any kind, so by
+default a session authenticates exactly as the agent already does on this machine — the signed-in
+account in the agent's own config directory. Nothing is inherited merely by being set in the parent
+process.
+
+Two launcher fields change that, both opt-in and both per session:
+
+- **Agent config directory** sets `CLAUDE_CONFIG_DIR` (Claude Code) or `CODEX_HOME` (Codex). Two
+  sessions pointed at two directories are two accounts.
+- **Inherit these variables** names parent variables one at a time — `ANTHROPIC_API_KEY`,
+  `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX`, `NODE_EXTRA_CA_CERTS`
+  for a corporate TLS root, and so on. A name that is malformed, reserved to the supervisor
+  (`TERMINALAI_*`, which carries the per-session hook secret), or simply unset in this process
+  refuses the launch rather than starting a session quietly missing its credential.
+
+`terminalai-probe start` takes the same two as `--agent-home <dir>` and a repeatable
+`--env-passthrough <NAME>`.
 
 A permission mode this build does not model is passed through to the chosen agent verbatim, with a
 warning, exactly as an unrecognised reasoning effort already is — Claude Code has grown `auto`,
