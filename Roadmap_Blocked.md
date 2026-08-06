@@ -126,14 +126,21 @@ unsigned NSIS/EXE passes validation — `wez.wezterm`, `yt-dlp.yt-dlp` and `Neov
 proof. Schema 1.12.0. Declare `Silent: /S` for NSIS and `/quiet` for MSI, `UpgradeBehavior`, and
 `AppsAndFeaturesEntries` carrying the MSI `UpgradeCode`.
 
-Unblocks the moment a release is published. Do not submit before the NSIS sidecar-lock fix ships:
-publishing an installer whose upgrade path is known broken is worse than not being in winget.
+Update 2026-08-06: the release-side blocker is gone. v0.10.0 is published at
+https://github.com/SysAdminDoc/TerminalAI/releases/tag/v0.10.0 with both installers attached, and
+the NSIS sidecar-lock fix it warned about shipped in v0.7.0 — `scripts/verify-installer.ps1` ran
+against the exact uploaded artifact, including the upgrade-over-a-running-daemon path, before
+publishing. What remains is only the outward-facing half: opening a PR against the third-party
+`microsoft/winget-pkgs` repository, which is the operator's action to take.
 
 ## Publish checksums and a detached signature with each release
 
 Blocked 2026-08-04: the signature needs a private key the operator holds, which this agent must
 never generate or store. `SHA256SUMS` alone is a partial answer and would advertise a verification
 the signature half does not back.
+
+Update 2026-08-06: the key is now the only blocker. A published release for the step to attach to
+exists as of v0.10.0.
 
 What closes it: the operator generates a minisign keypair once (`minisign -G`, or `tauri signer
 generate`), keeps the secret key out of the repository, and publishes the public key in `README.md`.

@@ -240,13 +240,6 @@ the historical `R-NN` scheme and the entries below follow the current convention
 
 ### P1
 
-- [ ] P1 — Tag and publish the releases that already exist
-  Why: nine versions have shipped with zero git tags and zero GitHub releases, and both externally-gated distribution items say they unblock "the moment a release is published" — so the blocker on them is this repository, not a third party.
-  Evidence: `git tag` returns nothing; `gh release list -R SysAdminDoc/TerminalAI` returns nothing. `Roadmap_Blocked.md` records the winget manifest as blocked because "submission needs a published GitHub Release whose asset URLs and SHA256 are already fixed. Neither exists to point at yet", and the checksum/minisign item as needing a release step to attach to. The NSIS sidecar-lock fix that the same file says must ship first landed in v0.7.0 (`f64a037`).
-  Touches: `CHANGELOG.md`, a release script under `scripts/`, the built NSIS and MSI bundles
-  Acceptance: the current version is tagged, an unsigned NSIS and MSI pair from a clean `cargo tauri build` is attached to a published GitHub Release, and `scripts/verify-installer.ps1` has been run against the exact uploaded artifact — including the upgrade-over-a-running-daemon path — before publishing. Ordering with the P0 changelog gate is deliberate: that gate runs first.
-  Complexity: M
-
 - [ ] P1 — Make agent identity data instead of code
   Why: adding a third agent family currently means editing a Rust enum, a hand-written flag table, the capability probe and the preset UI, which is why the ACP item is parked on "when a third agent family is on the roadmap" — the cost is the blocker, not the transport.
   Evidence: `crates/terminalai-core/src/agent.rs` hard-codes two families and `launch.rs` maps 18 flags per family by hand. herdr solves the same problem with reloadable manifests — `server.agent_manifests` and `server.reload_agent_manifests` on its socket API (https://herdr.dev/docs/socket-api/) — and covers Claude Code, Codex, Cursor, opencode, Grok, Pi, Kilo, Kimi, Antigravity, Mastra, Devin, Droid and Qoder. `Roadmap_Blocked.md` records ACP as unblocking "when a third agent family is on the roadmap"; this is the half that pays off with the two already supported.
