@@ -84,6 +84,23 @@ foreach ($relative in $declared.Keys | Sort-Object) {
     }
 }
 
+# Workspace members pin each other by version as well as by path, and cargo
+# reports that mismatch as an unresolvable dependency rather than as a stale
+# version string. Caught exactly that on the 0.9.0 -> 0.10.0 bump.
+foreach ($manifest in Get-ChildItem -Path (Join-Path $repoRoot 'crates') -Filter 'Cargo.toml' -Recurse) {
+    $pins = Select-String -Path $manifest.FullName -Pattern 'path\s*=\s*"[^"]*"\s*,\s*version\s*=\s*"([^"]+)"'
+    foreach ($pin in $pins) {
+        $found = $pin.Matches[0].Groups[1].Value
+        $relative = $manifest.FullName.Substring($repoRoot.Length + 1)
+        if ($found -ne $workspaceVersion) {
+            Add-Problem "$relative pins a workspace crate at $found, not $workspaceVersion"
+        }
+        else {
+            Add-Pass "$relative pins workspace crates at $workspaceVersion"
+        }
+    }
+}
+
 # --- 2 and 3. the changelog actually records this version -----------------
 
 Write-Host 'Changelog'
