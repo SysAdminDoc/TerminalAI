@@ -275,6 +275,7 @@ menu-preset-restore = Restore built-ins
 menu-explainer = How this screen works
 launcher-advanced = Advanced options
 launcher-advanced-hint = model, permissions, sandbox, resume, budget, worktree, ports, hooks
+launcher-permission-custom = { $mode } (not modelled here — passed through)
 session-history-count = { $count } archived
 session-history-empty = Nothing has been archived yet. A session appears here once it has stopped and you archive its row.
 session-history-error = Could not read the session history: { $error }

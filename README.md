@@ -89,7 +89,7 @@ Working today (`terminalai-probe`, headless):
   answering a permission prompt blind
 - Runs one stored prompt across many projects, flagging repositories with uncommitted changes
   instead of launching into them
-- 523 default Rust tests over agent identification and resolution against an injected filesystem,
+- 525 default Rust tests over agent identification and resolution against an injected filesystem,
   the flag mapping, real-pty boundary and blocking exit wait, supervision state machine, registry,
   diagnostics, review aggregation and reviewed-mark expiry, the land gate against real
   repositories, environment leases, transcript tailing, the MCP boundary, cost model and vendored
@@ -100,8 +100,8 @@ Working today (`terminalai-probe`, headless):
   discovery and roadmap scanning against this machine's own repositories, the prompt queue's state
   machine and the work queue's dirty-tree refusal, the fleet spend ledger and its admission ceiling,
   memory-aware admission and job limits, agent authentication state, the bounded session
-  archive and the leftover-checkout survey; 526 with the opt-in
-  app-server transport enabled, plus 300 frontend tests (`npm --prefix web test`)
+  archive and the leftover-checkout survey; 528 with the opt-in
+  app-server transport enabled, plus 302 frontend tests (`npm --prefix web test`)
 
 `Roadmap_Blocked.md` records what is waiting on something external. The experimental
 Codex app-server adapter is available only when the daemon is built with the explicit
@@ -353,6 +353,13 @@ Verified flags, not guesses.
 | Fork | `--resume <id> --fork-session` | `fork <id>` |
 | Spend cap | `--max-budget-usd` | — |
 | Web search | — | `--search` |
+
+A permission mode this build does not model is passed through to the chosen agent verbatim, with a
+warning, exactly as an unrecognised reasoning effort already is — Claude Code has grown `auto`,
+`dontAsk` and `manual` since the four offered here were written, and a closed list would silently
+rewrite a saved preset that names one rather than merely failing to offer it. Repository-declared
+templates keep the closed vocabulary: an operator choosing an unmodelled mode is informed consent, a
+cloned `.terminalai/templates.toml` choosing one is not.
 
 Codex has no single flag that means "accept edits". Its documented equivalent is the auto preset —
 `on-request` approvals inside the workspace-write sandbox — so that is what the control maps to, and

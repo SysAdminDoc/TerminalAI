@@ -70,8 +70,14 @@ impl<'de> Deserialize<'de> for Effort {
 }
 
 /// How much the agent may do without asking.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
+///
+/// Open for the same reason [`Effort`] is: a runtime adds modes faster than
+/// this binary ships. Claude Code alone has grown `auto`, `dontAsk` and
+/// `manual` since these four were written, and a closed enum does not merely
+/// fail to offer them — it silently rewrites a preset or repository template
+/// that names one, which is the quiet data loss this project refuses
+/// everywhere else.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Permission {
     /// Claude `default` / Codex `on-request`.
     Ask,
@@ -86,6 +92,60 @@ pub enum Permission {
     AcceptEdits,
     /// Claude `bypassPermissions` / Codex `never`.
     Bypass,
+    /// A mode this binary does not model, passed to the chosen agent verbatim
+    /// with a warning. The value is the agent's own spelling, so it is not
+    /// portable between agents — the same string is handed to
+    /// `--permission-mode` or `--ask-for-approval` as chosen.
+    Custom(String),
+}
+
+impl Permission {
+    /// The wire and config spelling. The four modelled modes are kebab-case so
+    /// stored presets and repository templates keep the names they always had.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Permission::Ask => "ask",
+            Permission::Plan => "plan",
+            Permission::AcceptEdits => "accept-edits",
+            Permission::Bypass => "bypass",
+            Permission::Custom(value) => value,
+        }
+    }
+
+    /// Parse a stored or operator-supplied value, keeping anything unmodelled
+    /// rather than discarding it.
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "ask" => Permission::Ask,
+            "plan" => Permission::Plan,
+            "accept-edits" => Permission::AcceptEdits,
+            "bypass" => Permission::Bypass,
+            _ => Permission::Custom(value.to_owned()),
+        }
+    }
+
+    pub fn is_custom(&self) -> bool {
+        matches!(self, Self::Custom(_))
+    }
+}
+
+impl Serialize for Permission {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Permission {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(Permission::parse(&value))
+    }
 }
 
 /// Codex-only filesystem policy.
@@ -300,7 +360,7 @@ impl LaunchSpec {
             a.push("--effort".into());
             a.push(e.as_str().into());
         }
-        if let Some(p) = self.permission {
+        if let Some(p) = self.permission.as_ref() {
             a.push("--permission-mode".into());
             a.push(
                 match p {
@@ -308,6 +368,9 @@ impl LaunchSpec {
                     Permission::Plan => "plan",
                     Permission::AcceptEdits => "acceptEdits",
                     Permission::Bypass => "bypassPermissions",
+                    // Claude's own spelling, unmodelled here — `auto`,
+                    // `dontAsk` and `manual` are the current examples.
+                    Permission::Custom(value) => value,
                 }
                 .into(),
             );
@@ -388,7 +451,7 @@ impl LaunchSpec {
             // Codex exposes its collaboration mode as a TOML config override.
             a.push("--config".into());
             a.push("collaboration_mode.mode=\"Plan\"".into());
-        } else if let Some(p) = self.permission {
+        } else if let Some(p) = self.permission.as_ref() {
             a.push("--ask-for-approval".into());
             a.push(
                 match p {
@@ -399,6 +462,9 @@ impl LaunchSpec {
                     // the workspace-write sandbox, which is its own auto preset.
                     Permission::Ask | Permission::AcceptEdits => "on-request",
                     Permission::Bypass => "never",
+                    // Codex's own spelling, unmodelled here — its granular
+                    // `approval_policy` values are the current example.
+                    Permission::Custom(value) => value,
                     Permission::Plan => unreachable!("rejected above"),
                 }
                 .into(),

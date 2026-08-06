@@ -1815,13 +1815,7 @@ fn parse_launch_spec(
                 });
             }
             "--permission" => {
-                spec.permission = Some(match take_value(args, &mut index, flag)?.as_str() {
-                    "ask" => Permission::Ask,
-                    "plan" => Permission::Plan,
-                    "accept-edits" => Permission::AcceptEdits,
-                    "bypass" => Permission::Bypass,
-                    other => return Err(format!("bad --permission: {other}")),
-                });
+                spec.permission = Some(Permission::parse(&take_value(args, &mut index, flag)?));
             }
             "--sandbox" => {
                 spec.sandbox = Some(match take_value(args, &mut index, flag)?.as_str() {

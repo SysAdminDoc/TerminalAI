@@ -51,10 +51,17 @@ test("extra directories are resolved under the chosen repository", () => {
 test("a field the template omits is left alone rather than blanked", () => {
   // A template that sets only a permission mode must not wipe the model the
   // operator typed.
+  // The guard is what matters, not how the value is written: a field whose
+  // control cannot hold every value it might be given goes through a setter
+  // instead of a bare assignment. Permission is the case — its <select> would
+  // silently drop a mode this build does not model.
   for (const field of ["agent", "model", "effort", "permission", "sandbox", "profile", "prompt"]) {
     assert.match(
       apply,
-      new RegExp(`if \\(template\\.${field}\\) \\$\\("[a-z-]+"\\)\\.value = template\\.${field};`),
+      new RegExp(
+        `if \\(template\\.${field}\\) (?:\\$\\("[a-z-]+"\\)\\.value = template\\.${field}` +
+          `|set[A-Za-z]+\\(template\\.${field}\\));`,
+      ),
       `${field} is applied unconditionally`,
     );
   }

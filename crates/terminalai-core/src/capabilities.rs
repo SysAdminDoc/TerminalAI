@@ -17,7 +17,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use crate::agent::{self, Agent, AgentBinary, ResolveError};
-use crate::launch::Effort;
+use crate::launch::{Effort, Permission};
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 const MAX_PROBE_LINE_BYTES: usize = 4 * 1024 * 1024;
@@ -65,8 +65,23 @@ impl AgentCapabilities {
 
     /// Return diagnostics without rejecting the launch. A runtime may learn a
     /// new model or effort before this binary does, so these are warnings only.
-    pub fn warnings_for(&self, model: Option<&str>, effort: Option<&Effort>) -> Vec<String> {
+    pub fn warnings_for(
+        &self,
+        model: Option<&str>,
+        effort: Option<&Effort>,
+        permission: Option<&Permission>,
+    ) -> Vec<String> {
         let mut warnings = Vec::new();
+        // No runtime advertises its permission modes, so there is no catalog to
+        // check a custom one against — only the fact that this binary does not
+        // model it, which is worth saying before the agent rejects it.
+        if permission.is_some_and(Permission::is_custom) {
+            warnings.push(format!(
+                "permission mode {:?} is not one this build models; passing it through to {}",
+                permission.expect("checked above").as_str(),
+                self.agent.label()
+            ));
+        }
         if let Some(model) = model {
             if !self.models.is_empty() && !self.models.iter().any(|known| known.id == model) {
                 warnings.push(format!(
@@ -788,7 +803,7 @@ mod tests {
             warning: None,
         };
         let warnings =
-            capabilities.warnings_for(Some("new-model"), Some(&Effort::Custom("ultra".into())));
+            capabilities.warnings_for(Some("new-model"), Some(&Effort::Custom("ultra".into())), None);
         assert_eq!(warnings.len(), 2);
         assert!(warnings
             .iter()

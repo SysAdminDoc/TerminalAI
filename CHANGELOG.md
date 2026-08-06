@@ -16,6 +16,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   released section — or whose README states test counts the suites do not report. Run by
   `scripts/verify-installer.ps1`, and standalone with `-SkipTests` for a fast metadata check.
 
+### Changed
+
+- The permission mode is open, the way reasoning effort already was. Claude Code has added `auto`,
+  `dontAsk` and `manual` since this launcher's four modes were written, and a closed list did not
+  merely fail to offer them: a preset or a resumed spec naming one was silently rewritten, and the
+  launcher's `<select>` reduced it to an empty value that launched with no mode at all. An
+  unmodelled mode now reaches the agent verbatim with a warning, is carried into the dropdown so it
+  round-trips visibly, and keeps the stored spelling of the four modelled modes unchanged.
+  Repository-declared templates keep the closed vocabulary on purpose — an operator choosing an
+  unmodelled mode is informed consent, a file that arrives with a clone choosing one is not.
+
 ### Fixed
 
 - The v0.9.0 changelog section is restored, and the entries written after that release now sit under

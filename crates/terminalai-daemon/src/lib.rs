@@ -1603,7 +1603,11 @@ fn warn_capability_overrides(spec: &LaunchSpec, configured_path: Option<&std::pa
         tracing::debug!(agent = ?spec.agent, "runtime capability probe unavailable; launch remains permissive");
         return;
     };
-    for warning in capabilities.warnings_for(spec.model.as_deref(), spec.effort.as_ref()) {
+    for warning in capabilities.warnings_for(
+        spec.model.as_deref(),
+        spec.effort.as_ref(),
+        spec.permission.as_ref(),
+    ) {
         tracing::warn!(agent = ?spec.agent, warning = %warning, "launch value is outside detected capabilities");
     }
 }

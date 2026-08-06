@@ -245,6 +245,10 @@ fn parse_effort(value: &str) -> Option<Effort> {
     }
 }
 
+/// Deliberately closed, unlike [`Permission::parse`]. A template file arrives
+/// with a clone, so its vocabulary is fixed at the schema for the same reason
+/// `extra_args` and `cwd` are refused outright — an operator choosing an
+/// unmodelled mode is informed consent, a repository choosing one is not.
 fn parse_permission(value: &str) -> Option<Permission> {
     match value.trim().to_ascii_lowercase().as_str() {
         "ask" => Some(Permission::Ask),

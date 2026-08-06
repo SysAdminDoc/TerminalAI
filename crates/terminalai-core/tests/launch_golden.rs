@@ -147,13 +147,13 @@ fn asking_for_less_interruption_never_produces_more_of_it() {
         ];
         let mut previous: Option<(Permission, u8)> = None;
         for permission in ladder {
-            let Some(emitted) = emitted_approval(agent, permission) else {
+            let Some(emitted) = emitted_approval(agent, permission.clone()) else {
                 continue;
             };
             let rank = prompt_frequency(agent, &emitted);
-            if let Some((looser, earlier)) = previous {
+            if let Some((looser, earlier)) = previous.as_ref() {
                 assert!(
-                    earlier >= rank,
+                    *earlier >= rank,
                     "{agent:?}: {permission:?} emits {emitted:?} which prompts more than \
                      {looser:?} does — the ladder is inverted"
                 );
@@ -161,6 +161,57 @@ fn asking_for_less_interruption_never_produces_more_of_it() {
             previous = Some((permission, rank));
         }
     }
+}
+
+/// Claude Code has grown `auto`, `dontAsk` and `manual` since this crate's four
+/// modes were written. A closed enum would not merely fail to offer them — it
+/// would silently rewrite a stored preset that names one.
+#[test]
+fn a_permission_mode_this_build_does_not_model_reaches_the_agent() {
+    let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for (agent, flag) in [
+        (Agent::Claude, "--permission-mode"),
+        (Agent::Codex, "--ask-for-approval"),
+    ] {
+        let args = LaunchSpec {
+            agent,
+            cwd: cwd.to_path_buf(),
+            permission: Some(Permission::parse("dontAsk")),
+            ..Default::default()
+        }
+        .resolve(&binary(agent))
+        .expect("an unmodelled mode is passed through, not refused")
+        .args;
+        let at = args
+            .iter()
+            .position(|arg| arg == flag)
+            .unwrap_or_else(|| panic!("{agent:?} emits {flag}"));
+        assert_eq!(args[at + 1], "dontAsk");
+    }
+}
+
+/// The four modelled modes must keep the spelling stored presets and repository
+/// templates already use, or every saved preset silently becomes a custom one.
+#[test]
+fn the_modelled_permission_names_round_trip_through_serde() {
+    for permission in [
+        Permission::Ask,
+        Permission::Plan,
+        Permission::AcceptEdits,
+        Permission::Bypass,
+        Permission::Custom("dontAsk".into()),
+    ] {
+        let encoded = serde_json::to_string(&permission).expect("encode permission");
+        let decoded: Permission = serde_json::from_str(&encoded).expect("decode permission");
+        assert_eq!(decoded, permission, "round trip changed {permission:?}");
+    }
+    assert_eq!(
+        serde_json::to_string(&Permission::AcceptEdits).expect("encode"),
+        "\"accept-edits\"",
+        "the stored spelling changed; every saved preset would become custom"
+    );
+    assert!(!Permission::Bypass.is_custom());
+    assert!(Permission::parse("manual").is_custom());
 }
 
 /// `acceptEdits` means "make the edits without asking". A sandbox that forbids

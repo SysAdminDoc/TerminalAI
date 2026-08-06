@@ -2692,6 +2692,28 @@ function readSpec() {
   };
 }
 
+// A <select> silently discards a value it has no option for, so a preset or a
+// resumed spec naming a permission mode this build does not model would come
+// back as "" and launch with no mode at all. The core keeps such a value
+// (Permission::Custom); this carries it into the list so it round-trips and the
+// operator can see what is about to be launched. Previous carried-in options are
+// dropped first so switching presets does not accumulate them.
+function setPermissionValue(value) {
+  const select = $("permission-input");
+  for (const option of Array.from(select.options)) {
+    if (option.dataset.passthrough === "true") option.remove();
+  }
+  const wanted = value ?? "ask";
+  if (!Array.from(select.options).some((option) => option.value === wanted)) {
+    const option = document.createElement("option");
+    option.value = wanted;
+    option.textContent = t("launcher-permission-custom", { mode: wanted });
+    option.dataset.passthrough = "true";
+    select.append(option);
+  }
+  select.value = wanted;
+}
+
 function writeSpec(spec) {
   clearFolderValidation();
   $("agent-input").value = spec.agent ?? "claude";
@@ -2702,7 +2724,7 @@ function writeSpec(spec) {
   if (spec.cwd) $("cwd-input").value = spec.cwd;
   $("model-input").value = spec.model ?? "";
   $("effort-input").value = spec.effort ?? "";
-  $("permission-input").value = spec.permission ?? "ask";
+  setPermissionValue(spec.permission);
   $("sandbox-input").value = spec.sandbox ?? "workspace-write";
   $("profile-input").value = spec.profile ?? "";
   $("resume-input").value = spec.resume?.kind ?? "new";
@@ -2797,7 +2819,7 @@ function syncAgentFields() {
   document.querySelectorAll(".codex-only").forEach((element) => element.classList.toggle("field-hidden", !codex));
   document.querySelectorAll(".claude-only").forEach((element) => element.classList.toggle("field-hidden", codex));
   renderCapabilityFields();
-  if (!codex && $("permission-input").value === "plan") $("permission-input").value = "ask";
+  if (!codex && $("permission-input").value === "plan") setPermissionValue("ask");
   document.querySelectorAll(".resume-id-field").forEach((element) => element.classList.toggle("field-hidden", $("resume-input").value === "new" || $("resume-input").value === "last"));
 }
 
@@ -2925,7 +2947,7 @@ function applyProjectTemplate() {
   if (template.agent) $("agent-input").value = template.agent;
   if (template.model) $("model-input").value = template.model;
   if (template.effort) $("effort-input").value = template.effort;
-  if (template.permission) $("permission-input").value = template.permission;
+  if (template.permission) setPermissionValue(template.permission);
   if (template.sandbox) $("sandbox-input").value = template.sandbox;
   if (template.profile) $("profile-input").value = template.profile;
   if (template.prompt) $("prompt-input").value = template.prompt;

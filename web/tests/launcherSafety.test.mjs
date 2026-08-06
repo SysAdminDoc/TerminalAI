@@ -111,3 +111,27 @@ test("the focused terminal replaces the placeholder rather than stacking under i
   assert.match(main, /\$\("terminal-placeholder"\)\.classList\.toggle\("view-hidden", attached\)/);
   assert.match(main, /function updateTerminalHeader\(\) \{\s*renderTerminalPlaceholder\(\);/);
 });
+
+test("a permission mode this build does not model survives a round trip", () => {
+  // The core keeps an unmodelled mode as Permission::Custom. A <select> has no
+  // option for it and would silently reduce it to "", launching with no mode at
+  // all — so the value is carried into the list rather than dropped.
+  const { dom } = launcherForm();
+  const select = dom.window.document.getElementById("permission-input");
+  const modelled = Array.from(select.options).map((option) => option.value);
+  assert.deepEqual(modelled, ["ask", "plan", "accept-edits", "bypass"]);
+
+  select.value = "dontAsk";
+  assert.equal(select.value, "", "a bare assignment is exactly what must not be relied on");
+
+  assert.match(main, /function setPermissionValue\(value\) \{/);
+  assert.match(main, /dataset\.passthrough === "true"\) option\.remove\(\)/);
+  assert.match(main, /t\("launcher-permission-custom", \{ mode: wanted \}\)/);
+  assert.match(ftl, /^launcher-permission-custom = /m);
+});
+
+test("every path that writes a permission mode goes through the setter", () => {
+  // writeSpec (presets, resumed specs) and applyProjectTemplate both write it.
+  // A bare assignment on either would reintroduce the silent drop.
+  assert.doesNotMatch(main, /\$\("permission-input"\)\.value = /);
+});

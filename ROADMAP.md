@@ -247,13 +247,6 @@ the historical `R-NN` scheme and the entries below follow the current convention
   Acceptance: the current version is tagged, an unsigned NSIS and MSI pair from a clean `cargo tauri build` is attached to a published GitHub Release, and `scripts/verify-installer.ps1` has been run against the exact uploaded artifact — including the upgrade-over-a-running-daemon path — before publishing. Ordering with the P0 changelog gate is deliberate: that gate runs first.
   Complexity: M
 
-- [ ] P1 — Open the `Permission` mapping the way `Effort` is already open
-  Why: `Effort` carries a `Custom(String)` variant precisely because "a runtime can add a new string before this binary is updated"; `Permission` did not get the same treatment, and Claude Code has since added three modes this launcher cannot reach.
-  Evidence: `crates/terminalai-core/src/launch.rs:18-27` defines `Effort::Custom`; `:75-85` defines `Permission` as a closed four-variant enum. Claude Code now documents `--permission-mode default|acceptEdits|plan|auto|dontAsk|bypassPermissions|manual` (https://code.claude.com/docs/en/cli-reference), so `auto`, `dontAsk` and `manual` are unreachable; `--enable-auto-mode` was removed in v2.1.111 in favour of `--permission-mode auto`, and `settings.json` carries a matching `autoMode` block with `allow`/`soft_deny`/`hard_deny` and a `disableAutoMode` key. Codex has separately grown a granular object form of `approval_policy` (`sandbox_approval`, `rules`, `mcp_elicitations`, `request_permissions`, `skill_approval`).
-  Touches: `crates/terminalai-core/src/launch.rs`, `capabilities.rs`, `crates/terminalai-app/src/preset.rs`, `web/index.html`, `web/src/main.js`, `crates/terminalai-core/tests/launch_golden.rs`
-  Acceptance: a permission mode the runtime advertises but this binary does not model is passed through with the same warning path a custom effort already takes, and one the chosen agent genuinely lacks is still refused by name. Answer RESEARCH.md open question 1 (open variant versus closed-and-refuse) in the commit message rather than leaving it implicit. Depends on the P0 mapping fix landing first so the monotonicity test covers the new modes.
-  Complexity: M
-
 - [ ] P1 — Let a session carry its own agent credentials and config directory
   Why: the child-environment allowlist passes no authentication variable at all, so API-key, Bedrock and Vertex operators get an agent that cannot authenticate and a symptom that reads as an expired login; and with no `CLAUDE_CONFIG_DIR` there is no way to run two sessions on two accounts, which is the community's loudest non-AGENTS.md request.
   Evidence: `crates/terminalai-core/src/environment.rs:325-352` allowlists 18 Windows variables — PATH, SYSTEMROOT, SystemDrive, windir, TEMP, TMP, USERPROFILE, APPDATA, LOCALAPPDATA, HOMEDRIVE, HOMEPATH, COMSPEC, PATHEXT, NUMBER_OF_PROCESSORS and the three proxy variables — and nothing else crosses, which `resolved_agents_run_with_the_sanitized_environment` pins with a sentinel. Absent and load-bearing: `CLAUDE_CONFIG_DIR`, `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_BASE_URL`, `CLAUDE_CODE_USE_BEDROCK`/`CLAUDE_CODE_USE_VERTEX`, `CODEX_HOME`, `NODE_EXTRA_CA_CERTS`/`SSL_CERT_FILE`. Demand: anthropics/claude-code#18435 (793👍), #36151 (745👍), #27302 (468👍).
@@ -320,6 +313,13 @@ the historical `R-NN` scheme and the entries below follow the current convention
   Complexity: S
 
 ### P3
+
+- [ ] P3 — Decide whether the launcher should still force Claude off plan mode
+  Why: choosing Claude silently rewrites a plan-mode selection to "ask", but Claude Code supports `--permission-mode plan` and this project's own mapping table says so — the reset looks like it outlived whatever made it true.
+  Evidence: `web/src/main.js`'s `syncAgentFields` runs `if (!codex && $("permission-input").value === "plan") setPermissionValue("ask")`. It has been there unchanged since `1097e61`, the first Tauri shell commit, and no test covers it — `git log -S` finds only that commit. Meanwhile `launch.rs` maps `Permission::Plan` to `--permission-mode plan` for Claude and to `collaboration_mode.mode="Plan"` for Codex, so both agents express it, and `README.md`'s table lists Plan for both. Two built-in Claude presets ("Claude · Plan first", "Claude · Quick question") carry `Permission::Plan` and are therefore rewritten the moment the launcher syncs its fields.
+  Touches: `web/src/main.js`, `web/tests/launcherSafety.test.mjs`
+  Acceptance: either the reset is removed and a test asserts a Claude session keeps plan mode from a preset through to the previewed argv, or the reset is kept with a comment naming the Claude behaviour that requires it. Verify against a real `claude --permission-mode plan` launch before removing — the flag being documented is not proof this build accepts it.
+  Complexity: S
 
 - [ ] P3 — Tell the agent when the operator is using a screen reader
   Why: the app has an explicit opt-in screen-reader mode for its own terminal, and the agent whose output fills that terminal has a matching mode that is never turned on, so the accessible surface stops at the renderer.
