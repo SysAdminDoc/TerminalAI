@@ -5,7 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/verify-release-metadata.ps1`, a release gate for the claims a release makes about
+  itself. v0.9.0 shipped with no changelog entry: the release commit renamed `## [Unreleased]` to
+  `## [0.9.0]` and the next commit renamed it straight back rather than opening a new section, so
+  the string "0.9.0" appeared nowhere in this file while four manifests and the README badge all
+  declared it. The gate refuses a release whose declared version strings disagree, whose version has
+  no changelog section, whose version sections repeat a subsection — the signature of appending to a
+  released section — or whose README states test counts the suites do not report. Run by
+  `scripts/verify-installer.ps1`, and standalone with `-SkipTests` for a fast metadata check.
+
 ### Fixed
+
+- The v0.9.0 changelog section is restored, and the entries written after that release now sit under
+  `[Unreleased]` where they belong rather than inside the released section.
+
+- The README's stated test counts had drifted: 520 default Rust tests, 523 with all features and 287
+  frontend tests, against suites that report 523, 526 and 300. The new gate is what will notice next
+  time.
 
 - Choosing "accept edits" for a Codex session put it in Codex's *most* interrupting approval mode.
   The control mapped to `--ask-for-approval untrusted`, which runs only known-safe read operations
@@ -44,6 +62,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   four-button preset cluster became a labelled section with real words instead of `▶ × ↺`. The menus
   close on outside click and on Escape, return focus to their trigger, and close behind an item that
   opens a dialog — covered by ten tests against the real `index.html`.
+
+## [0.9.0] — 2026-08-04
 
 ### Fixed
 

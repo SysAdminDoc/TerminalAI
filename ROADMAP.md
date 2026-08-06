@@ -238,13 +238,6 @@ the historical `R-NN` scheme and the entries below follow the current convention
 
 ### P0
 
-- [ ] P0 — Gate a release on its own changelog, badge and test counts
-  Why: v0.9.0 shipped and the string "0.9.0" appears nowhere in `CHANGELOG.md`, so the version badge links to a file that has no entry for the version it declares.
-  Evidence: `a01b2b9` renamed `## [Unreleased]` to `## [0.9.0] — 2026-08-04`; `d0dacb0` renamed that same heading straight back to `## [Unreleased]` instead of inserting a new section above it, so the released notes are now co-mingled with post-release work and the section has two `### Fixed` and two `### Changed` blocks. Meanwhile `Cargo.toml:11`, `crates/terminalai-app/tauri.conf.json:4`, `web/package.json:4` and `README.md:3` all say 0.9.0. The same class of drift is already present elsewhere: `README.md:104` claims 287 frontend tests and the suite runs 300.
-  Touches: `CHANGELOG.md`, `scripts/verify-installer.ps1` or a new `scripts/verify-release-metadata.ps1`, `README.md`
-  Acceptance: the 0.9.0 section is restored with a fresh empty `[Unreleased]` above it and its duplicate subsections merged; a check run by the release gate fails when the workspace version has no matching `## [x.y.z]` heading, when the four declared version strings disagree, or when the test counts stated in `README.md` differ from what the suites report. Non-zero exit means do not publish.
-  Complexity: S
-
 ### P1
 
 - [ ] P1 — Tag and publish the releases that already exist

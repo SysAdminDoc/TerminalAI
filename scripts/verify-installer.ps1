@@ -161,6 +161,18 @@ if ($Installer -notlike "*$productVersion*") {
     Pass "installer matches configured version $productVersion"
 }
 
+# The artifact can be perfect while the release describing it is not: v0.9.0
+# shipped with no changelog section at all. Run the metadata gate here so one
+# command still answers "may this be published". Tests are skipped because this
+# gate already assumes a build the suites passed.
+$metadataScript = Join-Path $PSScriptRoot 'verify-release-metadata.ps1'
+& pwsh -NoProfile -File $metadataScript -SkipTests
+if ($LASTEXITCODE -ne 0) {
+    Fail 'release metadata is inconsistent — see the report above'
+} else {
+    Pass 'release metadata agrees with itself'
+}
+
 $prefix = Join-Path ([System.IO.Path]::GetTempPath()) ("terminalai-installcheck-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 $installed = $false
 $process = $null

@@ -89,7 +89,7 @@ Working today (`terminalai-probe`, headless):
   answering a permission prompt blind
 - Runs one stored prompt across many projects, flagging repositories with uncommitted changes
   instead of launching into them
-- 520 default Rust tests over agent identification and resolution against an injected filesystem,
+- 523 default Rust tests over agent identification and resolution against an injected filesystem,
   the flag mapping, real-pty boundary and blocking exit wait, supervision state machine, registry,
   diagnostics, review aggregation and reviewed-mark expiry, the land gate against real
   repositories, environment leases, transcript tailing, the MCP boundary, cost model and vendored
@@ -100,8 +100,8 @@ Working today (`terminalai-probe`, headless):
   discovery and roadmap scanning against this machine's own repositories, the prompt queue's state
   machine and the work queue's dirty-tree refusal, the fleet spend ledger and its admission ceiling,
   memory-aware admission and job limits, agent authentication state, the bounded session
-  archive and the leftover-checkout survey; 523 with the opt-in
-  app-server transport enabled, plus 287 frontend tests (`npm --prefix web test`)
+  archive and the leftover-checkout survey; 526 with the opt-in
+  app-server transport enabled, plus 300 frontend tests (`npm --prefix web test`)
 
 `Roadmap_Blocked.md` records what is waiting on something external. The experimental
 Codex app-server adapter is available only when the daemon is built with the explicit
@@ -222,6 +222,13 @@ cargo tauri build --ci --no-sign --bundles nsis,msi -- --manifest-path Cargo.tom
 # daemon, then uninstall. Non-zero exit means do not publish.
 pwsh -NoProfile -File scripts/check-cross-targets.ps1
 pwsh -NoProfile -File scripts/verify-installer.ps1
+
+# Does this release describe itself correctly? Checks that every declared
+# version string agrees, that CHANGELOG.md has a section for it, that no version
+# section repeats a subsection, and that the test counts stated above are the
+# counts the suites report. verify-installer.ps1 runs this too, minus the
+# suites. -SkipTests makes it a fast metadata-only check.
+pwsh -NoProfile -File scripts/verify-release-metadata.ps1
 
 # Re-derive the MSRV floor after any dependency bump. The workspace rust-version
 # must be at least what this prints, or the badge promises a toolchain that cannot
