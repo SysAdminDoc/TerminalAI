@@ -747,6 +747,49 @@ button {
   color: var(--subtext0);
 }
 
+.working-set {
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(88, 91, 112, .28);
+}
+
+.working-set-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.restore-outcomes {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.restore-outcomes li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 12px;
+}
+
+.restore-name {
+  font-weight: 600;
+}
+
+.restore-started .restore-detail {
+  color: var(--green);
+}
+
+.restore-refused .restore-detail {
+  color: var(--peach);
+}
+
+.restore-pin {
+  color: var(--subtext0);
+}
+
 .terminal-find-count {
   color: var(--subtext0);
   font-size: 12px;

@@ -8,6 +8,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { contextLabel, contextTitle, contextTone } from "./contextPressure.js";
 import { renderSearchResults, searchSummary } from "./fleetSearch.js";
+import { renderRestoreOutcomes, renderWorkingSet, summarizeRestore } from "./workingSets.js";
 import { reconcileGroupChip, reconcileKeyedRows } from "./fleetRows.js";
 import { countMessage, localizeDom, relativeDwell, t } from "./i18n.js";
 import { quotaLabel, quotaUnreportedLabel, rateLimitTitle, rateLimitedLabel } from "./rateLimit.js";
@@ -2333,6 +2334,67 @@ async function startWorkRun() {
   renderWorkRun();
 }
 
+/// Show the saved layouts.
+async function openWorkingSets() {
+  const dialog = $("working-sets-dialog");
+  if (!dialog.open) dialog.showModal();
+  await refreshWorkingSets();
+}
+
+async function refreshWorkingSets() {
+  const body = $("working-sets-body");
+  try {
+    const sets = await invoke("list_working_sets");
+    $("working-sets-count").textContent = t("working-sets-count", { count: sets.length });
+    body.innerHTML = sets.length
+      ? sets.map((set) => renderWorkingSet(set, { escape: escapeHtml, translate: t })).join("")
+      : `<p class="rollup-total">${escapeHtml(t("working-sets-empty"))}</p>`;
+  } catch (error) {
+    $("working-sets-count").textContent = "";
+    body.innerHTML = `<p class="rollup-total">${escapeHtml(String(error))}</p>`;
+    return;
+  }
+  for (const button of body.querySelectorAll("[data-restore-set]")) {
+    button.addEventListener("click", () => void restoreWorkingSet(button.dataset.restoreSet));
+  }
+  for (const button of body.querySelectorAll("[data-delete-set]")) {
+    button.addEventListener("click", async () => {
+      try {
+        await invoke("delete_working_set", { name: button.dataset.deleteSet });
+        await refreshWorkingSets();
+      } catch (error) {
+        showToast(String(error));
+      }
+    });
+  }
+}
+
+/// Relaunch a layout and show, per session, what the fleet decided.
+///
+/// The outcomes are rendered in place rather than toasted: a restore of twelve
+/// sessions can have several distinct refusals, and a toast holds one line for
+/// four seconds.
+async function restoreWorkingSet(name) {
+  // Found by walking the elements rather than by building a selector string:
+  // a layout name is operator input, and interpolating it into a selector is
+  // the same shape of mistake as interpolating it into markup even though the
+  // escaper would differ.
+  const list = [...$("working-sets-body").querySelectorAll("[data-outcomes-for]")].find(
+    (element) => element.dataset.outcomesFor === name,
+  );
+  if (list) list.innerHTML = `<li>${escapeHtml(t("loading"))}</li>`;
+  try {
+    const outcomes = await invoke("restore_working_set", { name });
+    if (list) {
+      list.innerHTML = renderRestoreOutcomes(outcomes, { escape: escapeHtml, translate: t });
+    }
+    showToast(t("working-sets-restored", summarizeRestore(outcomes)), "success");
+  } catch (error) {
+    if (list) list.innerHTML = "";
+    showToast(String(error));
+  }
+}
+
 /// Ask the daemon which sessions printed a string, and how many times.
 ///
 /// Find-in-pane answers the same question for the one attached renderer; this
@@ -3751,6 +3813,23 @@ function bindEvents() {
     $("fleet-search-input").select();
   });
   $("close-search-button").addEventListener("click", () => $("search-dialog").close());
+  $("working-sets-toggle").addEventListener("click", () => void openWorkingSets());
+  $("close-working-sets-button").addEventListener("click", () => $("working-sets-dialog").close());
+  $("working-set-save").addEventListener("click", async () => {
+    const name = $("working-set-name").value.trim();
+    if (!name) {
+      showToast(t("working-sets-needs-name"));
+      return;
+    }
+    try {
+      const count = await invoke("save_working_set", { name, groupBy: state.groupBy });
+      $("working-set-name").value = "";
+      showToast(t("working-sets-saved", { name, count }), "success");
+      await refreshWorkingSets();
+    } catch (error) {
+      showToast(String(error));
+    }
+  });
   $("fleet-search-run").addEventListener("click", () => void runFleetSearch());
   $("fleet-search-input").addEventListener("keydown", (event) => {
     if (event.key === "Enter") void runFleetSearch();

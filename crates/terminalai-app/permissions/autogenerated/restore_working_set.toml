@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-restore-working-set"
+description = "Enables the restore_working_set command without any pre-configured scope."
+commands.allow = ["restore_working_set"]
+
+[[permission]]
+identifier = "deny-restore-working-set"
+description = "Denies the restore_working_set command without any pre-configured scope."
+commands.deny = ["restore_working_set"]

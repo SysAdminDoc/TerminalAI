@@ -61,6 +61,7 @@
                 <button class="menu-item" id="prompts-toggle" type="button" data-i18n-title="button-prompts-open" data-i18n="button-prompts-short">Prompts</button>
                 <button class="menu-item" id="broadcast-toggle" type="button" data-i18n-title="button-broadcast-open" data-i18n="button-broadcast-short">Broadcast</button>
                 <button class="menu-item" id="fleet-search-toggle" type="button" data-i18n-title="fleet-search-title" data-i18n="button-search-short">Search</button>
+                <button class="menu-item" id="working-sets-toggle" type="button" data-i18n-title="working-sets-title" data-i18n="button-working-sets-short">Layouts</button>
                 <button class="menu-item" id="history-toggle" type="button" data-i18n-title="session-history-title" data-i18n="button-history-short">History</button>
                 <button class="menu-item" id="settings-toggle" type="button" data-i18n-title="settings-title" data-i18n="button-settings-short">Limits</button>
                 <hr class="menu-separator" />
@@ -164,6 +165,16 @@
         <div id="worktrees-body" class="rollup-body"></div>
       </div>
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-history-button" data-i18n="button-close">Close</button></div></div>
+    </dialog>
+
+    <dialog id="working-sets-dialog" class="launcher-dialog rollup-dialog" aria-label="Working sets" data-i18n-aria-label="working-sets-title">
+      <div class="dialog-head"><h2 data-i18n="working-sets-title">Working sets</h2><span id="working-sets-count" class="rollup-coverage" role="status" aria-live="polite"></span></div>
+      <div class="broadcast-body">
+        <p class="settings-note" data-i18n="working-sets-note">A named layout of many sessions, relaunched as one action. Restoring starts each session through the ordinary launch path, so the admission gate, the memory budget, the spend ceiling and the dirty-tree refusal all still apply — a session they refuse is reported, not forced. A private checkout is created fresh; a layout never adopts the one the original session had.</p>
+        <div class="fleet-search-controls"><input type="text" id="working-set-name" maxlength="80" placeholder="Name this layout" data-i18n-placeholder="working-sets-name-placeholder" aria-label="Name this layout" data-i18n-aria-label="working-sets-name-placeholder" /><button type="button" class="button button-primary" id="working-set-save" data-i18n="working-sets-save">Save the current fleet</button></div>
+        <div id="working-sets-body" class="rollup-body"></div>
+      </div>
+      <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-working-sets-button" data-i18n="button-close">Close</button></div></div>
     </dialog>
 
     <dialog id="search-dialog" class="launcher-dialog rollup-dialog" aria-label="Search the fleet" data-i18n-aria-label="fleet-search-title">

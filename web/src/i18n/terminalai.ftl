@@ -442,6 +442,27 @@ context-explained = { $used } of { $window } tokens in the context window ({ $pe
 context-no-window = { $used } tokens in the context window; this agent does not report its window size, so there is no percentage to show
 context-unmeasured = No context reading yet for this session
 button-search-short = Search
+button-working-sets-short = Layouts
+working-sets-title = Working sets
+working-sets-note = A named layout of many sessions, relaunched as one action. Restoring starts each session through the ordinary launch path, so the admission gate, the memory budget, the spend ceiling and the dirty-tree refusal all still apply — a session they refuse is reported, not forced. A private checkout is created fresh; a layout never adopts the one the original session had.
+working-sets-name-placeholder = Name this layout
+working-sets-save = Save the current fleet
+working-sets-restore = Restore
+working-sets-delete = Delete
+working-sets-needs-name = Give the layout a name first.
+working-sets-empty = No layouts saved yet. Name one and save the fleet you have now.
+working-sets-saved = Saved "{ $name }" with { $count } session(s).
+working-sets-started = started
+working-sets-queued = queued by the admission gate
+working-sets-restored = { $started } started, { $queued } queued, { $refused } refused.
+working-sets-count = { $count ->
+    [one] 1 layout
+   *[other] { $count } layouts
+}
+working-sets-members = { $count ->
+    [one] 1 session, { $pinned } pinned
+   *[other] { $count } sessions, { $pinned } pinned
+}
 fleet-search-title = Search the fleet
 fleet-search-note = Searches the output each session still has on disk, which is a bounded tail — the beginning of a long run is genuinely gone. Colour and cursor sequences are removed before matching, so what is searched is what was legible.
 fleet-search-placeholder = Find in every session

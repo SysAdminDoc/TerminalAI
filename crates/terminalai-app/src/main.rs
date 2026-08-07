@@ -4,6 +4,7 @@ mod preset;
 mod projects;
 mod toast;
 mod work;
+mod workingset;
 
 use terminalai_core::work_queue::{EntryState, WorkQueue};
 
@@ -129,6 +130,7 @@ struct AppState {
     project_roots: projects::ProjectRoots,
     prompts: work::PromptLibrary,
     work_run_store: work::WorkRunStore,
+    working_sets: workingset::WorkingSetStore,
     output_channels: OutputChannels,
 }
 
@@ -271,6 +273,127 @@ async fn session_history(
             Response::Error { message } => Err(message),
             other => Err(format!("unexpected session-history response: {other:?}")),
         }
+    })
+    .await
+}
+
+#[tauri::command]
+fn list_working_sets(state: State<'_, AppState>) -> Result<Vec<workingset::WorkingSet>, String> {
+    Ok(state.working_sets.list())
+}
+
+/// Capture the live fleet as a named layout.
+///
+/// The specs come from the daemon, not from the caller. A `Session` does not
+/// carry the spec that produced it — it is sent on every status change and the
+/// spec is large and unchanging — so the window has never had them, and a
+/// caller-supplied spec would let a layout be saved that does not describe
+/// anything actually running.
+#[tauri::command]
+async fn save_working_set(
+    name: String,
+    group_by: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    let client = daemon_client(&state)?;
+    let store = state.working_sets.clone();
+    run_blocking("save_working_set", move || {
+        let specs = match daemon_response(&client, Request::FleetSpecs)? {
+            Response::FleetSpecs { specs } => specs,
+            Response::Error { message } => return Err(message),
+            other => return Err(format!("unexpected fleet-spec response: {other:?}")),
+        };
+        let members: Vec<workingset::WorkingSetMember> = specs
+            .into_iter()
+            .map(|entry| workingset::WorkingSetMember {
+                configured_path: Some(entry.spec.cwd.clone()),
+                spec: *entry.spec,
+                pinned: entry.pinned,
+            })
+            .collect();
+        let count = members.len();
+        store.save(workingset::WorkingSet {
+            name,
+            members,
+            group_by,
+        })?;
+        Ok(count)
+    })
+    .await
+}
+
+#[tauri::command]
+fn delete_working_set(name: String, state: State<'_, AppState>) -> Result<bool, String> {
+    state.working_sets.delete(&name)
+}
+
+/// Relaunch a saved layout, one member at a time.
+///
+/// Every member goes through the same `Request::Launch` the launcher uses, so
+/// admission, the memory budget, the spend ceiling and the dirty-tree refusal
+/// all apply without this function knowing they exist — and the *next* limit
+/// added applies too, which a bespoke restore path would silently bypass.
+///
+/// A refusal is an expected outcome rather than an error: eleven of twelve
+/// sessions started is a useful result, and rolling the other eleven back
+/// because the twelfth was refused would throw away the work that succeeded.
+/// The caller is told, per member, what happened.
+#[tauri::command]
+async fn restore_working_set(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<workingset::RestoreOutcome>, String> {
+    let client = daemon_client(&state)?;
+    let Some(set) = state.working_sets.get(&name) else {
+        return Err(format!("no working set named {name}"));
+    };
+    run_blocking("restore_working_set", move || {
+        let mut outcomes = Vec::with_capacity(set.members.len());
+        for member in set.members {
+            let label = member
+                .spec
+                .name
+                .clone()
+                .unwrap_or_else(|| member.spec.cwd.display().to_string());
+            let mut outcome = workingset::RestoreOutcome {
+                name: label,
+                cwd: member.spec.cwd.clone(),
+                id: None,
+                queued: false,
+                refused: None,
+                pin_refused: None,
+            };
+            let launch = daemon_response(
+                &client,
+                Request::Launch {
+                    spec: Box::new(member.spec),
+                    configured_path: member.configured_path,
+                },
+            );
+            match launch {
+                Ok(Response::Launched { id, queued }) => {
+                    outcome.queued = queued;
+                    // The pin is applied only once the row exists. A queued row
+                    // exists, so pinning it is legitimate — it will hold a grid
+                    // as soon as it starts.
+                    if member.pinned {
+                        match daemon_response(&client, Request::TogglePin { id: id.clone() }) {
+                            Ok(Response::Error { message }) => {
+                                outcome.pin_refused = Some(message)
+                            }
+                            Err(error) => outcome.pin_refused = Some(error.to_string()),
+                            Ok(_) => {}
+                        }
+                    }
+                    outcome.id = Some(id.0);
+                }
+                Ok(Response::Error { message }) => outcome.refused = Some(message),
+                Ok(other) => outcome.refused = Some(format!("unexpected response: {other:?}")),
+                Err(error) => outcome.refused = Some(error.to_string()),
+            }
+            outcomes.push(outcome);
+        }
+        Ok(outcomes)
     })
     .await
 }
@@ -2166,6 +2289,10 @@ fn run_app() -> Result<(), String> {
             external_sessions,
             session_history,
             search_fleet,
+            list_working_sets,
+            save_working_set,
+            delete_working_set,
+            restore_working_set,
             stale_worktrees,
             reap_worktree,
             mark_reviewed,
@@ -2252,6 +2379,9 @@ fn run_app() -> Result<(), String> {
             let work_run_store = work::WorkRunStore::load_default().map_err(|error| {
                 Box::new(std::io::Error::other(error)) as Box<dyn std::error::Error>
             })?;
+            let working_sets = workingset::WorkingSetStore::load_default().map_err(|error| {
+                Box::new(std::io::Error::other(error)) as Box<dyn std::error::Error>
+            })?;
             let output_channels = Arc::new(Mutex::new(HashMap::new()));
             if let Some(client) = client.as_ref() {
                 bridge_daemon_events(
@@ -2268,6 +2398,7 @@ fn run_app() -> Result<(), String> {
                 project_roots,
                 prompts,
                 work_run_store,
+                working_sets,
                 output_channels,
             });
             Ok(())

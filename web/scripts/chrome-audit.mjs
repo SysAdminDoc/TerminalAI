@@ -59,6 +59,7 @@ const SURFACES = [
   { name: "projects", kind: "dialog", selector: "#projects-dialog" },
   { name: "history", kind: "dialog", selector: "#history-dialog" },
   { name: "fleet search", kind: "dialog", selector: "#search-dialog" },
+  { name: "working sets", kind: "dialog", selector: "#working-sets-dialog" },
   { name: "prompt library", kind: "dialog", selector: "#prompt-dialog" },
   { name: "broadcast", kind: "dialog", selector: "#broadcast-dialog" },
   { name: "rollup", kind: "dialog", selector: "#rollup-dialog" },

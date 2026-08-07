@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Working sets: a named layout of many sessions, saved and relaunched as one action. Restoring
+  starts each member through the ordinary launch path, so admission, the memory budget, the spend
+  ceiling and the dirty-tree refusal all apply — and so will the next limit added, which a bespoke
+  restore path would bypass silently on the day it appeared. A refused member is reported rather
+  than forced, and the other eleven of twelve still start. No worktree path and no branch is saved:
+  a private checkout is created fresh, because two sessions sharing one is the failure that feature
+  already refuses and a saved layout is the easiest way to arrange it by accident.
 - Find-in-pane in the focused terminal, with the match count `@xterm/addon-search` reports rather
   than a recount that could disagree with its own highlights. A scan still running says so instead
   of reporting zero matches, because those are different answers and one arrives before the other.

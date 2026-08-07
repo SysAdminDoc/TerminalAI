@@ -354,6 +354,14 @@ pub enum Request {
         id: SessionId,
         max_bytes: u64,
     },
+    /// The launch spec behind every live row, so a client can save a layout it
+    /// can start again.
+    ///
+    /// The specs are the daemon's — a `Session` deliberately does not carry the
+    /// spec that produced it, because the row is sent on every status change
+    /// and the spec is large and unchanging. This is the read that fills that
+    /// gap, asked for once when a layout is captured rather than continuously.
+    FleetSpecs,
     /// Find a string in every session's retained output.
     ///
     /// A read, so it needs no write token. `max_bytes` is per session and
@@ -396,6 +404,18 @@ pub enum ArchiveAfterLanding {
     /// The landing succeeded; the archive did not. The work is landed either
     /// way, which is why this is not a landing failure.
     Refused { detail: String },
+}
+
+/// One live row's launch spec, for saving a layout.
+///
+/// Boxed because `LaunchSpec` is by far the largest thing in this protocol and
+/// a fleet of thirty would otherwise make this response variant dominate the
+/// size of the whole enum.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FleetSpec {
+    pub id: SessionId,
+    pub pinned: bool,
+    pub spec: Box<terminalai_core::LaunchSpec>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -479,6 +499,9 @@ pub enum Response {
     },
     ScrollbackHistory {
         data: Vec<u8>,
+    },
+    FleetSpecs {
+        specs: Vec<FleetSpec>,
     },
     SearchResults {
         /// Only sessions with at least one match, in fleet order.
@@ -1714,6 +1737,23 @@ fn dispatch_with_endpoint(
                 },
             }
         }
+        Request::FleetSpecs => Response::FleetSpecs {
+            specs: registry
+                .snapshot()
+                .into_iter()
+                // An exited row's spec is still valid, but a layout describes a
+                // working spread — restoring a dozen sessions the operator had
+                // already finished with is the opposite of useful.
+                .filter(|session| session.status.is_live())
+                .filter_map(|session| {
+                    registry.spec(&session.id).ok().map(|spec| FleetSpec {
+                        id: session.id,
+                        pinned: session.pinned,
+                        spec: Box::new(spec),
+                    })
+                })
+                .collect(),
+        },
         Request::SearchScrollback { query, max_bytes } => {
             // Validated here rather than at the type, because a needle short
             // enough to match everything costs a fleet-wide disk read to say

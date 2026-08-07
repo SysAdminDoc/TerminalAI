@@ -220,13 +220,6 @@ the historical `R-NN` scheme and the entries below follow the current convention
 
 ### P2
 
-- [ ] P2 — Save and restore a fleet working set
-  Why: a preset configures one session, so an operator restarting the machine rebuilds a twelve-session spread by hand; this is the most-requested missing feature in the two largest competitors and the leader already exposes it as an API.
-  Evidence: `crates/terminalai-app/src/preset.rs:32-44` — a `Preset` is one `LaunchSpec` plus a name and description. cmux#480 "Persistence of tab information and pane layouts" (50👍) and cmux#2086 "Save and restore named workspace sessions (tmux-resurrect style)" (35👍) are its second and sixth most-reacted open issues; herdr exposes `layout.export` and `layout.apply`. The daemon already persists a versioned session store and rehydrates rings from the scrollback log, so the durable half exists.
-  Touches: `crates/terminalai-app/src/preset.rs`, `crates/terminalai-core/src/store.rs`, `crates/terminalai-daemon/src/lib.rs`, `web/src/main.js`
-  Acceptance: a named working set records the launch spec, project folder, pin state and grouping for many sessions and can be relaunched as one action; restoring it obeys every existing refusal — admission, memory budget, spend ceiling, dirty tree — rather than bypassing them, and reports per session which ones it declined to start and why. Restoring never adopts an existing worktree or branch, for the reason the worktree feature already refuses to.
-  Complexity: M
-
 - [ ] P2 — Decide whether status can come from the session's own output instead of the operator's settings file
   Why: this tool writes managed hooks into the user's global Claude and Codex configuration to learn what its own child processes are doing, and Claude Code now emits the same lifecycle events on the session's stdout — which would make the fleet observable without touching anything outside the process it launched.
   Evidence: `--include-hook-events` "include hook lifecycle events from every hook in output stream; requires `--output-format stream-json`", alongside `--forward-subagent-text` (emits subagent text with `parent_tool_use_id`) and `--include-partial-messages` (https://code.claude.com/docs/en/cli-reference). Today `crates/terminalai-core/src/hook_config.rs` (1,328 lines) installs and owns sixteen managed hook entries and has to reason about `disableAllHooks`, `allowManagedHooksOnly` and the whole HKLM/managed-settings policy chain to know whether they will fire at all.

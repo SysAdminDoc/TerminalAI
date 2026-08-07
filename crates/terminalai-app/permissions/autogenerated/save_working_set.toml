@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-working-set"
+description = "Enables the save_working_set command without any pre-configured scope."
+commands.allow = ["save_working_set"]
+
+[[permission]]
+identifier = "deny-save-working-set"
+description = "Denies the save_working_set command without any pre-configured scope."
+commands.deny = ["save_working_set"]
