@@ -14,7 +14,17 @@ import { reconcileGroupChip, reconcileKeyedRows } from "./fleetRows.js";
 import { countMessage, localizeDom, relativeDwell, t } from "./i18n.js";
 import { quotaLabel, quotaUnreportedLabel, rateLimitTitle, rateLimitedLabel } from "./rateLimit.js";
 import { spendCeiling, spendCeilingTitle } from "./spendCeiling.js";
-import { coverage, fleetTotals, folderOf, formatCost, formatTokens, rollupBy, TOKEN_FIELDS } from "./rollup.js";
+import {
+  coverage,
+  fleetTotals,
+  folderOf,
+  formatCost,
+  formatTokens,
+  pricingFreshness,
+  PRICING_STALE_AFTER_DAYS,
+  rollupBy,
+  TOKEN_FIELDS,
+} from "./rollup.js";
 import { defaultSelection, isEligible, summarize, targets } from "./broadcast.js";
 import { hasOpenWork, openItemsCell, sortProjects, stalenessLabel, summarize as summarizeProjects } from "./projects.js";
 import { renderSessionHistory } from "./sessionHistory.js";
@@ -838,9 +848,23 @@ function renderSummary() {
   // A price table has a date; a figure priced against an unnamed table cannot be
   // checked. Say which one produced this number.
   const pricingVersion = state.admission.pricing_version || "no price table";
-  const spendTitle = reporting.length
-    ? t("pricing-reporting", { pricing: pricingVersion, reporting: reporting.length, sessions: state.sessions.length })
+  // A price table has a date, and until now nothing aged it: a table months out
+  // of date reported spend with exactly the same confidence as a current one.
+  const freshness = pricingFreshness(state.admission, Date.now());
+  const ageNote =
+    freshness.state === "undated"
+      ? t("pricing-age-undated")
+      : freshness.state === "stale"
+        ? t("pricing-age-stale", { days: freshness.days, threshold: PRICING_STALE_AFTER_DAYS })
+        : t("pricing-age-current", { days: freshness.days });
+  const reportingNote = reporting.length
+    ? t("pricing-reporting", {
+        pricing: pricingVersion,
+        reporting: reporting.length,
+        sessions: state.sessions.length,
+      })
     : t("pricing-none", { pricing: pricingVersion });
+  const spendTitle = `${reportingNote}. ${ageNote}`;
   const maxLive = state.admission.max_live_sessions ?? 3;
   // The ceiling is fleet-wide and refuses admission; it never stops a running
   // session, so it belongs beside the spend figure rather than in the row list.

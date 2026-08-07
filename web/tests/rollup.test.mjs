@@ -1,15 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 
-import {
-  coverage,
-  fleetTotals,
-  folderOf,
-  formatCost,
-  formatTokens,
-  isPriced,
-  rollupBy,
-} from "../src/rollup.js";
+import { PRICING_STALE_AFTER_DAYS, coverage, fleetTotals, folderOf, formatCost, formatTokens, isPriced, pricingAgeDays, pricingFreshness, rollupBy } from "../src/rollup.js";
 
 const session = (overrides) => ({
   id: "s0001",
@@ -134,4 +127,63 @@ test("isPriced distinguishes an absent figure from a zero one", () => {
   assert.equal(isPriced({ cost_usd: null }), false);
   assert.equal(isPriced({}), false);
   assert.equal(isPriced(null), false);
+});
+
+test("the price table's age is reported, and past a threshold the figures are marked", () => {
+  // Prices are embedded from a pinned upstream commit and nothing aged them, so
+  // a table months out of date reported spend with exactly the same confidence
+  // as a current one.
+  const now = Date.UTC(2026, 7, 7);
+  assert.equal(pricingAgeDays("2026-07-31", now), 7);
+  assert.deepEqual(pricingFreshness({ pricing_committed: "2026-07-31" }, now), {
+    state: "current",
+    days: 7,
+  });
+  const stale = pricingFreshness({ pricing_committed: "2026-01-01" }, now);
+  assert.equal(stale.state, "stale");
+  assert.equal(stale.days, 218);
+});
+
+test("the threshold is a boundary, not an approximation", () => {
+  const now = Date.UTC(2026, 7, 7);
+  const at = (days) => {
+    const stamp = new Date(now - days * 86_400_000);
+    const iso = stamp.toISOString().slice(0, 10);
+    return pricingFreshness({ pricing_committed: iso }, now).state;
+  };
+  assert.equal(at(PRICING_STALE_AFTER_DAYS), "current");
+  assert.equal(at(PRICING_STALE_AFTER_DAYS + 1), "stale");
+});
+
+test("a table with no usable date is undated rather than fresh", () => {
+  // The hardcoded fallback has no date at all. Calling it current would be the
+  // most confident possible statement about the least trustworthy table.
+  const now = Date.UTC(2026, 7, 7);
+  for (const committed of [undefined, null, "", "unknown", "2026-8-7", 20260807]) {
+    assert.deepEqual(
+      pricingFreshness({ pricing_committed: committed }, now),
+      { state: "undated", days: null },
+      `${committed} should not age`,
+    );
+  }
+});
+
+test("a table dated in the future is not reported as negative-age", () => {
+  // A packaging mistake, not a fresh table. A negative age reads as "very
+  // current", which is the opposite of what it means.
+  const now = Date.UTC(2026, 7, 7);
+  assert.equal(pricingAgeDays("2027-01-01", now), 0);
+  assert.equal(pricingFreshness({ pricing_committed: "2027-01-01" }, now).state, "current");
+});
+
+test("the staleness threshold matches the one the core states", () => {
+  // Two numbers in two languages describing one policy. Left unchecked they
+  // drift, and the tooltip then disagrees with the constant it cites.
+  const core = readFileSync(
+    new URL("../../crates/terminalai-core/src/transcript.rs", import.meta.url),
+    "utf8",
+  );
+  const declared = core.match(/PRICING_STALE_AFTER_DAYS: i64 = (\d+)/);
+  assert.ok(declared, "the core no longer states a staleness threshold");
+  assert.equal(Number(declared[1]), PRICING_STALE_AFTER_DAYS);
 });

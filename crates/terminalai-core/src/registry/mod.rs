@@ -544,6 +544,12 @@ impl SessionRegistry {
                 .sum(),
             dropped_events: self.inner.dropped_events.load(Ordering::Relaxed),
             pricing_version: crate::transcript::PricingTable::vendored().version.clone(),
+            // The date the figures were priced against, so a reader can age it.
+            // Nothing is fetched to check: the table is embedded and offline by
+            // design, and this is the date embedded with it.
+            pricing_committed: crate::transcript::PricingTable::vendored()
+                .source_committed
+                .clone(),
             sessions_reporting_cost: state
                 .entries
                 .values()

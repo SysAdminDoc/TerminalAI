@@ -66,9 +66,24 @@ pub const GEO_MULTIPLIER: f64 = 1.1;
 /// Priority-speed premium.
 pub const FAST_SPEED_MULTIPLIER: f64 = 1.5;
 
+/// How old a vendored price table may be before figures computed against it
+/// stop being presented as current.
+///
+/// A quarter. Model prices move on announcement rather than on a schedule, so
+/// no threshold is exactly right — this one is stated rather than tuned, and
+/// the point is that a figure priced against a table months out of date should
+/// not be reported with the same confidence as one priced against a current
+/// table. Nothing is fetched to check; the age comes from the embedded date.
+pub const PRICING_STALE_AFTER_DAYS: i64 = 90;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PricingTable {
     pub version: String,
+    /// The upstream commit date the snapshot was taken from, `YYYY-MM-DD`.
+    ///
+    /// Kept apart from `version`, which is a human string. Nothing could age
+    /// the table because the only date it carried was inside prose.
+    pub source_committed: Option<String>,
     default: TokenRates,
     models: BTreeMap<String, TokenRates>,
 }
@@ -77,9 +92,16 @@ impl PricingTable {
     pub fn new(version: impl Into<String>, default: TokenRates) -> Self {
         Self {
             version: version.into(),
+            source_committed: None,
             default,
             models: BTreeMap::new(),
         }
+    }
+
+    /// A table stamped with the upstream commit date it came from.
+    pub fn committed(mut self, date: impl Into<String>) -> Self {
+        self.source_committed = Some(date.into());
+        self
     }
 
     pub fn with_model(mut self, model: impl Into<String>, rates: TokenRates) -> Self {
@@ -134,7 +156,8 @@ impl PricingTable {
         let mut table = PricingTable::new(
             format!("litellm {version} (vendored {retrieved})"),
             Self::fallback().default,
-        );
+        )
+        .committed(version);
         for (model, entry) in value.get("models")?.as_object()? {
             let per_million = |name: &str| {
                 entry

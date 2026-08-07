@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- The spend tooltip states how old the embedded price table is, and marks the figures past 90 days.
+  Prices are vendored from a pinned upstream commit and nothing aged them, so a table months out of
+  date reported spend with exactly the same confidence as a current one. The only date the table
+  carried was inside a prose version string; it now travels as a field. Nothing is fetched at
+  runtime — the offline-by-design decision is unchanged, and the age comes from the embedded date.
+  A table with no usable date says so rather than being called current: that is the hardcoded
+  fallback, and calling it fresh would be the most confident possible statement about the least
+  trustworthy table.
 - Origin mode (DECOM). `CSI ?6h` was parsed and silently dropped, which is the worst of the three
   options: a program that sets it and then addresses the cursor relative to the top margin draws in
   the wrong place, and nothing anywhere said so. Cursor addressing is now relative to the top margin

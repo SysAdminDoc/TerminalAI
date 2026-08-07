@@ -125,3 +125,41 @@ export function coverage(totals, t) {
   if (!totals.unpriced) return t("rollup-complete", { priced: totals.priced });
   return t("rollup-partial", { priced: totals.priced, unpriced: totals.unpriced });
 }
+
+/// How old the embedded price table is before figures are marked as computed
+/// against a stale one. Mirrors `PRICING_STALE_AFTER_DAYS` in the core.
+export const PRICING_STALE_AFTER_DAYS = 90;
+
+/**
+ * How old the price table is, in whole days, or `null` when it has no date.
+ *
+ * `now` is passed in rather than read, so the whole rule is testable without
+ * waiting three months for it to become true.
+ */
+export function pricingAgeDays(committed, now) {
+  if (typeof committed !== "string") return null;
+  const match = committed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const stamp = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  if (!Number.isFinite(stamp)) return null;
+  // A table dated in the future is a packaging mistake, not a fresh table.
+  // Reporting a negative age would read as "very current"; zero is the honest
+  // floor and the caller can still see the date itself.
+  return Math.max(0, Math.floor((now - stamp) / 86_400_000));
+}
+
+/**
+ * What to say about the table behind a spend figure.
+ *
+ * Three distinct answers, because they call for different reactions: a table
+ * with no date at all is the hardcoded fallback and cannot be aged; a current
+ * one needs no comment beyond its age; a stale one means the figures were
+ * priced against rates that may have moved. Nothing is fetched to decide —
+ * the table is embedded and offline by design.
+ */
+export function pricingFreshness(admission, now) {
+  const committed = admission?.pricing_committed;
+  const age = pricingAgeDays(committed, now);
+  if (age === null) return { state: "undated", days: null };
+  return { state: age > PRICING_STALE_AFTER_DAYS ? "stale" : "current", days: age };
+}

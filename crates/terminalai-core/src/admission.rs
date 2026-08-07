@@ -320,6 +320,12 @@ pub struct AdmissionSnapshot {
     /// the figure so a stale table is visible rather than assumed current.
     #[serde(default)]
     pub pricing_version: String,
+    /// The upstream commit date the embedded price table came from,
+    /// `YYYY-MM-DD`. `None` when the vendored snapshot could not be parsed and
+    /// the hardcoded fallback is in use — which is itself worth showing, since
+    /// a fallback table has no date to age at all.
+    #[serde(default)]
+    pub pricing_committed: Option<String>,
     /// How many sessions actually reported a cost. Zero means the fleet spend is
     /// unknown, not zero.
     #[serde(default)]

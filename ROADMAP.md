@@ -70,13 +70,6 @@ item above; where the two touch, the note says so.
 
 ### P3
 
-- [ ] P3 — Say when the vendored price table is stale
-  Why: prices are embedded from a pinned upstream commit and nothing ages them, so a table months out of date reports spend with the same confidence as a current one.
-  Evidence: `crates/terminalai-core/pricing/model-prices.json` carries `source_commit`, `source_committed: "2026-07-31"` and `retrieved: "2026-08-03"`; `transcript.rs:168` embeds it with `include_str!`. Nothing compares those dates to now. The offline-by-design decision in `README.md` is correct and should be preserved.
-  Touches: `crates/terminalai-core/src/transcript.rs`, `web/src/main.js`, `web/src/rollup.js`
-  Acceptance: the existing price-table tooltip states the table's age, and past a stated threshold the rollup marks figures as computed against a stale table. Nothing is fetched at runtime.
-  Complexity: S
-
 - [ ] P3 — Ingest the remaining hook events that change what a row means
   Why: sixteen events are managed and the unhandled ones include the two that silently invalidate a row's contents and the one that would let this tool own agent-created worktrees.
   Evidence: `crates/terminalai-core/src/hook_config.rs` manages SessionStart/End, Pre/PostToolUse, PostToolUseFailure, PostToolBatch, Pre/PostCompact, Permission{Request,Denied}, Stop, StopFailure, Subagent{Start,Stop}, UserPromptSubmit, Notification. Not handled: `CwdChanged` and `DirectoryAdded` (the row's folder and branch go stale), `WorktreeCreate` (can return a `worktreePath`, letting the supervisor place it), `TaskCreated`/`TaskCompleted` (tool progress beyond `TodoWrite`), `Elicitation`/`ElicitationResult`, `MessageDisplay`, `UserPromptExpansion`, `InstructionsLoaded`, `ConfigChange` — code.claude.com/docs/en/hooks

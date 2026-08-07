@@ -386,6 +386,9 @@ tracked-sessions = { $count } tracked
 event-drops = { $count } event drops
 pricing-reporting = Prices as of { $pricing }; { $reporting } of { $sessions } sessions reporting
 pricing-none = No session has reported a cost yet. Prices as of { $pricing }
+pricing-age-current = The price table is { $days } days old.
+pricing-age-stale = The price table is { $days } days old, past the { $threshold }-day mark — these figures were computed against rates that may have moved. Nothing is fetched at runtime; refresh the vendored table to update them.
+pricing-age-undated = The price table carries no date, so it cannot be aged. This is the built-in fallback, used when the vendored snapshot could not be read.
 spend-ceiling-of = Fleet spend { $spent } of { $ceiling }{ $window }.
 spend-window-hours = { $hours ->
     [one] over the last hour
