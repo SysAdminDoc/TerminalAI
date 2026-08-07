@@ -535,6 +535,12 @@ button {
   border: 1px solid transparent;
   border-radius: 7px;
   padding: 8px 12px;
+  /* Declared, not inherited. Every variant below sets its own background, so
+     the base never appeared to need one -- but a `.button` with no variant
+     falls through to the UA's ButtonFace, which in a dark colour-scheme is a
+     mid grey no token in this file ever chose. The text colours here are picked
+     for the Catppuccin surfaces, so on that grey they land at 3.7:1. */
+  background: transparent;
   color: var(--text);
   font-size: 12px;
   font-weight: 650;
@@ -705,6 +711,10 @@ button {
   padding: 7px 10px;
   border: 1px solid transparent;
   border-radius: 6px;
+  /* Same UA-ButtonFace fallthrough as `.button`: the hover rule below paints
+     `--surface0` onto what was meant to be nothing, and the rest state was
+     never written down. */
+  background: transparent;
   color: var(--subtext1);
   font-size: 12px;
   font-weight: 600;

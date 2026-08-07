@@ -26,6 +26,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- `npm --prefix web run test:chrome` drives the real chrome in a real browser: it opens all nine
+  dialogs, both overflow menus and the launcher disclosure at 1440px and 1100px in both colour
+  schemes, and fails if anything overflows its container, if the page scrolls horizontally, or if
+  any composited text falls below WCAG AA. Every other frontend test is jsdom, which has no layout
+  engine and therefore cannot see any of that. It serves the frontend with Vite and drives headless
+  Chromium, so it needs no packaged app, no daemon and no virtual display, and it is separate from
+  the WebDriver suite that remains blocked.
+
+  It found three defects on its first run, all invisible to the existing suites:
+
+  - The app overflow menu anchored left from a button at the right edge of the header, so opening it
+    pushed 156px past the viewport and gave the whole page a horizontal scrollbar. The tools menu
+    already carried `menu-right`; this one never did.
+  - `.button` and `.menu-item` declared a text colour, a transparent border and a transition on
+    `background`, but no background in the rest state — so both fell through to the user agent's
+    `ButtonFace`, a mid grey in a dark colour scheme that no token in the stylesheet ever chose.
+    Text picked for the Catppuccin surfaces landed on it at 3.0:1 and 3.7:1. The `:hover` rules
+    painting `var(--surface0)` show what was intended; the rest state was simply never written down.
+  - The settings dialog's Apply button was the only dialog confirm in the markup without
+    `button-primary`, which is why it had no background at all.
+
 - The supervisor's health verdict is no longer a restatement of whether a PID exists. `SessionHealth`
   was recomputed from `status` and `pid` on every transition, so a session busy thinking and one that
   had wedged were the same thing to it — the documented cause of restart storms in every system that

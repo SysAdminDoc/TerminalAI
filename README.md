@@ -226,6 +226,15 @@ cargo tauri build --ci --no-sign --bundles nsis,msi -- --manifest-path Cargo.tom
 pwsh -NoProfile -File scripts/check-cross-targets.ps1
 pwsh -NoProfile -File scripts/verify-installer.ps1
 
+# Open every dialog, both overflow menus and the launcher disclosure in a real
+# browser, at 1440px and 1100px in both colour schemes, and fail if anything
+# overflows its container or any composited contrast falls below WCAG AA. This
+# is the half jsdom cannot check: it has no layout engine, so it cannot know how
+# wide a panel is or what colour a rule finally painted. Serves the frontend
+# with Vite and drives headless Chromium — no packaged app, no daemon, no
+# virtual display, and separate from the blocked WebDriver suite.
+npm --prefix web run test:chrome
+
 # Does this release describe itself correctly? Checks that every declared
 # version string agrees, that CHANGELOG.md has a section for it, that no version
 # section repeats a subsection, and that the test counts stated above are the

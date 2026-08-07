@@ -256,13 +256,6 @@ the historical `R-NN` scheme and the entries below follow the current convention
   Acceptance: a client can subscribe to fleet status transitions and can block until a named session reaches a given state or a timeout expires, under the existing read-only-by-default rule — waiting is a read, so it needs no write token, and a wait never wakes a session or answers a prompt. The protocol prerequisite has landed: the server speaks 2026-07-28, whose Multi Round-Trip Requests pattern (`resultType: "input_required"` plus `inputRequests`, answered on a retry of the original request) is the mechanism this needs, and the era plumbing to emit it per request already exists in `mcp.rs`. Build the wait on MRTR rather than on server-initiated requests, which that revision removed.
   Complexity: L
 
-- [ ] P2 — Drive the reworked chrome in a real browser
-  Why: the two most recent commits cut the always-visible chrome from 21 controls to 9 and folded seventeen launcher fields behind a disclosure, and both are covered only by jsdom assertions against `index.html` — the exact class of change that the un-minified-CSS commit says "review could not catch".
-  Evidence: `d0dacb0` and `652f33d`; `web/tests/` is `node --test` over jsdom throughout, and the WebDriver path is blocked in `Roadmap_Blocked.md` under R-56 by an unretested `DevToolsActivePort` failure. The route around it is already recorded and is not blocked: the 2026-08-03 audit served the frontend with `npx vite --port 5199` and drove it with headless Chromium at both `prefers-color-scheme` values and 1440px and 1100px, computing contrast from composited `getComputedStyle` values.
-  Touches: `web/scripts/`, `web/tests/`, `web/package.json`
-  Acceptance: a headless script opens every dialog, both overflow menus and the launcher disclosure at 1440px and 1100px in both colour schemes, asserts no element overflows its container and no computed contrast falls below the thresholds the existing contrast test uses, and fails on regression. It is a separate script from the blocked WebDriver suite and does not depend on the virtual display.
-  Complexity: M
-
 ### P3
 
 - [ ] P3 — Decide whether the launcher should still force Claude off plan mode
