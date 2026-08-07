@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-08-07
+
 ### Added
 
 - Working sets: a named layout of many sessions, saved and relaunched as one action. Restoring
