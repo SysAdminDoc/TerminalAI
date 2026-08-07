@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-08-07
+
 ### Changed
 
 - Recorded that this project ships English only. The single-locale Fluent setup looked like
