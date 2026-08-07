@@ -1,5 +1,8 @@
 {
   "version": "Claude Code 2.1.170",
+  "passthrough_args": [
+    "--verbose"
+  ],
   "expected_args": [
     "--model",
     "opus",

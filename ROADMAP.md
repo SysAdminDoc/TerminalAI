@@ -94,13 +94,6 @@ additions; where they touch, the note says so.
   Acceptance: the uncovered request arms and error branches in the daemon's control plane are either covered or individually recorded as unreachable with a reason. The number itself is not the goal and must not become one.
   Complexity: M
 
-- [ ] P3 — Snapshot-test the golden argv and grid renders
-  Why: the launch golden fixtures and grid reference output are hand-maintained string literals, so a deliberate change to either means editing expectations by hand and a drift means editing them wrongly.
-  Evidence: `crates/terminalai-core/tests/launch_golden.rs` and `grid_ref.rs` exist as hand-written comparisons. `insta` provides reviewable file snapshots with `cargo insta test --review` — https://insta.rs/ . Adding the flag-passthrough item from 2026-08-03 will regenerate every argv expectation at once, which is exactly the case this pays for.
-  Touches: `crates/terminalai-core/tests/launch_golden.rs`, `grid_ref.rs`, `Cargo.toml`
-  Acceptance: argv and grid expectations are `.snap` files reviewed with `cargo insta`; snapshots are committed with `eol=lf` so CRLF does not churn them.
-  Complexity: S
-
 - [ ] P3 — Mutation-test the core modules on changed lines
   Why: a large green suite says code was executed, not that it was asserted on — and the arithmetic most likely to be executed without assertion here is backoff, cap comparisons and error-branch returns.
   Evidence: `cargo-mutants` is Windows CI-tested and supports `--in-diff` to restrict mutants to changed lines — https://mutants.rs/ . The comparison-boundary risk is concrete: `read_frame` (`crates/terminalai-daemon/src/lib.rs:132-144`) turns on `read > MAX_FRAME_BYTES` against a `take(MAX + 1)`, and the restart cap on `>=`.

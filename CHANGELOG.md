@@ -7,6 +7,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- `terminalai-probe verify-goldens` asks the installed CLI whether it accepts the argument vector
+  the launch goldens pin. The goldens assert what this tool *emits*; whether the agent on this
+  machine accepts it is a separate fact, and the gap is not theoretical — two roadmap items were
+  blocked in v0.19.0 because the flags they needed postdate the installed Claude Code, and every
+  golden stayed green throughout. It reads the fixture directory rather than naming files, so a
+  third golden is covered without the check being edited.
+
+  It found one thing on its first run: codex-cli 0.146.0 lists no `--verbose`. That flag reaches the
+  argv through `LaunchSpec::extra_args` — operator passthrough, forwarded verbatim by design — so
+  the fixtures now declare `passthrough_args` and the check reports only what this tool is
+  answerable for. The tool owns the argv it constructs, not the arguments a person passes through it.
+
+- `terminalai-core::help` decides, from a help text and an argv, which flags the help does not list.
+  Scanning stops at `--`, so the initial prompt (which both goldens deliberately set to
+  `--dangerously-skip-permissions`, to prove it is not re-read as a flag) is positional by
+  definition rather than by a guess. Flag matching is on a whole-token boundary, because a substring
+  test reports `--model` as present in a help that only documents `--models`.
+
 - The shipped sidecars carry their own dependency manifest. `cargo auditable` embeds a compressed
   list of crate names and versions in a `.dep-v0` section, so `cargo audit bin terminalai-daemon.exe`
   answers "which crate versions are in this exe" from the exe — which is what an advisory response

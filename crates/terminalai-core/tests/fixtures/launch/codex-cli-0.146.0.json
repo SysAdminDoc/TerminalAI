@@ -1,5 +1,8 @@
 {
   "version": "codex-cli 0.146.0",
+  "passthrough_args": [
+    "--verbose"
+  ],
   "expected_args": [
     "resume",
     "codex-thread-1",

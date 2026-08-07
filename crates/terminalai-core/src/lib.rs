@@ -21,6 +21,7 @@ pub mod domain;
 pub mod environment;
 pub mod external;
 pub mod grid;
+pub mod help;
 pub mod hook_config;
 pub mod hooks;
 pub mod i18n;

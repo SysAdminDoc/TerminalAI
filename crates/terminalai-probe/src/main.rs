@@ -56,6 +56,7 @@ USAGE:
                            [--session <id> [--archive-on-success]]
   terminalai-probe hook    <claude|codex>    (read one hook JSON object from stdin)
   terminalai-probe hooks   <status|preview|install|remove> <claude|codex> [options]
+  terminalai-probe verify-goldens [--goldens <dir>]  (does the installed CLI accept the golden argv?)
   terminalai-probe cpu-idle [--sessions <n>] [--seconds <s>] [--poll]
   terminalai-probe hygiene  [--sessions <n>] [--json] [--output <path>]
 
@@ -113,6 +114,7 @@ fn main() {
         Some("worktrees") => cmd_worktrees(&args[1..]),
         Some("hook") => cmd_hook(&args[1..]),
         Some("hooks") => cmd_hooks(&args[1..]),
+        Some("verify-goldens") => cmd_verify_goldens(&args[1..]),
         Some("--help") | Some("-h") | None => {
             print!("{USAGE}");
             0
@@ -2094,4 +2096,212 @@ mod tests {
             r#"{"kind":"launched","id":"s0001","queued":false}"#
         );
     }
+}
+
+/// Does the installed agent accept the argument vector the goldens pin?
+///
+/// The golden fixtures assert what this tool *emits* for a named CLI version.
+/// What they cannot assert is the other half — whether the agent on this
+/// machine accepts it. Those are different facts, and the gap is not
+/// theoretical: `--ax-screen-reader` and `--autocompact` were both filed as
+/// roadmap work and both turned out to postdate the installed Claude Code, so
+/// mapping either would have produced an argv the agent refuses before it
+/// starts, with every golden still green.
+///
+/// So this runs the real `--help` and reports every flag in the golden argv
+/// that the installed CLI does not list. It lives in the probe rather than in
+/// `cargo test` because the answer depends on what is installed, and a unit
+/// test whose result changes when the operator upgrades an unrelated tool is a
+/// test that gets ignored.
+///
+/// Exit codes follow the rest of this binary: 0 clean, 1 usage, 2 the agent
+/// could not be resolved or asked, 3 a golden names a flag the CLI refuses.
+fn cmd_verify_goldens(args: &[String]) -> i32 {
+    let (machine, args) = without_json(args);
+    let mut goldens = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../terminalai-core/tests/fixtures/launch");
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--goldens" => {
+                let Some(value) = args.get(index + 1) else {
+                    return control_usage("--goldens needs a directory");
+                };
+                goldens = PathBuf::from(value);
+                index += 2;
+            }
+            other => return control_usage(&format!("unknown argument: {other}")),
+        }
+    }
+
+    // Read the directory rather than naming the files. A hand-written list
+    // would quietly stop covering a golden the day one is added, and report
+    // clean for every run after that.
+    let entries = match std::fs::read_dir(&goldens) {
+        Ok(entries) => entries,
+        Err(error) => {
+            eprintln!("cannot read goldens at {}: {error}", goldens.display());
+            return 2;
+        }
+    };
+    let mut fixtures: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    fixtures.sort();
+    if fixtures.is_empty() {
+        eprintln!("no golden fixtures under {}", goldens.display());
+        return 2;
+    }
+
+    let mut reports: Vec<GoldenReport> = Vec::new();
+    let mut worst = 0;
+    for fixture in &fixtures {
+        let name = fixture
+            .file_name()
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        // The agent is decided by the fixture's own name, so adding a golden
+        // for a third agent is a rename away rather than a code change here.
+        let agent = if name.starts_with("claude") {
+            Agent::Claude
+        } else if name.starts_with("codex") {
+            Agent::Codex
+        } else {
+            eprintln!("{name}: cannot tell which agent this golden is for");
+            worst = worst.max(2);
+            continue;
+        };
+        let text = match std::fs::read_to_string(fixture) {
+            Ok(text) => text,
+            Err(error) => {
+                eprintln!("{name}: {error}");
+                worst = worst.max(2);
+                continue;
+            }
+        };
+        let golden: GoldenFixture = match serde_json::from_str(&text) {
+            Ok(golden) => golden,
+            Err(error) => {
+                eprintln!("{name}: {error}");
+                worst = worst.max(2);
+                continue;
+            }
+        };
+        let binary = match agent::resolve(agent, None) {
+            Ok(binary) => binary,
+            Err(error) => {
+                eprintln!("{name}: cannot resolve {agent:?}: {error}");
+                worst = worst.max(2);
+                continue;
+            }
+        };
+        let help = match agent_help(&binary.path) {
+            Ok(help) => help,
+            Err(error) => {
+                eprintln!("{name}: cannot read --help: {error}");
+                worst = worst.max(2);
+                continue;
+            }
+        };
+        // An empty help means the question was never really asked. Treating it
+        // as "no flags missing" would certify every golden against nothing.
+        if help.trim().is_empty() {
+            eprintln!("{name}: {} printed no help at all", binary.path.display());
+            worst = worst.max(2);
+            continue;
+        }
+        let used = terminalai_core::help::flags_used(&golden.expected_args, &golden.value_args);
+        let mapped: Vec<&str> = used
+            .iter()
+            .copied()
+            .filter(|flag| !golden.passthrough_args.iter().any(|extra| extra == flag))
+            .collect();
+        let unlisted: Vec<String> = mapped
+            .iter()
+            .copied()
+            .filter(|flag| !terminalai_core::help::help_lists_flag(&help, flag))
+            .map(str::to_owned)
+            .collect();
+        let checked = mapped.len();
+        let passthrough = used.len() - checked;
+        if !unlisted.is_empty() {
+            worst = worst.max(3);
+        }
+        reports.push(GoldenReport {
+            fixture: name,
+            pinned_version: golden.version,
+            resolved: binary.path.display().to_string(),
+            flags_checked: checked,
+            passthrough_skipped: passthrough,
+            unlisted,
+        });
+    }
+
+    if machine {
+        match serde_json::to_string(&reports) {
+            Ok(json) => println!("{json}"),
+            Err(error) => return print_control_error(error, true),
+        }
+        return worst;
+    }
+    for report in &reports {
+        println!("{} (pins {})", report.fixture, report.pinned_version);
+        println!("  resolved: {}", report.resolved);
+        println!(
+            "  flags checked: {} ({} operator passthrough skipped)",
+            report.flags_checked, report.passthrough_skipped
+        );
+        if report.unlisted.is_empty() {
+            println!("  every flag is listed by the installed CLI");
+        } else {
+            println!("  NOT listed by the installed CLI: {}", report.unlisted.join(", "));
+        }
+    }
+    worst
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct GoldenFixture {
+    version: String,
+    expected_args: Vec<String>,
+    /// Tokens that look like flags but are values. Rarely needed — the argv's
+    /// `--` marker already covers the initial prompt — but a wrong guess about
+    /// one would be silent, so it stays declarable.
+    #[serde(default)]
+    value_args: Vec<String>,
+    /// Flags the *operator* supplied, forwarded verbatim through
+    /// `LaunchSpec::extra_args`.
+    ///
+    /// Excluded from the accept check, and the distinction is the point: this
+    /// tool is answerable for the argv it constructs, not for arguments a
+    /// person chose to pass through it. Codex 0.146.0 lists no `--verbose` at
+    /// all, so leaving these in reported a failure against a design decision
+    /// rather than against a defect.
+    #[serde(default)]
+    passthrough_args: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct GoldenReport {
+    fixture: String,
+    pinned_version: String,
+    resolved: String,
+    flags_checked: usize,
+    passthrough_skipped: usize,
+    unlisted: Vec<String>,
+}
+
+/// The agent's own `--help`, as the operator's shell would see it.
+///
+/// stdout and stderr are concatenated because CLIs disagree about where help
+/// goes, and reading only one of them would silently return nothing for an
+/// agent that chose the other.
+fn agent_help(path: &std::path::Path) -> io::Result<String> {
+    let output = std::process::Command::new(path).arg("--help").output()?;
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push('\n');
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    Ok(text)
 }
