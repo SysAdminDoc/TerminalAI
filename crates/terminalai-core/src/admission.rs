@@ -232,7 +232,15 @@ pub struct FleetDemand {
     /// the provider is refusing them work, so counting them would keep a queued
     /// session waiting behind a process that provably cannot progress.
     pub admitted: usize,
-    /// Private commit the admitted sessions are expected to hold, counting a
+    /// Sessions whose process is still resident, whether or not it holds a slot.
+    ///
+    /// Always at least [`Self::admitted`]. The two differ by exactly the
+    /// rate-limited rows, which is the whole reason this field exists: a slot is
+    /// a claim on *progress* and can be released the moment a provider starts
+    /// refusing, but the agent process does not exit and does not give its
+    /// memory back.
+    pub resident: usize,
+    /// Private commit the resident sessions are expected to hold, counting a
     /// session that has not been sampled yet at its agent's measured typical
     /// size.
     pub projected_memory_bytes: u64,
@@ -241,10 +249,21 @@ pub struct FleetDemand {
 }
 
 impl FleetDemand {
-    /// Count one session that holds a slot, at its reported size or its agent's
-    /// measured typical size when it has not been sampled yet.
+    /// Count one session that holds a slot. It is resident too — nothing holds a
+    /// slot without a process behind it.
     pub fn admit(&mut self, agent: crate::agent::Agent, memory_bytes: Option<u64>) {
         self.admitted = self.admitted.saturating_add(1);
+        self.reside(agent, memory_bytes);
+    }
+
+    /// Count one session that has a process but no slot: a rate-limited row.
+    ///
+    /// It cannot make progress, so it is right that it is not blocking the
+    /// queue — but its private commit is as real as any other session's, and
+    /// leaving it out of the projection lets the gate admit work the machine
+    /// cannot physically hold.
+    pub fn reside(&mut self, agent: crate::agent::Agent, memory_bytes: Option<u64>) {
+        self.resident = self.resident.saturating_add(1);
         self.projected_memory_bytes = self
             .projected_memory_bytes
             .saturating_add(memory_bytes.unwrap_or_else(|| assumed_session_bytes(agent)));
@@ -274,7 +293,11 @@ pub fn block(config: &AdmissionConfig, demand: &FleetDemand) -> Option<Admission
         let headroom = ASSUMED_SESSION_BYTES_CLAUDE.min(ASSUMED_SESSION_BYTES_CODEX);
         // An empty fleet always gets one session: a budget too small for any
         // agent is a misconfiguration, and halting entirely would hide it.
-        let occupied = demand.admitted > 0;
+        //
+        // Residency, not slots: a fleet whose only session is rate-limited still
+        // has an agent process holding half a gigabyte, so it is not empty and
+        // does not get the exemption.
+        let occupied = demand.resident > 0;
         if occupied && demand.projected_memory_bytes.saturating_add(headroom) > budget {
             return Some(AdmissionBlock::MemoryBudget);
         }
@@ -353,9 +376,12 @@ mod tests {
     use super::*;
     use crate::agent::Agent;
 
+    /// A fleet where every resident session also holds a slot — the ordinary
+    /// case. Rate limiting is what separates the two, and it has its own tests.
     fn demand(admitted: usize, projected: u64) -> FleetDemand {
         FleetDemand {
             admitted,
+            resident: admitted,
             projected_memory_bytes: projected,
             spend_window_usd: 0.0,
         }
@@ -402,6 +428,42 @@ mod tests {
         assert_eq!(
             block(&config, &demand(1, fits + 1)),
             Some(AdmissionBlock::MemoryBudget)
+        );
+    }
+
+    #[test]
+    fn a_rate_limited_session_releases_its_slot_but_not_its_memory() {
+        // The two limits are released at different moments. A provider refusing
+        // a session frees it from blocking the queue; it does not make the agent
+        // process exit, and the budget exists to stop the machine being
+        // oversubscribed by processes that are actually there.
+        let budget = ASSUMED_SESSION_BYTES_CLAUDE * 2;
+        let config = AdmissionConfig::new(4, None).with_memory_limits(Some(budget), None, None);
+        let mut demand = FleetDemand::default();
+        demand.reside(Agent::Claude, None);
+        demand.reside(Agent::Claude, None);
+
+        assert_eq!(demand.admitted, 0, "neither row holds a slot");
+        assert_eq!(demand.resident, 2);
+        assert_eq!(
+            block(&config, &demand),
+            Some(AdmissionBlock::MemoryBudget),
+            "two resident agents fill the budget even with every slot free"
+        );
+    }
+
+    #[test]
+    fn a_fleet_of_only_rate_limited_rows_is_not_an_empty_fleet() {
+        // The empty-fleet exemption exists so a misconfigured budget cannot halt
+        // everything. A fleet holding a resident agent is not that case.
+        let config = AdmissionConfig::new(4, None).with_memory_limits(Some(1024), None, None);
+        let mut demand = FleetDemand::default();
+        assert_eq!(block(&config, &demand), None, "nothing is running yet");
+        demand.reside(Agent::Claude, None);
+        assert_eq!(
+            block(&config, &demand),
+            Some(AdmissionBlock::MemoryBudget),
+            "a rate-limited agent still holds its memory"
         );
     }
 

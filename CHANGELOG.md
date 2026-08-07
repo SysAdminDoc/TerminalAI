@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Fixed
+
+- The memory budget stopped counting a session the moment a provider rate-limited it. Releasing the
+  admission *slot* is right — a session the provider is refusing must not keep a queued one waiting
+  — but the same filter fed the memory projection, so an agent process still holding ~509 MB
+  vanished from it. With a budget configured the gate would admit roughly one whole agent of extra
+  work per rate-limited row, and the machine went over exactly when the windows reset and every
+  session resumed at once. Slots and residency are now counted separately, and the empty-fleet
+  exemption asks whether anything is resident rather than whether anything holds a slot.
+
 ## [0.15.0] — 2026-08-07
 
 ### Added

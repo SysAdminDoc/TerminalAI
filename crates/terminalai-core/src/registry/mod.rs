@@ -1634,14 +1634,20 @@ fn next_sequence(id: &SessionId) -> u64 {
 
 /// What the fleet holds right now, as the admission gate sees it.
 ///
-/// Rate-limited sessions are excluded by `occupies_admission_slot`: they are
-/// running, but the provider is refusing them work, so counting them would keep
-/// a queued session waiting behind a process that provably cannot progress.
+/// Slots and memory are counted separately because they are released at
+/// different moments. `occupies_admission_slot` drops a rate-limited session so
+/// it stops blocking the queue — it is running but the provider is refusing it
+/// work, so a queued session must not wait behind it. Its process, though, is
+/// still there holding its private commit, so it stays in the memory
+/// projection: releasing the slot is a statement about progress, not about RAM.
 fn admitted_demand(state: &State) -> FleetDemand {
     let mut demand = FleetDemand::default();
     for entry in state.entries.values() {
-        if entry.session.status.occupies_admission_slot() {
+        let status = entry.session.status;
+        if status.occupies_admission_slot() {
             demand.admit(entry.session.agent, entry.session.memory_bytes);
+        } else if status.is_live() {
+            demand.reside(entry.session.agent, entry.session.memory_bytes);
         }
     }
     demand
@@ -2549,6 +2555,42 @@ mod tests {
         );
         assert_eq!(snapshot.rate_limited_sessions, 1);
         assert!(snapshot.earliest_rate_limit_reset.is_some());
+    }
+
+    #[test]
+    fn a_rate_limited_session_keeps_paying_for_its_memory() {
+        // The other half of the rule above, and the one that was wrong: a
+        // provider refusing a session frees its slot, but the agent process does
+        // not exit. Dropping it from the projection let the gate admit work the
+        // machine could not physically hold — roughly one whole agent of
+        // oversubscription per limited row, which lands the moment the windows
+        // reset and every session resumes at once.
+        let budget = ASSUMED_SESSION_BYTES_CLAUDE * 2;
+        let registry = SessionRegistry::with_admission(
+            AdmissionConfig::new(8, None).with_memory_limits(Some(budget), None, None),
+        );
+        insert_session(&registry, &SessionId::new(1), SessionStatus::Working);
+        insert_session(&registry, &SessionId::new(2), SessionStatus::Working);
+        let before = registry.admission_snapshot();
+        assert_eq!(before.live_sessions, 2);
+        assert_eq!(before.admission_block, Some(AdmissionBlock::MemoryBudget));
+
+        assert!(apply_test_hook(&registry, rate_limit_event(1800)));
+
+        let after = registry.admission_snapshot();
+        assert_eq!(
+            after.live_sessions, 1,
+            "the slot is still released — that part was right"
+        );
+        assert_eq!(
+            after.projected_memory_bytes, before.projected_memory_bytes,
+            "the process did not exit, so the projection must not shrink"
+        );
+        assert_eq!(
+            after.admission_block,
+            Some(AdmissionBlock::MemoryBudget),
+            "slots are free, but the memory the fleet holds has not changed"
+        );
     }
 
     #[test]

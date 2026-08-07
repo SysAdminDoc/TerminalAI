@@ -2,6 +2,94 @@
 
 Single task tracker for this repo. Newest phase at the top; completed items are removed.
 
+## Audit Findings — 2026-08-07
+
+Fourth audit pass, against `cc53821` / v0.15.0 with a green baseline of 585 Rust (0 failed), 305
+frontend (0 failed), clippy clean, and the 13-surface chrome gate clean in both themes at both
+widths. No pre-existing test, lint or build failure exists. Verification: every code-path finding
+below was traced to a real caller; the theming finding was observed live (Vite + headless Chromium,
+both `prefers-color-scheme` values) rather than inferred from source.
+
+- [ ] P2 — A session-store write failure is invisible to the operator
+  Category: reliability
+  Where: `crates/terminalai-daemon/src/persistence.rs:208` (`run_writer`), write site at `snapshot.write(path)`
+  Problem: when the debounced store write fails (disk full, path unwritable, AV lock), the only trace is `eprintln!` on the daemon's stderr — which nobody is watching once the daemon is a background process. Every subsequent row change is silently unpersisted; a daemon restart then reverts the fleet to the last successful write with no warning that anything was lost. The UI already has the exact precedent for surfacing this class of failure: the store-quarantine banner (`#store-quarantine-banner`, `role="alert"`).
+  Evidence: traced `run_writer` — the `Err` arm is `eprintln!` only. Grepped daemon lib.rs, app main.rs and web/main.js for any consumer of a store-write failure: none exists; no `RegistryEvent`, no `Response` field, no log-hub entry reaches the UI from this path.
+  Fix: on write failure, record the failure (path + error + timestamp) on shared daemon state and surface it the same way store quarantine is surfaced: a field on the snapshot/hello payload (or a `RegistryEvent::Notification`) the web layer renders as a persistent banner ("fleet state is not being saved: <error>"), cleared on the next successful write. Keep the eprintln.
+  Acceptance: pointing the store at an unwritable path and changing a row shows the banner within the debounce interval; restoring writability clears it on the next successful write. A daemon test asserts the failure state is set on a failed write and cleared on a successful one.
+  Confidence: Verified
+  Effort: M
+
+- [ ] P3 — The HTTP hook body read can outlive the request deadline, before authentication
+  Category: reliability
+  Where: `crates/terminalai-daemon/src/http_hooks.rs:377-390` (`read_request`, body `read_exact`)
+  Problem: the header loop re-checks `deadline` every iteration, but the body path arms the socket read timeout once (`remaining.min(READ_TIMEOUT)`) and then calls `read_exact`, which loops over as many `recv`s as the body needs — each individual read gets the full timeout, and every successful 1-byte read re-arms it. A local client that declares `Content-Length` up to `MAX_BODY_BYTES` (1 MiB) and trickles one byte per ~1.9 s holds a worker for days, and this happens BEFORE the bearer check (auth runs in `handle_connection` after the body is fully read). Four workers and a 16-deep queue mean four unauthenticated local connections starve hook ingestion for every real agent, and status updates silently stop.
+  Evidence: traced `read_request`: `stream.set_read_timeout(...)` is called once before `read_exact(&mut body[available..])`; `REQUEST_DEADLINE` (5 s) is only consulted again after `read_request` returns. The listener is loopback-only and the module comment promises a bounded reader with a deadline — the bound holds for headers and not for bodies.
+  Fix: read the body in a loop of bounded chunks, recomputing `remaining = deadline.saturating_duration_since(Instant::now())` before each read and failing with the existing 408/TimedOut path when it hits zero — mirroring the header loop's shape. No new dependency.
+  Acceptance: a test in `http_hooks.rs`'s test module: valid headers with a small `Content-Length`, body trickled one byte at a time past a shortened deadline — the connection is rejected once the deadline passes rather than read to completion; existing hook round-trip tests still pass.
+  Confidence: Verified
+  Effort: S
+
+- [ ] P3 — The overflow menus claim `role="menu"` semantics they do not implement
+  Category: a11y
+  Where: `web/index.html:25` (`#app-menu`), `web/index.html:56` (`#tools-menu`), `web/src/menus.js:13` (`wireOverflowMenus`)
+  Problem: both panels are `role="menu"`, but (a) `#app-menu` contains a `<select>`, a heading and inline buttons that are not `menuitem`s — invalid children for the menu role, so screen readers announce wrong item counts and the preset controls are unreachable in menu navigation mode; and (b) `wireOverflowMenus` implements no ArrowUp/ArrowDown/Home/End movement, which the WAI-ARIA menu pattern requires once the role is claimed. Focus lands on the first control and Tab walks out of the "menu".
+  Evidence: read both panels' markup (mixed children confirmed; 10 `role="menuitem"` buttons total) and the whole of `menus.js` (click, outside-click and Escape only — no arrow-key handler exists in the file, and `main.js`'s arrow handling is scoped to `#fleet-list`).
+  Fix: prefer honesty over ceremony: drop `role="menu"`/`role="menuitem"` and treat both panels as disclosure panels — the current Tab/Escape/outside-click behaviour is exactly right for that pattern. Keep `aria-expanded`/`aria-controls` on the triggers; restyle `role="separator"` as a plain rule. (Implementing full menu keyboard semantics and evicting the `<select>` cluster is the alternative, for no more accessibility at more cost.)
+  Acceptance: no ARIA violation for invalid menu children (axe or manual review); Tab flows through every control in both panels; the menu test asserts the roles match the implemented pattern.
+  Confidence: Verified
+  Effort: S
+
+- [ ] P3 — The focused terminal is hardcoded dark and ignores the light theme
+  Category: visual
+  Where: `web/src/main.js:3341-3354` (xterm `theme:` literal), `web/src/styles.css` light-theme block at ~line 2905
+  Problem: every other surface follows `prefers-color-scheme`, but the xterm canvas paints `background: "#11111b"` with the dark Catppuccin ANSI palette regardless. In light mode the operator gets a light panel (`.terminal-panel` composites to `rgb(239,241,245)`) framing a hard dark rectangle, and the empty-vs-focused pane flips the panel's apparent theme. The chrome gate cannot see it: the canvas is not DOM text.
+  Evidence: observed live (headless Chromium, `colorScheme: "light"`): `.terminal-panel` = rgb(239,241,245), xterm DOM background transparent, canvas painted from the hardcoded theme literal. Dark mode is self-consistent.
+  Fix: decide it, either way, and implement the decision: (a) intentional dark terminal — then frame it: in the light block, set `.terminal-panel`/`#terminal-host` (and the terminal toolbar) to the terminal's own dark surface so the pane reads as a deliberate dark island; or (b) theme the terminal — build the `theme:` object from resolved CSS custom properties and re-apply on `matchMedia("(prefers-color-scheme: dark)")` change. (a) is smaller and matches how most terminal apps behave.
+  Acceptance: in light mode there is no light-framed dark rectangle: either the pane is deliberately dark edge-to-edge including its toolbar, or the terminal renders with a light palette. A chrome-audit-style probe of `.terminal-panel` vs the canvas colour agrees in both themes.
+  Confidence: Verified
+  Effort: S
+
+- [ ] P3 — "Update available" arrives as a 4-second toast with no way to act on it
+  Category: ux
+  Where: `web/src/main.js:460` (`checkForUpdates`), `showToast` at `web/src/main.js:275`
+  Problem: the one actionable result of the update check — a newer version exists, go get it — is shown in a toast that removes itself after 4.2 s, contains no link, and cannot be recalled except by re-running the check. The string even says "Download it from GitHub" while offering no way to open GitHub, in an app that already ships a validated `open_external_url` command allowing https.
+  Evidence: `showToast` is fire-and-forget text (no action support, fixed 4200 ms); `update-available` in `terminalai.ftl:13`; `validate_external_url` allows https and is already used for OSC 8 links.
+  Fix: render the check's result inline where the action lives: a small result line under `#update-check-button` in the app menu (persisting until the menu closes) with an "Open releases page" button wired to `open_external_url` on the repository's releases URL. Keep the toast for the up-to-date and error cases, which need no action.
+  Acceptance: after a check that finds a newer version, the app menu shows the result and a working releases link; re-opening the menu within the session still shows it; the up-to-date and error flows are unchanged.
+  Confidence: Verified
+  Effort: S
+
+- [ ] P3 — The archive dedup guard is unreachable by the model and uncovered by any test
+  Category: testing
+  Where: `crates/terminalai-core/src/registry/mod.rs:948` (`state.archives.retain(|item| item.id != *id)` in `archive`), model at `crates/terminalai-core/tests/registry_model.rs`
+  Problem: the guard preventing a duplicate archive entry when an id is archived twice is dead under every existing test: the model keeps live/archived disjoint (an archived id never returns), and no example test archives the same id twice. Mutation-testing during the 2026-08-07 model work confirmed removing it changes nothing observable today. The reachable route is a store holding the same id in both `sessions` and `archives` (hand-edited, or written by a buggy earlier build) — `from_store` restores both without cross-checking, and archiving the live row would then duplicate the entry without the guard.
+  Evidence: removed the `retain` line and ran the full model + example suites — all green (2026-08-07 session). `from_store` performs no cross-check between `sessions` and `archives` ids.
+  Fix: add one example test next to the other archive tests: build a `SessionStoreSnapshot` whose `sessions` and `archives` both contain `s0001`, `from_store` it, archive the row, assert `archives()` holds exactly one `s0001` entry. Better root cause, if preferred: make `from_store` drop an archive entry whose id is also live, test that, and delete the guard in `archive`.
+  Acceptance: the new test fails when the `retain` (or the chosen `from_store` normalisation) is removed, and passes with it.
+  Confidence: Verified
+  Effort: S
+
+- [ ] P3 — Decompose `web/src/main.js`
+  Category: maintainability
+  Where: `web/src/main.js` (~3,690 lines, 151.5 KB)
+  Problem: main.js is now the tree's god file — the position `registry.rs` held before the 2026-08-07 decomposition, and the highest-churn JS file. Eleven modules have already been split out (rowMarkup, rateLimit, rollup, menus, fleetRows, …), which proves the seams work; what remains fuses dialog wiring, terminal setup, update checking, preflight, diagnostics, i18n bootstrapping and the event loop in one scope where every edit risks every feature.
+  Evidence: `wc -l` = 3,686; the extraction pattern and its per-module tests already exist and are green.
+  Fix: continue the established pattern, one seam at a time, each with the moved-code-unchanged discipline used for `rowMarkup.js`: (1) `updateCheck.js` (versionTuple/isNewerVersion/checkForUpdates — pure logic already testable), (2) `terminalPane.js` (setupTerminal/useWebglRenderer/observeTerminalSize/openSessionLink), (3) `dialogs.js` (open/close/focus-restore wiring shared by the nine dialogs). NOT a big-bang rewrite; run BOTH suites after every move — several frontend tests read `main.js` itself as a string and break silently on a move (see CLAUDE.md 2026-08-07).
+  Acceptance: main.js under ~2,500 lines with the three modules extracted, every frontend test passing without assertion edits (string-reading tests may need their read target updated, mirroring `registrySource.mjs`), and the chrome gate clean.
+  Confidence: Verified
+  Effort: L
+
+- [ ] P3 — Unaudited surfaces from the 2026-08-07 pass
+  Category: docs
+  Where: repository-wide
+  Problem: this pass did not deep-audit: `scripts/verify-installer.ps1` (runs only at release, needs a `cargo tauri build` and a window), `crates/terminalai-app/src/preset.rs` and `src/work.rs` beyond their public seams, `crates/terminalai-core/src/external.rs` parsing of Claude's own session registry, the packaged-app E2E path (`run-e2e.mjs`, known-blocked on DevToolsActivePort), or populated-fleet theming — the chrome gate audits empty states, so rows with live tones, the rate-limit banner and the spend header have never been contrast-checked with real data in the light theme.
+  Evidence: coverage of this audit session; the chrome gate's SURFACES list contains no populated-fleet state.
+  Fix: next audit pass starts here. For populated-fleet theming specifically: extend `chrome-audit.mjs` with a fixture mode that injects a synthetic snapshot (the `renderFixtureRow` harness already builds row markup) before auditing, so row tones, the unread gradient and the header chips are contrast-checked in both themes.
+  Acceptance: a later audit either clears these areas or files findings from them.
+  Confidence: Verified
+  Effort: M
+
 ## Audit Findings — 2026-08-03
 
 Read-only audit pass. Baseline before any of this was found: `cargo test` **411 passed / 0 failed**,
