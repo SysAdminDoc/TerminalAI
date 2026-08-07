@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use terminalai_core::agent::{Agent, AgentBinary, Origin};
-use terminalai_core::launch::{Effort, LaunchSpec, Permission, Resume, Sandbox};
+use terminalai_core::launch::{
+    Effort, LaunchError, LaunchSpec, Permission, Resume, Sandbox,
+};
 
 #[derive(Debug, Deserialize)]
 struct Golden {
@@ -15,6 +17,14 @@ fn binary(agent: Agent) -> AgentBinary {
         agent,
         path: PathBuf::from("terminalai-agent"),
         origin: Origin::Configured,
+    }
+}
+
+fn claude_only(agent: Agent, values: &[&str]) -> Vec<String> {
+    if agent == Agent::Claude {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    } else {
+        Vec::new()
     }
 }
 
@@ -44,6 +54,21 @@ fn canonical_spec(agent: Agent, cwd: &Path) -> LaunchSpec {
         },
         max_budget_usd: (agent == Agent::Claude).then_some(5.0),
         web_search: agent == Agent::Codex,
+        // Claude-only passthrough. Codex expresses none of these — verified
+        // against `codex --help` 0.146.0 — so setting them on a Codex spec
+        // would refuse the launch rather than change the argv.
+        allowed_tools: claude_only(agent, &["Bash(git log:*)", "Read"]),
+        disallowed_tools: claude_only(agent, &["WebFetch"]),
+        settings: (agent == Agent::Claude).then(|| "golden-settings.json".to_owned()),
+        setting_sources: (agent == Agent::Claude).then(|| "user,project".to_owned()),
+        mcp_config: claude_only(agent, &["golden-mcp.json"]),
+        strict_mcp_config: agent == Agent::Claude,
+        plugin_dirs: claude_only(agent, &["golden-plugin"])
+            .into_iter()
+            .map(PathBuf::from)
+            .collect(),
+        plugin_urls: claude_only(agent, &["https://example.invalid/plugin.zip"]),
+        fallback_model: (agent == Agent::Claude).then(|| "sonnet".to_owned()),
         initial_prompt: Some("--dangerously-skip-permissions".into()),
         extra_args: vec!["--verbose".into()],
         ..Default::default()
@@ -61,6 +86,12 @@ fn assert_golden(agent: Agent, fixture: &str) {
         .expected_args
         .into_iter()
         .map(|arg| {
+            // Only a path placeholder is rewritten to this platform's
+            // separator. Rewriting every argument turned a URL into a UNC-ish
+            // path, which is not a mismatch the fixture is trying to describe.
+            if !arg.contains("__CARGO_MANIFEST_DIR__") {
+                return arg;
+            }
             let separator = std::path::MAIN_SEPARATOR.to_string();
             arg.replace("__CARGO_MANIFEST_DIR__", &cwd.to_string_lossy())
                 .replace('/', &separator)
@@ -365,4 +396,158 @@ fn only_named_parent_variables_cross_and_every_bad_name_is_refused() {
             .expect_err("unset is a refusal, not an omission"),
         LaunchError::UnsetEnvironmentName(_)
     ));
+}
+
+/// Every tool, settings, MCP and plugin option is Claude-only on the versions
+/// this project pins. Codex must refuse each one rather than starting a session
+/// that silently lacks the constraint the operator asked for — an allowlist that
+/// is quietly dropped is a session with *more* rope than was chosen, which is
+/// the worst direction for that failure to go.
+#[test]
+fn codex_refuses_the_options_it_cannot_express() {
+    let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let base = LaunchSpec {
+        agent: Agent::Codex,
+        cwd: cwd.to_path_buf(),
+        ..Default::default()
+    };
+    let cases: Vec<(&str, LaunchSpec)> = vec![
+        (
+            "--allowed-tools",
+            LaunchSpec {
+                allowed_tools: vec!["Read".into()],
+                ..base.clone()
+            },
+        ),
+        (
+            "--disallowed-tools",
+            LaunchSpec {
+                disallowed_tools: vec!["WebFetch".into()],
+                ..base.clone()
+            },
+        ),
+        (
+            "--settings",
+            LaunchSpec {
+                settings: Some("settings.json".into()),
+                ..base.clone()
+            },
+        ),
+        (
+            "--setting-sources",
+            LaunchSpec {
+                setting_sources: Some("user".into()),
+                ..base.clone()
+            },
+        ),
+        (
+            "--mcp-config",
+            LaunchSpec {
+                mcp_config: vec!["mcp.json".into()],
+                ..base.clone()
+            },
+        ),
+        (
+            "--strict-mcp-config",
+            LaunchSpec {
+                strict_mcp_config: true,
+                ..base.clone()
+            },
+        ),
+        (
+            "--plugin-dir",
+            LaunchSpec {
+                plugin_dirs: vec![PathBuf::from("plugin")],
+                ..base.clone()
+            },
+        ),
+        (
+            "--plugin-url",
+            LaunchSpec {
+                plugin_urls: vec!["https://example.invalid/p.zip".into()],
+                ..base.clone()
+            },
+        ),
+        (
+            "--fallback-model",
+            LaunchSpec {
+                fallback_model: Some("gpt-5.1".into()),
+                ..base.clone()
+            },
+        ),
+    ];
+    for (flag, spec) in cases {
+        match spec.resolve(&binary(Agent::Codex)) {
+            Err(LaunchError::Unsupported { flag: refused, .. }) => {
+                assert_eq!(refused, flag, "refused the wrong option");
+            }
+            other => panic!("{flag} was not refused by Codex: {other:?}"),
+        }
+    }
+}
+
+/// These values sit next to the flags that decide what an agent may do. A value
+/// that begins with a dash is not a value: it is a second option in a position
+/// where `--dangerously-skip-permissions` would be accepted.
+#[test]
+fn option_shaped_passthrough_values_are_refused_before_argv_is_built() {
+    let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let base = LaunchSpec {
+        agent: Agent::Claude,
+        cwd: cwd.to_path_buf(),
+        ..Default::default()
+    };
+    let hostile = "--dangerously-skip-permissions";
+    let cases: Vec<LaunchSpec> = vec![
+        LaunchSpec {
+            allowed_tools: vec![hostile.into()],
+            ..base.clone()
+        },
+        LaunchSpec {
+            disallowed_tools: vec![hostile.into()],
+            ..base.clone()
+        },
+        LaunchSpec {
+            mcp_config: vec![hostile.into()],
+            ..base.clone()
+        },
+        LaunchSpec {
+            settings: Some(hostile.into()),
+            ..base.clone()
+        },
+        LaunchSpec {
+            setting_sources: Some(hostile.into()),
+            ..base.clone()
+        },
+        LaunchSpec {
+            fallback_model: Some(hostile.into()),
+            ..base.clone()
+        },
+        LaunchSpec {
+            plugin_dirs: vec![PathBuf::from(hostile)],
+            ..base.clone()
+        },
+    ];
+    for spec in cases {
+        assert!(
+            matches!(
+                spec.resolve(&binary(Agent::Claude)),
+                Err(LaunchError::OptionShapedValue { .. })
+            ),
+            "an option-shaped value reached the command line"
+        );
+    }
+
+    // A plugin URL fetches and runs remote code, so the scheme is checked too:
+    // `file:` there would be a different mechanism wearing this field's name.
+    for url in ["file:///C:/evil/plugin.zip", "data:application/zip;base64,UEs="] {
+        assert!(matches!(
+            LaunchSpec {
+                plugin_urls: vec![url.into()],
+                ..base.clone()
+            }
+            .resolve(&binary(Agent::Claude)),
+            Err(LaunchError::InvalidPluginUrl(_))
+        ));
+    }
 }

@@ -353,6 +353,34 @@ Verified flags, not guesses.
 | Fork | `--resume <id> --fork-session` | `fork <id>` |
 | Spend cap | `--max-budget-usd` | — |
 | Web search | — | `--search` |
+| Tools allowed / denied | `--allowed-tools` / `--disallowed-tools`, one occurrence per entry | — |
+| Extra settings | `--settings`, `--setting-sources` | — |
+| MCP servers | `--mcp-config` per entry, `--strict-mcp-config` | — |
+| Session plugins | `--plugin-dir` / `--plugin-url` per entry | — |
+| Fallback model | `--fallback-model` | — |
+
+The Codex column of the last five rows is empty because `codex --help` 0.146.0 expresses none of
+them: MCP servers are managed by the `codex mcp` subcommand and `config.toml`, plugins by `codex
+plugin`, and there is no allow/deny tool list or fallback model at all. `--strict-config` is
+deliberately not mapped to the strict-MCP row — it refuses unrecognised `config.toml` fields, which
+is a different thing. Choosing one of these with Codex selected refuses the launch; it is never
+dropped, because an allowlist that quietly disappears is a session with *more* rope than was asked
+for.
+
+The list-valued options are emitted as one flag occurrence per entry rather than as a joined
+string. `--allowed-tools` accepts a comma- or space-separated list, and a tool pattern such as
+`Bash(git log:*)` contains a space, so joining would re-split a value on a separator inside it.
+Values are refused before argv is built if they begin with `-` — they sit beside the flags that
+decide what the agent may do, and a dash-leading value there is a second option nobody chose. A
+plugin URL must be `http(s)`: it fetches and runs remote code, so `file:` or `data:` there would be
+a different mechanism wearing the same field's name.
+
+Two flags are deliberately **not** mapped. `--max-turns` does not exist in Claude Code 2.1.170, so
+there is nothing to map yet. Claude Code's own `-w, --worktree` overlaps this project's worktree
+feature and loses to it: TerminalAI places the checkout, names the branch, refuses to adopt an
+existing one, gates landing on it and surveys the ones left behind. A worktree the agent created for
+itself is one the supervisor did not place and cannot reason about, so the launcher owns that
+decision.
 
 The mapping itself is data, not code: `crates/terminalai-core/agents/builtin.toml` describes each
 family's identity, npm layout and every flag spelling above, and one builder emits the argument

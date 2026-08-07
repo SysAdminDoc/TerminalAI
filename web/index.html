@@ -229,6 +229,15 @@
             <label class="field"><span>Port base <em>deterministic</em></span><input id="port-base-input" type="number" min="1024" max="65535" step="1" value="42000" /></label>
             <label class="field field-wide"><span>Agent config directory <em>optional; a different directory is a different account</em></span><input id="agent-home-input" placeholder="Leave empty to use the signed-in account" /></label>
             <label class="field field-wide"><span>Inherit these variables <em>optional; comma separated names, nothing is inherited by default</em></span><input id="env-passthrough-input" placeholder="e.g. ANTHROPIC_API_KEY, NODE_EXTRA_CA_CERTS" /></label>
+            <label class="field field-wide claude-only"><span>Tools allowed without asking <em>optional; comma separated, e.g. Read, Bash(git log:*)</em></span><input id="allowed-tools-input" placeholder="Leave empty to ask as usual" /></label>
+            <label class="field field-wide claude-only"><span>Tools this session may not use <em>optional; comma separated</em></span><input id="disallowed-tools-input" placeholder="e.g. WebFetch" /></label>
+            <label class="field claude-only"><span>Extra settings <em>file path or JSON</em></span><input id="settings-input" placeholder="Leave empty for the agent's own" /></label>
+            <label class="field claude-only"><span>Setting sources <em>comma separated</em></span><input id="setting-sources-input" placeholder="user, project, local" /></label>
+            <label class="field field-wide claude-only"><span>MCP server config <em>optional; comma separated files or JSON</em></span><input id="mcp-config-input" placeholder="Leave empty to use the agent's own servers" /></label>
+            <label class="field claude-only check-field"><input id="strict-mcp-input" type="checkbox" /><span>Use only those MCP servers</span></label>
+            <label class="field claude-only"><span>Fallback model <em>optional</em></span><input id="fallback-model-input" placeholder="Tried when the primary is overloaded" /></label>
+            <label class="field field-wide claude-only"><span>Session plugins <em>optional; comma separated directories</em></span><input id="plugin-dirs-input" placeholder="e.g. C:\tools\my-plugin" /></label>
+            <label class="field field-wide claude-only"><span>Session plugin URLs <em>optional; http(s) only — this fetches and runs remote code</em></span><input id="plugin-urls-input" placeholder="https://example.com/plugin.zip" /></label>
             <label class="field field-wide"><span>Setup hook <em>optional local code</em></span><input id="setup-hook-input" placeholder="e.g. pnpm install --frozen-lockfile" /></label>
             <label class="field field-wide"><span>Teardown hook <em>optional local code</em></span><input id="teardown-hook-input" placeholder="e.g. pnpm run env:down" /></label>
               </div>

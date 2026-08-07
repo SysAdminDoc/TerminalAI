@@ -70,13 +70,6 @@ item above; where the two touch, the note says so.
   Acceptance: the server answers `server/discover`, negotiates via `_meta`, and returns `resultType` on every result; a test pins the declared revision against the constant so the two cannot drift. Decide explicitly whether to keep the old handshake for one release.
   Complexity: M
 
-- [ ] P2 — Pass through the launcher flags that control tools, MCP and plugins
-  Why: permission-prompt fatigue is a top community complaint and `--allowed-tools`/`--disallowed-tools` is the precise lever for it; passing plugin and MCP flags was already identified as the right extension point and never shipped.
-  Evidence: `crates/terminalai-core/src/launch.rs` maps 18 flags; absent are `--allowed-tools`, `--disallowed-tools`, `--settings`, `--setting-sources`, `--mcp-config`, `--strict-mcp-config`, `--plugin-dir`, `--plugin-url`, `--fallback-model`, `--max-turns` (code.claude.com/docs/en/cli-reference). The prior research pass rejected a plugin architecture but explicitly endorsed flag passthrough as belonging "in the existing flag-mapping table". Permission fatigue: https://news.ycombinator.com/item?id=48308376 (386 points).
-  Touches: `crates/terminalai-core/src/launch.rs`, `crates/terminalai-core/src/capabilities.rs`, `crates/terminalai-app/src/preset.rs`, `web/index.html`, `web/src/main.js`, `crates/terminalai-core/tests/launch_golden.rs`
-  Acceptance: each flag is mapped per agent through the existing table and refuses with `LaunchError::Unsupported` where the chosen agent has no equivalent; golden fixtures cover the new argv. Also decide deliberately what to do about Claude Code's own `--worktree`, which now overlaps this project's worktree feature.
-  Complexity: M
-
 ### P3
 
 - [ ] P3 — Say when the vendored price table is stale
@@ -240,13 +233,6 @@ the historical `R-NN` scheme and the entries below follow the current convention
 
 ### P1
 
-- [ ] P1 — Make agent identity data instead of code
-  Why: adding a third agent family currently means editing a Rust enum, a hand-written flag table, the capability probe and the preset UI, which is why the ACP item is parked on "when a third agent family is on the roadmap" — the cost is the blocker, not the transport.
-  Evidence: `crates/terminalai-core/src/agent.rs` hard-codes two families and `launch.rs` maps 18 flags per family by hand. herdr solves the same problem with reloadable manifests — `server.agent_manifests` and `server.reload_agent_manifests` on its socket API (https://herdr.dev/docs/socket-api/) — and covers Claude Code, Codex, Cursor, opencode, Grok, Pi, Kilo, Kimi, Antigravity, Mastra, Devin, Droid and Qoder. `Roadmap_Blocked.md` records ACP as unblocking "when a third agent family is on the roadmap"; this is the half that pays off with the two already supported.
-  Touches: `crates/terminalai-core/src/agent.rs`, `launch.rs`, `capabilities.rs`, `crates/terminalai-core/tests/launch_golden.rs`
-  Acceptance: resolution, flag mapping and capability probing for the existing two agents are expressed as data with the same golden argv output, byte for byte, as today; a manifest that asks for a flag the model does not express is refused at load with the field named, in the same spirit as `.terminalai/templates.toml`'s `deny_unknown_fields`. Manifests are trusted local configuration, never repository-supplied — a repo-declared agent definition would be arbitrary argv from a clone.
-  Complexity: L
-
 ### P2
 
 - [ ] P2 — Save and restore a fleet working set
@@ -290,13 +276,6 @@ the historical `R-NN` scheme and the entries below follow the current convention
   Touches: `web/scripts/`, `web/tests/`, `web/package.json`
   Acceptance: a headless script opens every dialog, both overflow menus and the launcher disclosure at 1440px and 1100px in both colour schemes, asserts no element overflows its container and no computed contrast falls below the thresholds the existing contrast test uses, and fails on regression. It is a separate script from the blocked WebDriver suite and does not depend on the virtual display.
   Complexity: M
-
-- [ ] P2 — Say what an agent is and is not sandboxed by on Windows
-  Why: the launcher's Sandbox column is empty for Claude because there is nothing to map, but an operator reading it cannot tell "this agent has no sandbox flag" from "this agent has no sandbox on this platform" — and the difference decides whether the bypass preset is reckless.
-  Evidence: Claude Code's Bash sandbox "runs on macOS, Linux, and WSL2. Native Windows is not supported. On Windows, run Claude Code inside a WSL2 distribution" (https://code.claude.com/docs/en/sandboxing). `README.md:341` shows an em dash in the Claude Sandbox row without saying why. The built-in bypass preset is already deliberately paired with worktree isolation (`crates/terminalai-app/src/preset.rs:93-96`), which is the correct mitigation and is currently undocumented as one.
-  Touches: `README.md`, `crates/terminalai-app/src/preset.rs`, `web/src/i18n/terminalai.ftl`
-  Acceptance: the README states that on native Windows neither agent has a first-party filesystem sandbox available, that Codex's `--sandbox` is the only sandbox flag in the table and what it does and does not contain, and that the worktree plus the environment lease are what isolate a bypass session here. The bypass preset's own description says the same in one sentence.
-  Complexity: S
 
 ### P3
 

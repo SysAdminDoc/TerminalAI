@@ -63,6 +63,15 @@ pub enum Slot {
     AddDirs,
     MaxBudgetUsd,
     WebSearch,
+    AllowedTools,
+    DisallowedTools,
+    Settings,
+    SettingSources,
+    McpConfig,
+    StrictMcpConfig,
+    PluginDirs,
+    PluginUrls,
+    FallbackModel,
     Resume,
 }
 
@@ -82,6 +91,15 @@ impl Slot {
             Slot::AddDirs => "--add-dir",
             Slot::MaxBudgetUsd => "--max-budget-usd",
             Slot::WebSearch => "--search",
+            Slot::AllowedTools => "--allowed-tools",
+            Slot::DisallowedTools => "--disallowed-tools",
+            Slot::Settings => "--settings",
+            Slot::SettingSources => "--setting-sources",
+            Slot::McpConfig => "--mcp-config",
+            Slot::StrictMcpConfig => "--strict-mcp-config",
+            Slot::PluginDirs => "--plugin-dir",
+            Slot::PluginUrls => "--plugin-url",
+            Slot::FallbackModel => "--fallback-model",
             Slot::Resume => "--resume",
         }
     }
@@ -101,6 +119,15 @@ impl Slot {
             Slot::AddDirs => "add-dirs",
             Slot::MaxBudgetUsd => "max-budget-usd",
             Slot::WebSearch => "web-search",
+            Slot::AllowedTools => "allowed-tools",
+            Slot::DisallowedTools => "disallowed-tools",
+            Slot::Settings => "settings",
+            Slot::SettingSources => "setting-sources",
+            Slot::McpConfig => "mcp-config",
+            Slot::StrictMcpConfig => "strict-mcp-config",
+            Slot::PluginDirs => "plugin-dirs",
+            Slot::PluginUrls => "plugin-urls",
+            Slot::FallbackModel => "fallback-model",
             Slot::Resume => "resume",
         }
     }
@@ -217,6 +244,24 @@ pub struct FlagTable {
     #[serde(default)]
     pub web_search: Option<Emit>,
     #[serde(default)]
+    pub allowed_tools: Option<Emit>,
+    #[serde(default)]
+    pub disallowed_tools: Option<Emit>,
+    #[serde(default)]
+    pub settings: Option<Emit>,
+    #[serde(default)]
+    pub setting_sources: Option<Emit>,
+    #[serde(default)]
+    pub mcp_config: Option<Emit>,
+    #[serde(default)]
+    pub strict_mcp_config: Option<Emit>,
+    #[serde(default)]
+    pub plugin_dirs: Option<Emit>,
+    #[serde(default)]
+    pub plugin_urls: Option<Emit>,
+    #[serde(default)]
+    pub fallback_model: Option<Emit>,
+    #[serde(default)]
     pub resume: Option<ResumeTable>,
 }
 
@@ -235,29 +280,56 @@ impl FlagTable {
             Slot::AddDirs => self.add_dirs.is_some(),
             Slot::MaxBudgetUsd => self.max_budget_usd.is_some(),
             Slot::WebSearch => self.web_search.is_some(),
+            Slot::AllowedTools => self.allowed_tools.is_some(),
+            Slot::DisallowedTools => self.disallowed_tools.is_some(),
+            Slot::Settings => self.settings.is_some(),
+            Slot::SettingSources => self.setting_sources.is_some(),
+            Slot::McpConfig => self.mcp_config.is_some(),
+            Slot::StrictMcpConfig => self.strict_mcp_config.is_some(),
+            Slot::PluginDirs => self.plugin_dirs.is_some(),
+            Slot::PluginUrls => self.plugin_urls.is_some(),
+            Slot::FallbackModel => self.fallback_model.is_some(),
             Slot::Resume => self.resume.is_some(),
         }
     }
 
+}
+
+impl Slot {
+    /// Every slot, in a fixed order, so a new one cannot be added to the flag
+    /// table and forgotten by the checks that walk it.
+    pub const ALL: [Slot; 21] = [
+        Slot::Model,
+        Slot::Effort,
+        Slot::Permission,
+        Slot::Sandbox,
+        Slot::Profile,
+        Slot::Name,
+        Slot::SessionId,
+        Slot::Cwd,
+        Slot::AddDirs,
+        Slot::MaxBudgetUsd,
+        Slot::WebSearch,
+        Slot::AllowedTools,
+        Slot::DisallowedTools,
+        Slot::Settings,
+        Slot::SettingSources,
+        Slot::McpConfig,
+        Slot::StrictMcpConfig,
+        Slot::PluginDirs,
+        Slot::PluginUrls,
+        Slot::FallbackModel,
+        Slot::Resume,
+    ];
+}
+
+impl FlagTable {
     /// Every slot this table populates, so `order` can be checked against it.
     fn populated(&self) -> Vec<Slot> {
-        [
-            Slot::Model,
-            Slot::Effort,
-            Slot::Permission,
-            Slot::Sandbox,
-            Slot::Profile,
-            Slot::Name,
-            Slot::SessionId,
-            Slot::Cwd,
-            Slot::AddDirs,
-            Slot::MaxBudgetUsd,
-            Slot::WebSearch,
-            Slot::Resume,
-        ]
-        .into_iter()
-        .filter(|slot| self.expresses(*slot))
-        .collect()
+        Slot::ALL
+            .into_iter()
+            .filter(|slot| self.expresses(*slot))
+            .collect()
     }
 
     fn emits(&self) -> Vec<(&'static str, &Emit)> {
@@ -273,6 +345,15 @@ impl FlagTable {
             ("add-dirs", &self.add_dirs),
             ("max-budget-usd", &self.max_budget_usd),
             ("web-search", &self.web_search),
+            ("allowed-tools", &self.allowed_tools),
+            ("disallowed-tools", &self.disallowed_tools),
+            ("settings", &self.settings),
+            ("setting-sources", &self.setting_sources),
+            ("mcp-config", &self.mcp_config),
+            ("strict-mcp-config", &self.strict_mcp_config),
+            ("plugin-dirs", &self.plugin_dirs),
+            ("plugin-urls", &self.plugin_urls),
+            ("fallback-model", &self.fallback_model),
         ] {
             if let Some(emit) = emit {
                 found.push((key, emit));

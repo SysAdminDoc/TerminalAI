@@ -2654,9 +2654,27 @@ function defaultSpec() {
     web_search: false,
     initial_prompt: null,
     extra_args: [],
+    allowed_tools: [],
+    disallowed_tools: [],
+    settings: null,
+    setting_sources: null,
+    mcp_config: [],
+    strict_mcp_config: false,
+    plugin_dirs: [],
+    plugin_urls: [],
+    fallback_model: null,
     environment: { setup: null, teardown: null, port_base: 42000, port_count: 4 },
     worktree: false,
   };
+}
+
+/// One comma-separated field as a list, with empty entries dropped. An empty
+/// entry would reach the agent as a bare flag with nothing after it.
+function commaList(id) {
+  return $(id)
+    .value.split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }
 
 function readSpec() {
@@ -2690,6 +2708,21 @@ function readSpec() {
       .value.split(",")
       .map((name) => name.trim())
       .filter(Boolean),
+    // Claude-only on the versions this build maps. Sent only for Claude so a
+    // Codex launch is not refused for a field the operator left behind when
+    // switching agents — the core refuses these on Codex by design, and that
+    // refusal should describe a choice, not a stale form.
+    allowed_tools: agent === "claude" ? commaList("allowed-tools-input") : [],
+    disallowed_tools: agent === "claude" ? commaList("disallowed-tools-input") : [],
+    settings: agent === "claude" ? $("settings-input").value.trim() || null : null,
+    setting_sources:
+      agent === "claude" ? $("setting-sources-input").value.trim() || null : null,
+    mcp_config: agent === "claude" ? commaList("mcp-config-input") : [],
+    strict_mcp_config: agent === "claude" && $("strict-mcp-input").checked,
+    plugin_dirs: agent === "claude" ? commaList("plugin-dirs-input") : [],
+    plugin_urls: agent === "claude" ? commaList("plugin-urls-input") : [],
+    fallback_model:
+      agent === "claude" ? $("fallback-model-input").value.trim() || null : null,
     environment: {
       setup: $("setup-hook-input").value.trim() || null,
       teardown: $("teardown-hook-input").value.trim() || null,
@@ -2741,6 +2774,15 @@ function writeSpec(spec) {
   $("worktree-input").checked = Boolean(spec.worktree);
   $("agent-home-input").value = spec.agent_home ?? "";
   $("env-passthrough-input").value = (spec.env_passthrough ?? []).join(", ");
+  $("allowed-tools-input").value = (spec.allowed_tools ?? []).join(", ");
+  $("disallowed-tools-input").value = (spec.disallowed_tools ?? []).join(", ");
+  $("settings-input").value = spec.settings ?? "";
+  $("setting-sources-input").value = spec.setting_sources ?? "";
+  $("mcp-config-input").value = (spec.mcp_config ?? []).join(", ");
+  $("strict-mcp-input").checked = Boolean(spec.strict_mcp_config);
+  $("plugin-dirs-input").value = (spec.plugin_dirs ?? []).join(", ");
+  $("plugin-urls-input").value = (spec.plugin_urls ?? []).join(", ");
+  $("fallback-model-input").value = spec.fallback_model ?? "";
   $("port-base-input").value = spec.environment?.port_base ?? 42000;
   $("port-count-input").value = spec.environment?.port_count ?? 4;
   $("setup-hook-input").value = spec.environment?.setup ?? "";

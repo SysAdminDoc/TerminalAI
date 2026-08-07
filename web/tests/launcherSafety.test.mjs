@@ -149,3 +149,50 @@ test("the credential fields default to inheriting nothing", () => {
   assert.match(readSpec, /agent_home: \$\("agent-home-input"\)\.value\.trim\(\) \|\| null/);
   assert.match(readSpec, /\.map\(\(name\) => name\.trim\(\)\)\s*\n\s*\.filter\(Boolean\)/);
 });
+
+// Permission-prompt fatigue is the loudest complaint about these agents, and an
+// allowlist is the precise lever for it. Every field that carries one has to
+// survive a round trip through a preset, or an operator's carefully narrowed
+// tool list silently becomes "ask about everything" the next time they launch.
+test("the tool, settings, MCP and plugin fields exist and round-trip", () => {
+  const { dom } = launcherForm();
+  const ids = [
+    "allowed-tools-input",
+    "disallowed-tools-input",
+    "settings-input",
+    "setting-sources-input",
+    "mcp-config-input",
+    "strict-mcp-input",
+    "plugin-dirs-input",
+    "plugin-urls-input",
+    "fallback-model-input",
+  ];
+  for (const id of ids) {
+    const element = dom.window.document.getElementById(id);
+    assert.ok(element, `${id} is missing from the launcher`);
+    // Codex expresses none of these, and the core refuses rather than drops
+    // them — so the control must disappear when Codex is chosen instead of
+    // sitting there offering something that would refuse the launch.
+    assert.ok(
+      element.closest(".claude-only"),
+      `${id} is offered for an agent that cannot express it`,
+    );
+  }
+  const writeSpec = main.slice(main.indexOf("function writeSpec"), main.indexOf("function clearFolderValidation"));
+  for (const id of ids) {
+    assert.ok(writeSpec.includes(id), `${id} is never restored from a spec`);
+  }
+  const readSpec = main.slice(main.indexOf("function readSpec"), main.indexOf("function setPermissionValue"));
+  for (const id of ids) {
+    assert.ok(readSpec.includes(id), `${id} is never read into a spec`);
+  }
+});
+
+// A plugin URL fetches and runs remote code. The label has to say so where the
+// operator is typing, not only in the README.
+test("the plugin URL field says what it does before it is used", () => {
+  const { dom } = launcherForm();
+  const label = dom.window.document.getElementById("plugin-urls-input").closest("label");
+  assert.match(label.textContent.toLowerCase(), /remote code/);
+  assert.match(label.textContent.toLowerCase(), /http\(s\)/);
+});

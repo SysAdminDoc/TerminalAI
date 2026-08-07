@@ -246,6 +246,37 @@ pub struct LaunchSpec {
     pub max_budget_usd: Option<f64>,
     /// Codex only.
     pub web_search: bool,
+    /// Tool names this session may use without asking, and those it may not use
+    /// at all. Permission-prompt fatigue is the loudest complaint about these
+    /// agents, and this is the precise lever for it: an allowlist answers the
+    /// prompts in advance instead of turning them off wholesale the way bypass
+    /// mode does.
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
+    #[serde(default)]
+    pub disallowed_tools: Vec<String>,
+    /// A settings file or JSON string layered on top of the agent's own.
+    #[serde(default)]
+    pub settings: Option<String>,
+    /// Which setting sources to load, as the agent spells them.
+    #[serde(default)]
+    pub setting_sources: Option<String>,
+    /// MCP server definitions for this session only.
+    #[serde(default)]
+    pub mcp_config: Vec<String>,
+    /// Use only the MCP servers named above, ignoring every other source.
+    #[serde(default)]
+    pub strict_mcp_config: bool,
+    /// Plugins loaded for this session only, by directory and by URL. A URL
+    /// fetches remote code, so it is an operator decision and never a
+    /// repository's — [`crate::template`] cannot reach any of these fields.
+    #[serde(default)]
+    pub plugin_dirs: Vec<PathBuf>,
+    #[serde(default)]
+    pub plugin_urls: Vec<String>,
+    /// Model to fall back to when the primary is overloaded.
+    #[serde(default)]
+    pub fallback_model: Option<String>,
     /// Sent as the first turn. Both CLIs take it as a positional argument.
     pub initial_prompt: Option<String>,
     /// Trusted-input-only escape hatch for flags the launcher does not model
@@ -308,6 +339,13 @@ pub enum LaunchError {
     UnsetEnvironmentName(String),
     #[error("agent home directory does not exist: {0}")]
     MissingAgentHome(PathBuf),
+    #[error("{field} value {value:?} would be read as an option, not as a value")]
+    OptionShapedValue {
+        field: &'static str,
+        value: String,
+    },
+    #[error("plugin URL {0:?} is not an http(s) URL")]
+    InvalidPluginUrl(String),
     #[error(transparent)]
     Environment(#[from] EnvironmentError),
 }
@@ -341,6 +379,7 @@ impl LaunchSpec {
         {
             return Err(LaunchError::AcceptEditsUnderReadOnlySandbox);
         }
+        self.validate_passthrough()?;
         self.environment.validate()?;
         // Validated here so a bad passthrough name refuses the launch rather
         // than surfacing later as an agent that cannot authenticate.
@@ -351,6 +390,51 @@ impl LaunchSpec {
             args,
             cwd: self.cwd.clone(),
         })
+    }
+
+    /// Refuse a passthrough value that would be parsed as an option.
+    ///
+    /// These fields become command-line tokens next to flags that decide what
+    /// the agent may do, so a value beginning with `-` is not a value at all —
+    /// it is a second option the operator did not choose, in a position where
+    /// `--dangerously-skip-permissions` would be accepted. `extra_args` is
+    /// deliberately exempt: it is documented as the trusted-input-only escape
+    /// hatch and exists precisely to pass flags.
+    ///
+    /// A plugin URL is checked further, because it fetches and runs remote code:
+    /// a `file:` or `data:` URL there would be a different mechanism wearing the
+    /// same field's name.
+    fn validate_passthrough(&self) -> Result<(), LaunchError> {
+        let lists: [(&'static str, &[String]); 4] = [
+            ("allowed_tools", &self.allowed_tools),
+            ("disallowed_tools", &self.disallowed_tools),
+            ("mcp_config", &self.mcp_config),
+            ("plugin_urls", &self.plugin_urls),
+        ];
+        for (field, values) in lists {
+            for value in values {
+                refuse_option_shaped(field, value)?;
+            }
+        }
+        for (field, value) in [
+            ("settings", self.settings.as_deref()),
+            ("setting_sources", self.setting_sources.as_deref()),
+            ("fallback_model", self.fallback_model.as_deref()),
+        ] {
+            if let Some(value) = value {
+                refuse_option_shaped(field, value)?;
+            }
+        }
+        for directory in &self.plugin_dirs {
+            refuse_option_shaped("plugin_dirs", &directory.to_string_lossy())?;
+        }
+        for url in &self.plugin_urls {
+            let lowered = url.to_ascii_lowercase();
+            if !lowered.starts_with("https://") && !lowered.starts_with("http://") {
+                return Err(LaunchError::InvalidPluginUrl(url.clone()));
+            }
+        }
+        Ok(())
     }
 
     /// The variables this launch adds on top of the sanitized baseline.
@@ -442,12 +526,31 @@ impl LaunchSpec {
                     &flags.max_budget_usd,
                     self.max_budget_usd.map(format_usd).as_deref(),
                 ),
-                Slot::WebSearch => {
-                    if self.web_search {
-                        if let Some(emit) = &flags.web_search {
-                            emit.push_switch(&mut a);
+                Slot::WebSearch => emit_switch(&mut a, &flags.web_search, self.web_search),
+                Slot::AllowedTools => {
+                    emit_each(&mut a, &flags.allowed_tools, &self.allowed_tools)
+                }
+                Slot::DisallowedTools => {
+                    emit_each(&mut a, &flags.disallowed_tools, &self.disallowed_tools)
+                }
+                Slot::Settings => emit_optional(&mut a, &flags.settings, self.settings.as_deref()),
+                Slot::SettingSources => {
+                    emit_optional(&mut a, &flags.setting_sources, self.setting_sources.as_deref())
+                }
+                Slot::McpConfig => emit_each(&mut a, &flags.mcp_config, &self.mcp_config),
+                Slot::StrictMcpConfig => {
+                    emit_switch(&mut a, &flags.strict_mcp_config, self.strict_mcp_config)
+                }
+                Slot::PluginDirs => {
+                    if let Some(emit) = &flags.plugin_dirs {
+                        for directory in &self.plugin_dirs {
+                            emit.push(&mut a, &directory.to_string_lossy());
                         }
                     }
+                }
+                Slot::PluginUrls => emit_each(&mut a, &flags.plugin_urls, &self.plugin_urls),
+                Slot::FallbackModel => {
+                    emit_optional(&mut a, &flags.fallback_model, self.fallback_model.as_deref())
                 }
                 Slot::Resume => self.emit_resume(&mut a, manifest)?,
             }
@@ -477,6 +580,15 @@ impl LaunchSpec {
             (Slot::AddDirs, !self.add_dirs.is_empty()),
             (Slot::MaxBudgetUsd, self.max_budget_usd.is_some()),
             (Slot::WebSearch, self.web_search),
+            (Slot::AllowedTools, !self.allowed_tools.is_empty()),
+            (Slot::DisallowedTools, !self.disallowed_tools.is_empty()),
+            (Slot::Settings, self.settings.is_some()),
+            (Slot::SettingSources, self.setting_sources.is_some()),
+            (Slot::McpConfig, !self.mcp_config.is_empty()),
+            (Slot::StrictMcpConfig, self.strict_mcp_config),
+            (Slot::PluginDirs, !self.plugin_dirs.is_empty()),
+            (Slot::PluginUrls, !self.plugin_urls.is_empty()),
+            (Slot::FallbackModel, self.fallback_model.is_some()),
         ];
         for (slot, chosen) in set {
             if chosen && !manifest.expresses(slot) {
@@ -567,6 +679,37 @@ impl LaunchSpec {
 fn emit_optional(args: &mut Vec<String>, emit: &Option<Emit>, value: Option<&str>) {
     if let (Some(emit), Some(value)) = (emit, value) {
         emit.push(args, value);
+    }
+}
+
+fn refuse_option_shaped(field: &'static str, value: &str) -> Result<(), LaunchError> {
+    if value.starts_with('-') {
+        return Err(LaunchError::OptionShapedValue {
+            field,
+            value: value.to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// Emit one flag occurrence per value.
+///
+/// Repeating the flag rather than joining the values is deliberate: both CLIs
+/// document these options as repeatable or space-separated, and a joined value
+/// would be re-split on a separator that appears inside a tool pattern —
+/// `Bash(git log:*)` contains a space, and a plugin path can contain one too.
+fn emit_each(args: &mut Vec<String>, emit: &Option<Emit>, values: &[String]) {
+    if let Some(emit) = emit {
+        for value in values {
+            emit.push(args, value);
+        }
+    }
+}
+
+/// Emit a valueless switch when the choice was made.
+fn emit_switch(args: &mut Vec<String>, emit: &Option<Emit>, chosen: bool) {
+    if let (Some(emit), true) = (emit, chosen) {
+        emit.push_switch(args);
     }
 }
 

@@ -35,6 +35,15 @@ order = [
     "name",
     "session-id",
     "add-dirs",
+    "allowed-tools",
+    "disallowed-tools",
+    "settings",
+    "setting-sources",
+    "mcp-config",
+    "strict-mcp-config",
+    "plugin-dirs",
+    "plugin-urls",
+    "fallback-model",
     "max-budget-usd",
     "resume",
 ]
@@ -46,6 +55,21 @@ name = { flag = "--name" }
 session-id = { flag = "--session-id" }
 add-dirs = { flag = "--add-dir" }
 max-budget-usd = { flag = "--max-budget-usd" }
+# Verified against `claude --help` on 2.1.170. The list-valued options are
+# variadic there — `--allowed-tools <tools...>`, `--mcp-config <configs...>` —
+# and `--plugin-dir`/`--plugin-url` document repetition explicitly, so every
+# one of these is emitted as one flag occurrence per value rather than as a
+# joined string. `Bash(git log:*)` contains the separator a joined value would
+# be split on.
+allowed-tools = { flag = "--allowed-tools" }
+disallowed-tools = { flag = "--disallowed-tools" }
+settings = { flag = "--settings" }
+setting-sources = { flag = "--setting-sources" }
+mcp-config = { flag = "--mcp-config" }
+strict-mcp-config = { flag = "--strict-mcp-config", switch = true }
+plugin-dirs = { flag = "--plugin-dir" }
+plugin-urls = { flag = "--plugin-url" }
+fallback-model = { flag = "--fallback-model" }
 
 [agent.flags.permission]
 emit = { flag = "--permission-mode" }
@@ -71,6 +95,15 @@ exe-stem = "codex"
 version-marker = "codex"
 excluded-markers = ["claude code"]
 home-env = "CODEX_HOME"
+# The launcher package depends on a per-platform package that ships the real
+# Verified against `codex --help` on 0.146.0: Codex expresses none of the tool,
+# settings, MCP or plugin options Claude does. MCP servers are managed by the
+# `codex mcp` subcommand and `config.toml`, plugins by `codex plugin`, and there
+# is no allow/deny tool list or fallback model at all. `--strict-config` is a
+# different thing — it refuses unrecognised config.toml fields — so it is
+# deliberately not mapped to `strict-mcp-config`. Absent slots refuse the launch
+# rather than dropping the choice.
+#
 # The launcher package depends on a per-platform package that ships the real
 # binary under `vendor/<target-triple>/bin/`.
 npm-path = [

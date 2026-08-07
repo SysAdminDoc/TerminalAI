@@ -26,6 +26,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- The launcher maps the flags that control tools, MCP servers and plugins: `--allowed-tools`,
+  `--disallowed-tools`, `--settings`, `--setting-sources`, `--mcp-config`, `--strict-mcp-config`,
+  `--plugin-dir`, `--plugin-url` and `--fallback-model`, all verified against `claude --help` on
+  2.1.170. An allowlist is the precise lever for permission-prompt fatigue — it answers the prompts
+  in advance instead of turning them off wholesale the way bypass mode does. Codex expresses none of
+  them on 0.146.0, so choosing one with Codex selected refuses the launch rather than dropping it,
+  and the controls are hidden for that agent. Values that begin with `-` are refused before argv is
+  built, and a plugin URL must be `http(s)` — it fetches and runs remote code. `--max-turns` is not
+  mapped because Claude Code 2.1.170 does not have it, and Claude's own `--worktree` is deliberately
+  not mapped because this supervisor places, names, gates and surveys worktrees itself.
 - An operator can override the built-in manifests from `agents.toml` in their TerminalAI data
   directory. Manifests are trusted local configuration; a repository may not supply one, because a
   repo-declared agent definition is arbitrary argv arriving with a clone. A manifest listing a slot
