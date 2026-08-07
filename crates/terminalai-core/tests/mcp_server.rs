@@ -7,7 +7,10 @@
 use std::cell::RefCell;
 
 use serde_json::{json, Value};
-use terminalai_core::mcp::{FleetAccess, McpServer, WriteGate, MAX_OUTPUT_LINES, PROTOCOL_VERSION};
+use terminalai_core::mcp::{
+    FleetAccess, McpServer, WriteGate, LEGACY_PROTOCOL_VERSION, MAX_OUTPUT_LINES, PROTOCOL_VERSION,
+    SUPPORTED_PROTOCOL_VERSIONS,
+};
 
 #[derive(Default)]
 struct Fake {
@@ -104,16 +107,160 @@ fn writable() -> McpServer<Fake> {
     )
 }
 
+/// One request in the current revision: the version rides in `_meta`.
+fn modern(server: &mut McpServer<Fake>, method: &str, mut params: Value) -> Value {
+    params["_meta"] = json!({ "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION });
+    call(server, method, params)
+}
+
 #[test]
-fn initialize_reports_the_protocol_and_the_boundary() {
+fn initialize_reports_the_handshake_protocol_and_the_boundary() {
     let mut server = read_only();
     let response = call(&mut server, "initialize", json!({}));
-    assert_eq!(response["result"]["protocolVersion"], PROTOCOL_VERSION);
+    // `initialize` only exists in the handshake revisions, so answering it with
+    // the current one would name a revision that has no `initialize` to answer.
+    assert_eq!(
+        response["result"]["protocolVersion"],
+        LEGACY_PROTOCOL_VERSION
+    );
     assert_eq!(response["result"]["serverInfo"]["name"], "terminalai");
     // The client is told the shape of the boundary before it calls anything.
     let instructions = response["result"]["instructions"].as_str().expect("text");
     assert!(instructions.contains("read-only"), "{instructions}");
     assert!(instructions.contains("transcripts are never exposed"), "{instructions}");
+}
+
+#[test]
+fn the_declared_revisions_are_pinned_to_the_ones_this_server_was_written_against() {
+    // The whole point of the constants is that the wire cannot drift from them,
+    // so the constants themselves are what a spec bump has to come past.
+    assert_eq!(PROTOCOL_VERSION, "2026-07-28");
+    assert_eq!(LEGACY_PROTOCOL_VERSION, "2025-06-18");
+    // Newest first: a client picking from this list should land on the current
+    // revision without having to sort date strings.
+    assert_eq!(
+        SUPPORTED_PROTOCOL_VERSIONS,
+        [PROTOCOL_VERSION, LEGACY_PROTOCOL_VERSION]
+    );
+}
+
+#[test]
+fn discover_answers_with_the_supported_revisions_and_the_boundary() {
+    let mut server = read_only();
+    let result = modern(&mut server, "server/discover", json!({}))["result"].clone();
+
+    // The one list, verbatim — this is the assertion that stops `server/discover`
+    // and the negotiation check from disagreeing about what we speak.
+    assert_eq!(result["supportedVersions"], json!(SUPPORTED_PROTOCOL_VERSIONS));
+    assert_eq!(result["resultType"], "complete");
+    assert_eq!(
+        result["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+        "terminalai"
+    );
+    assert_eq!(result["capabilities"]["tools"]["listChanged"], false);
+    assert!(result["instructions"].as_str().expect("text").contains("read-only"));
+    // The result is cacheable, and never by a shared intermediary: the listing
+    // varies with which sessions this operator opted in.
+    assert!(result["ttlMs"].as_u64().expect("a ttl") > 0);
+    assert_eq!(result["cacheScope"], "private");
+}
+
+#[test]
+fn discovery_needs_no_handshake_and_no_declared_version() {
+    // The stdio backward-compatibility probe is a bare `server/discover`. A
+    // server that answered it only after `initialize` could never be probed.
+    let mut server = read_only();
+    let result = call(&mut server, "server/discover", json!({}))["result"].clone();
+    assert_eq!(result["supportedVersions"], json!(SUPPORTED_PROTOCOL_VERSIONS));
+    assert_eq!(result["resultType"], "complete");
+}
+
+#[test]
+fn a_revision_we_do_not_speak_is_refused_with_the_ones_we_do() {
+    let mut server = read_only();
+    let response = call(
+        &mut server,
+        "tools/list",
+        json!({ "_meta": { "io.modelcontextprotocol/protocolVersion": "1900-01-01" } }),
+    );
+    assert_eq!(response["error"]["code"], -32022);
+    // Without the list the client has nothing to retry with — it cannot
+    // enumerate revisions it has never heard of.
+    assert_eq!(
+        response["error"]["data"]["supported"],
+        json!(SUPPORTED_PROTOCOL_VERSIONS)
+    );
+    assert_eq!(response["error"]["data"]["requested"], "1900-01-01");
+}
+
+#[test]
+fn a_modern_result_carries_the_result_type_and_a_legacy_one_does_not() {
+    let mut server = read_only();
+    let modern_listing = modern(&mut server, "tools/list", json!({}))["result"].clone();
+    assert_eq!(modern_listing["resultType"], "complete");
+    assert_eq!(
+        modern_listing["_meta"]["io.modelcontextprotocol/serverInfo"]["version"],
+        env!("CARGO_PKG_VERSION")
+    );
+    // `CacheableResult` is required on every listing in the current revision.
+    assert_eq!(modern_listing["cacheScope"], "private");
+
+    // The handshake era sees exactly what it saw before this server learned a
+    // second revision: no `resultType`, no `_meta`, no cache fields. That is
+    // the whole compatibility claim, so it is asserted rather than assumed.
+    let mut legacy = read_only();
+    call(&mut legacy, "initialize", json!({}));
+    let legacy_listing = call(&mut legacy, "tools/list", json!({}))["result"].clone();
+    assert!(legacy_listing.get("resultType").is_none(), "{legacy_listing}");
+    assert!(legacy_listing.get("_meta").is_none(), "{legacy_listing}");
+    assert!(legacy_listing.get("ttlMs").is_none(), "{legacy_listing}");
+    assert_eq!(legacy_listing["tools"], modern_listing["tools"]);
+}
+
+#[test]
+fn a_client_declaring_the_handshake_revision_is_answered_in_it() {
+    // The revision is supported, so this is not a negotiation failure — but a
+    // 2025-06-18 client has no rule for `resultType`, so it must not see one.
+    let mut server = read_only();
+    let result = call(
+        &mut server,
+        "tools/list",
+        json!({ "_meta": { "io.modelcontextprotocol/protocolVersion": LEGACY_PROTOCOL_VERSION } }),
+    )["result"]
+        .clone();
+    assert!(result.get("resultType").is_none(), "{result}");
+    assert!(!result["tools"].as_array().expect("tools").is_empty());
+}
+
+#[test]
+fn ping_survives_in_the_handshake_era_and_is_gone_in_the_current_one() {
+    let mut legacy = read_only();
+    call(&mut legacy, "initialize", json!({}));
+    assert!(call(&mut legacy, "ping", json!({}))["result"].is_object());
+
+    // 2026-07-28 removed `ping`. Answering it anyway would tell a modern client
+    // that a method its own revision deleted is available here.
+    let mut server = read_only();
+    let response = modern(&mut server, "ping", json!({}));
+    assert_eq!(response["error"]["code"], -32601);
+}
+
+#[test]
+fn a_tool_call_in_the_current_revision_still_reaches_the_fleet() {
+    // Negotiation must not become a second gate on the tools themselves.
+    let mut server = read_only();
+    let response = modern(
+        &mut server,
+        "tools/call",
+        json!({ "name": "list_sessions", "arguments": {} }),
+    );
+    let result = &response["result"];
+    assert_eq!(result["resultType"], "complete");
+    assert!(!is_error(result));
+    assert_eq!(
+        result["structuredContent"]["sessions"][0]["id"],
+        "s0001"
+    );
 }
 
 #[test]

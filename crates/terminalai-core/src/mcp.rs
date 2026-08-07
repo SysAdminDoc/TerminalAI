@@ -29,11 +29,39 @@ use std::collections::BTreeSet;
 
 use serde_json::{json, Value};
 
-/// The MCP revision this server implements. Reported verbatim during
-/// `initialize`; a client asking for a different one is told what we speak
-/// rather than being guessed at.
-pub const PROTOCOL_VERSION: &str = "2025-06-18";
+/// The MCP revision this server prefers: the current one, which carries the
+/// version on every request instead of negotiating it once.
+pub const PROTOCOL_VERSION: &str = "2026-07-28";
+
+/// The handshake revision this server still answers.
+///
+/// Kept deliberately. `initialize` is not dead weight here: it is what both
+/// supervised agents speak today, and this server exists to be consumed by
+/// them. The spec sanctions serving both eras from one process, so dropping it
+/// would buy tidiness at the cost of the only clients that exist.
+pub const LEGACY_PROTOCOL_VERSION: &str = "2025-06-18";
+
+/// Every revision this server speaks, newest first. This is the one list;
+/// `server/discover` returns it verbatim and negotiation checks against it, so
+/// the wire cannot disagree with the constant.
+pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[PROTOCOL_VERSION, LEGACY_PROTOCOL_VERSION];
+
 pub const SERVER_NAME: &str = "terminalai";
+
+/// `_meta` keys the current revision reserves. The prefix is mandatory.
+const META_PROTOCOL_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
+const META_SERVER_INFO: &str = "io.modelcontextprotocol/serverInfo";
+
+/// How long a client may cache a discovery or tool listing. Both are fixed for
+/// the life of the process — the tool table is compile-time constant and the
+/// write gate is set at startup — so an hour is a floor on how stale this can
+/// get, not a guess.
+const CACHE_TTL_MS: u64 = 3_600_000;
+
+/// Never `public`: the listing varies with the operator's write gate, so a
+/// shared intermediary caching one operator's answer for another is a
+/// disclosure of which sessions were opted in.
+const CACHE_SCOPE: &str = "private";
 
 /// JSON-RPC error codes used here. The MCP-specific ones live above -32000.
 const INVALID_REQUEST: i64 = -32600;
@@ -41,6 +69,64 @@ const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
 const INTERNAL_ERROR: i64 = -32603;
 const PARSE_ERROR: i64 = -32700;
+/// `UnsupportedProtocolVersionError`. The 2026-07-28 revision renumbered it
+/// from -32004 when it partitioned the server-error range, reserving
+/// -32020..=-32099 for the specification.
+const UNSUPPORTED_PROTOCOL_VERSION: i64 = -32022;
+
+/// A JSON-RPC error, with the optional `data` member the current revision
+/// requires for version negotiation.
+struct RpcError {
+    code: i64,
+    message: String,
+    data: Option<Value>,
+}
+
+/// Lets every existing `.ok_or((CODE, message))?` keep working unchanged.
+impl From<(i64, String)> for RpcError {
+    fn from((code, message): (i64, String)) -> Self {
+        Self {
+            code,
+            message,
+            data: None,
+        }
+    }
+}
+
+fn rpc_error(code: i64, message: String) -> RpcError {
+    RpcError {
+        code,
+        message,
+        data: None,
+    }
+}
+
+/// Tell the client what we speak rather than only that its choice was wrong —
+/// it has no other way to find a version we share.
+fn unsupported_protocol_version(requested: &str) -> RpcError {
+    RpcError {
+        code: UNSUPPORTED_PROTOCOL_VERSION,
+        message: "Unsupported protocol version".to_owned(),
+        data: Some(json!({
+            "supported": SUPPORTED_PROTOCOL_VERSIONS,
+            "requested": requested,
+        })),
+    }
+}
+
+/// Which revision one request is answered in.
+///
+/// The era is per request, not per connection: the current revision is
+/// stateless, so a client may open with `server/discover` and never say
+/// anything that pins the process to one revision. Only `initialize` does
+/// that, and it does it the way the spec says — for the life of the process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Era {
+    /// The handshake revisions: no `resultType`, no per-result `_meta`.
+    Legacy,
+    /// 2026-07-28 and later.
+    Modern,
+}
 
 /// What the server needs from the fleet. Implemented against the daemon in
 /// production and against a fake in tests.
@@ -250,7 +336,9 @@ const TOOLS: &[ToolSpec] = &[
 pub struct McpServer<F: FleetAccess> {
     fleet: F,
     gate: WriteGate,
-    initialized: bool,
+    /// Set by `initialize`, which scopes this stdio process to the handshake
+    /// revisions until it exits.
+    legacy_handshake: bool,
 }
 
 impl<F: FleetAccess> McpServer<F> {
@@ -258,7 +346,7 @@ impl<F: FleetAccess> McpServer<F> {
         Self {
             fleet,
             gate,
-            initialized: false,
+            legacy_handshake: false,
         }
     }
 
@@ -279,15 +367,19 @@ impl<F: FleetAccess> McpServer<F> {
             Err(error) => {
                 return Some(error_response(
                     Value::Null,
-                    PARSE_ERROR,
-                    &format!("invalid JSON: {error}"),
+                    &rpc_error(PARSE_ERROR, format!("invalid JSON: {error}")),
                 ))
             }
         };
         let id = value.get("id").cloned();
         let Some(method) = value.get("method").and_then(Value::as_str) else {
             // A response or a malformed frame. Never answer a response.
-            return id.map(|id| error_response(id, INVALID_REQUEST, "missing method"));
+            return id.map(|id| {
+                error_response(
+                    id,
+                    &rpc_error(INVALID_REQUEST, "missing method".to_owned()),
+                )
+            });
         };
         let params = value.get("params").cloned().unwrap_or(Value::Null);
         let result = self.dispatch(method, &params);
@@ -296,47 +388,119 @@ impl<F: FleetAccess> McpServer<F> {
             // Notification: no id, so no reply regardless of outcome.
             (None, _) => None,
             (Some(id), Ok(result)) => Some(success_response(id, result)),
-            (Some(id), Err((code, message))) => Some(error_response(id, code, &message)),
+            (Some(id), Err(error)) => Some(error_response(id, &error)),
         }
     }
 
-    fn dispatch(&mut self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
+    fn dispatch(&mut self, method: &str, params: &Value) -> Result<Value, RpcError> {
+        let era = self.era_for(method, params)?;
+        let result = self.dispatch_in(era, method, params)?;
+        Ok(decorate(era, result))
+    }
+
+    /// Which revision this request is answered in, or the negotiation error.
+    ///
+    /// Modern framing is only ever used when the request asked for it — by
+    /// declaring its version, or by calling a method only the current revision
+    /// defines. Everything else answers exactly the bytes it answered before,
+    /// so an existing client cannot be broken by this server learning a newer
+    /// revision.
+    fn era_for(&mut self, method: &str, params: &Value) -> Result<Era, RpcError> {
+        if let Some(declared) = params.get("_meta").and_then(|meta| meta.get(META_PROTOCOL_VERSION))
+        {
+            let Some(declared) = declared.as_str() else {
+                return Err(rpc_error(
+                    INVALID_PARAMS,
+                    format!("{META_PROTOCOL_VERSION} must be a string"),
+                ));
+            };
+            return match declared {
+                PROTOCOL_VERSION => Ok(Era::Modern),
+                // Supported, but a client asking for a handshake revision gets
+                // that revision's shape — `resultType` would be a field it has
+                // no rule for.
+                LEGACY_PROTOCOL_VERSION => Ok(Era::Legacy),
+                other => Err(unsupported_protocol_version(other)),
+            };
+        }
+        if method == "initialize" {
+            self.legacy_handshake = true;
+            return Ok(Era::Legacy);
+        }
+        // `server/discover` is the current revision's probe and does not exist
+        // in any handshake revision, so reaching it is a modern client that
+        // simply did not bother to declare a version.
+        if method == "server/discover" && !self.legacy_handshake {
+            return Ok(Era::Modern);
+        }
+        Ok(Era::Legacy)
+    }
+
+    fn dispatch_in(
+        &mut self,
+        era: Era,
+        method: &str,
+        params: &Value,
+    ) -> Result<Value, RpcError> {
         match method {
-            "initialize" => {
-                self.initialized = true;
-                Ok(json!({
-                    "protocolVersion": PROTOCOL_VERSION,
-                    "capabilities": { "tools": { "listChanged": false } },
-                    "serverInfo": {
-                        "name": SERVER_NAME,
-                        "version": env!("CARGO_PKG_VERSION"),
-                    },
-                    // Stated in the handshake so a client sees the boundary
-                    // before it calls anything.
-                    "instructions": if self.gate.is_enabled() {
-                        "Read tools are open. Mutating tools require the operator's write token \
-                         and only work on sessions opted in at startup. Session transcripts are \
-                         never exposed."
-                    } else {
-                        "This fleet is exposed read-only. Session transcripts are never exposed."
-                    },
-                }))
-            }
+            "server/discover" => Ok(json!({
+                "supportedVersions": SUPPORTED_PROTOCOL_VERSIONS,
+                "capabilities": self.capabilities(),
+                "instructions": self.instructions(),
+                "ttlMs": CACHE_TTL_MS,
+                "cacheScope": CACHE_SCOPE,
+            })),
+            "initialize" => Ok(json!({
+                "protocolVersion": LEGACY_PROTOCOL_VERSION,
+                "capabilities": self.capabilities(),
+                "serverInfo": server_info(),
+                // Stated in the handshake so a client sees the boundary
+                // before it calls anything.
+                "instructions": self.instructions(),
+            })),
             "notifications/initialized" | "notifications/cancelled" => Ok(Value::Null),
-            "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({ "tools": tool_descriptors(&self.gate) })),
+            // `ping` was removed in 2026-07-28. A modern client calling it is
+            // told so rather than being answered by a method its own revision
+            // says does not exist.
+            "ping" if era == Era::Legacy => Ok(json!({})),
+            "tools/list" => {
+                let mut listing = json!({ "tools": tool_descriptors(&self.gate) });
+                if era == Era::Modern {
+                    // `CacheableResult`: required on every listing in the
+                    // current revision.
+                    insert(&mut listing, "ttlMs", json!(CACHE_TTL_MS));
+                    insert(&mut listing, "cacheScope", json!(CACHE_SCOPE));
+                }
+                Ok(listing)
+            }
             "tools/call" => self.call_tool(params),
             // Declared capabilities do not include these, so a client asking is
             // told plainly rather than getting an empty list it might cache.
-            "resources/list" | "prompts/list" => Err((
+            "resources/list" | "prompts/list" => Err(rpc_error(
                 METHOD_NOT_FOUND,
                 format!("{SERVER_NAME} exposes tools only"),
             )),
-            other => Err((METHOD_NOT_FOUND, format!("unknown method {other}"))),
+            other => Err(rpc_error(
+                METHOD_NOT_FOUND,
+                format!("unknown method {other}"),
+            )),
         }
     }
 
-    fn call_tool(&mut self, params: &Value) -> Result<Value, (i64, String)> {
+    fn capabilities(&self) -> Value {
+        json!({ "tools": { "listChanged": false } })
+    }
+
+    fn instructions(&self) -> &'static str {
+        if self.gate.is_enabled() {
+            "Read tools are open. Mutating tools require the operator's write token and only work \
+             on sessions opted in at startup. Session transcripts are never exposed."
+        } else {
+            "This fleet is exposed read-only. Session transcripts are never exposed."
+        }
+    }
+
+    fn call_tool(&mut self, params: &Value) -> Result<Value, RpcError> {
         let name = params
             .get("name")
             .and_then(Value::as_str)
@@ -423,14 +587,14 @@ impl<F: FleetAccess> McpServer<F> {
                 fleet.kill_session(id)?;
                 Ok(json!({ "stopped": true, "session": id }))
             }),
-            other => Err((INVALID_PARAMS, format!("unknown tool {other}"))),
+            other => Err(rpc_error(INVALID_PARAMS, format!("unknown tool {other}"))),
         }
     }
 
     fn read(
         &self,
         body: impl FnOnce(&F) -> Result<Value, String>,
-    ) -> Result<Value, (i64, String)> {
+    ) -> Result<Value, RpcError> {
         match body(&self.fleet) {
             Ok(value) => Ok(tool_result(value)),
             // A fleet that cannot be read is a tool error, not a protocol error:
@@ -444,7 +608,7 @@ impl<F: FleetAccess> McpServer<F> {
         tool: &str,
         arguments: &Value,
         body: impl FnOnce(&F, &str, &Value) -> Result<Value, String>,
-    ) -> Result<Value, (i64, String)> {
+    ) -> Result<Value, RpcError> {
         let id = require_session(arguments)?;
         let token = string_argument(arguments, "token");
         if let Some(refusal) = self.gate.refuse(token.as_deref(), &id) {
@@ -509,10 +673,12 @@ fn tool_descriptors(gate: &WriteGate) -> Vec<Value> {
         .collect()
 }
 
-fn require_session(arguments: &Value) -> Result<String, (i64, String)> {
+fn require_session(arguments: &Value) -> Result<String, RpcError> {
     string_argument(arguments, "session")
         .filter(|id| !id.trim().is_empty())
-        .ok_or((INVALID_PARAMS, "this tool needs a session id".to_owned()))
+        .ok_or_else(|| {
+            rpc_error(INVALID_PARAMS, "this tool needs a session id".to_owned())
+        })
 }
 
 fn string_argument(arguments: &Value, name: &str) -> Option<String> {
@@ -539,17 +705,50 @@ fn tool_error(message: &str) -> Value {
     })
 }
 
+fn server_info() -> Value {
+    json!({ "name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION") })
+}
+
+/// Set a member on a result that is known to be an object.
+fn insert(result: &mut Value, key: &str, value: Value) {
+    if let Some(map) = result.as_object_mut() {
+        map.insert(key.to_owned(), value);
+    }
+}
+
+/// Add what the current revision requires of every result.
+///
+/// A handshake-era result is returned untouched: `resultType` is a field those
+/// revisions have no rule for, and this server's whole compatibility story is
+/// that an older client sees exactly the bytes it saw before.
+fn decorate(era: Era, mut result: Value) -> Value {
+    if era == Era::Legacy || !result.is_object() {
+        return result;
+    }
+    insert(&mut result, "resultType", json!("complete"));
+    // "Servers SHOULD identify themselves in each result's `_meta`" — there is
+    // no handshake left to say it once.
+    let mut meta = result
+        .get("_meta")
+        .filter(|meta| meta.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    insert(&mut meta, META_SERVER_INFO, server_info());
+    insert(&mut result, "_meta", meta);
+    result
+}
+
 fn success_response(id: Value, result: Value) -> String {
     serde_json::to_string(&json!({ "jsonrpc": "2.0", "id": id, "result": result }))
         .unwrap_or_default()
 }
 
-fn error_response(id: Value, code: i64, message: &str) -> String {
-    serde_json::to_string(&json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "error": { "code": code, "message": message },
-    }))
+fn error_response(id: Value, error: &RpcError) -> String {
+    let mut body = json!({ "code": error.code, "message": error.message });
+    if let Some(data) = &error.data {
+        insert(&mut body, "data", data.clone());
+    }
+    serde_json::to_string(&json!({ "jsonrpc": "2.0", "id": id, "error": body }))
     .unwrap_or_else(|_| {
         format!(r#"{{"jsonrpc":"2.0","id":null,"error":{{"code":{INTERNAL_ERROR},"message":"response could not be encoded"}}}}"#)
     })

@@ -311,6 +311,11 @@ terminalai-probe hooks preview claude --executable .\target\release\terminalai.e
 terminalai-probe hooks status claude --executable .\target\release\terminalai.exe
 terminalai-probe hooks install claude --executable .\target\release\terminalai.exe
 terminalai-probe hooks remove claude --executable .\target\release\terminalai.exe
+
+# Expose the fleet to an MCP client over stdio. Read-only unless both halves
+# of the write gate are given.
+terminalai-probe mcp
+terminalai-probe mcp --write-token <token> --write-session s0001
 ```
 
 The Windows hygiene probe was run on 2026-08-03 with eight sessions inside the required isolated
@@ -333,6 +338,39 @@ desktop shell to start a second owner of the fleet.
 Hook installation is opt-in and only owns entries carrying `--terminalai-managed`; unrelated
 Claude handlers and Codex `notify` commands are preserved. Use `--config <path>` to inspect or
 modify a disposable settings file before touching the user-level config.
+
+### Which MCP revisions the server speaks
+
+Both eras, from one process — `2026-07-28` and `2025-06-18`.
+
+The current revision deleted the `initialize` handshake. Version, identity and capabilities now
+ride in each request's `_meta`, a mandatory `server/discover` reports what a server speaks, and
+every result carries a `resultType`. Supporting only that would have been the tidier code and the
+wrong call: the clients this server exists for are Claude Code and Codex, and they still open with
+`initialize`. The specification sanctions serving both eras concurrently, so it does.
+
+Which era answers a request is decided by the request, never guessed:
+
+| The client sends | It is answered in |
+|---|---|
+| `_meta` declaring `2026-07-28` | the current revision — `resultType`, `_meta.serverInfo`, cache hints |
+| `_meta` declaring `2025-06-18` | the handshake revision, because that client has no rule for `resultType` |
+| `_meta` declaring anything else | `UnsupportedProtocolVersionError` (`-32022`) listing what we speak |
+| `server/discover` | the current revision — no handshake revision defines that method |
+| `initialize` | the handshake revision, for the life of the process |
+| anything else | the handshake revision |
+
+The last row is the compatibility guarantee: a client that says nothing sees the bytes it saw
+before this server learned a second revision, and a test asserts that the handshake-era tool
+listing carries no `resultType`, no `_meta` and no cache fields. `ping` is the one method that
+answers in one era and not the other — `2026-07-28` removed it, so a modern client is told it is
+gone rather than being served a method its own revision deleted.
+
+`server/discover` returns the supported-version list verbatim from the same constant the
+negotiation check reads, so the wire cannot drift from the code; a test pins that constant to the
+revision this server was written against. Cache hints are `private`, never `public` — the tool
+listing varies with which sessions the operator opted in, so a shared intermediary handing one
+operator's answer to another would disclose that.
 
 ## What the launcher maps to
 

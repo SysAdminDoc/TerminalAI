@@ -26,6 +26,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- The MCP server speaks the current protocol revision, `2026-07-28`, alongside the `2025-06-18`
+  handshake it already spoke. The current revision deleted `initialize` and made every request
+  carry its own version, so the server now answers the mandatory `server/discover`, negotiates from
+  each request's `_meta`, returns `resultType` and its own identity on every modern result, and
+  refuses an unknown revision with `UnsupportedProtocolVersionError` (`-32022`) listing what it does
+  speak — a client has no other way to find a version they share. Cache hints on the tool listing
+  and on discovery are `private`, because that listing varies with which sessions the operator
+  opted in.
+
+  The handshake revision was kept rather than dropped for one release: the clients this server
+  exists for are Claude Code and Codex, and both still open with `initialize`. Which era answers is
+  decided by what the request says, and a request that says nothing gets exactly the bytes it got
+  before — asserted by a test, not assumed. `ping` is the one visible difference, gone in the
+  current revision and still answered in the handshake one.
+
 - The launcher maps the flags that control tools, MCP servers and plugins: `--allowed-tools`,
   `--disallowed-tools`, `--settings`, `--setting-sources`, `--mcp-config`, `--strict-mcp-config`,
   `--plugin-dir`, `--plugin-url` and `--fallback-model`, all verified against `claude --help` on
