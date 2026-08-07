@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-08-06
+
 ### Changed
 
 - The README says what a sandbox does and does not mean on native Windows. The em dash in the
