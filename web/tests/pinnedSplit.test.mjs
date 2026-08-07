@@ -1,14 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { registrySource } from "./registrySource.mjs";
 import test from "node:test";
 
 const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
-const registry = readFileSync(
-  new URL("../../crates/terminalai-core/src/registry.rs", import.meta.url),
-  "utf8",
-);
+const registry = registrySource();
 
 test("pinned panes render from Rust grids, not from more xterm instances", () => {
   // One renderer is what lets the fleet hold ~29 rows. Three more would undo

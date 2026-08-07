@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { registrySource } from "./registrySource.mjs";
 import test from "node:test";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
@@ -10,10 +11,7 @@ const daemon = readFileSync(
   new URL("../../crates/terminalai-daemon/src/lib.rs", import.meta.url),
   "utf8",
 );
-const registry = readFileSync(
-  new URL("../../crates/terminalai-core/src/registry.rs", import.meta.url),
-  "utf8",
-);
+const registry = registrySource();
 
 test("every daemon-wide limit is editable rather than environment-only", () => {
   for (const id of [

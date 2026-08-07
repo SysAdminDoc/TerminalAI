@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { registrySource } from "./registrySource.mjs";
 import test from "node:test";
 
 import { archivedLabel, folderLabel, renderSessionHistory } from "../src/sessionHistory.js";
@@ -11,10 +12,7 @@ const daemon = readFileSync(
   new URL("../../crates/terminalai-daemon/src/lib.rs", import.meta.url),
   "utf8",
 );
-const registry = readFileSync(
-  new URL("../../crates/terminalai-core/src/registry.rs", import.meta.url),
-  "utf8",
-);
+const registry = registrySource();
 
 const escape = (value) =>
   String(value).replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { registrySource } from "./registrySource.mjs";
 import test from "node:test";
 
 import { defaultSelection, ineligibleReason, isEligible, summarize, targets } from "../src/broadcast.js";
@@ -42,10 +43,7 @@ test("the eligibility rule matches the daemon's, status for status", () => {
   // A UI that offers a session the daemon will refuse teaches the operator to
   // ignore refusals. The Rust side refuses needs-approval and anything with no
   // pty; queued and exited are the statuses that carry no process.
-  const registry = readFileSync(
-    new URL("../../crates/terminalai-core/src/registry.rs", import.meta.url),
-    "utf8",
-  );
+  const registry = registrySource();
   const rule = registry.slice(registry.indexOf("fn broadcast_eligibility"));
   assert.match(rule.slice(0, 1200), /SessionStatus::NeedsApproval => Some\(BroadcastRefusal::NeedsApproval\)/);
   assert.match(rule, /operator_edited[\s\S]*BroadcastRefusal::FocusedAndEdited/);
