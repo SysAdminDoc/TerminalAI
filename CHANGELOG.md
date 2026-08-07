@@ -25,6 +25,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- A store claiming a row is both live and archived is normalised on load. The two lists are
+  persisted and restored independently, so a hand-edited file — or one written by an older build —
+  could say both, and archiving that row would have filed a second record of it. The live row wins;
+  it is the one with a process history behind it. Previously the only defence was a guard at
+  archive time that no test could reach.
 - The focused terminal follows the theme. Its palette was a literal in the renderer, so the one
   surface that fills most of the window ignored `prefers-color-scheme` entirely: in light mode a
   light panel framed a hard dark rectangle, and focusing a session flipped the pane's apparent

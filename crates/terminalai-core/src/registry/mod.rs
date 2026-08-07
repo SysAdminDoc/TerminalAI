@@ -465,6 +465,18 @@ impl SessionRegistry {
                 },
             );
         }
+        // A row cannot be both live and archived. Nothing this build writes can
+        // produce a store that says otherwise, but a hand-edited file or one
+        // written by an older build can, and the two lists are restored
+        // independently — so the contradiction is resolved here, at the only
+        // boundary where it can arrive, rather than left for whichever code
+        // path trips over it first. The live row wins: it is the one with a
+        // process history behind it, and archiving it later re-files it with a
+        // current timestamp.
+        let State {
+            archives, entries, ..
+        } = &mut *state;
+        archives.retain(|archive| !entries.contains_key(&archive.id));
         drop(state);
         registry
     }
@@ -2303,6 +2315,50 @@ mod tests {
             stored.archives[0].archived_at.is_some(),
             "an archive written now carries the stamp its age bound is measured against"
         );
+    }
+
+    #[test]
+    fn a_store_that_says_a_row_is_both_live_and_archived_is_normalised_on_load() {
+        // Nothing this build writes can produce such a store — but the two lists
+        // are persisted and restored independently, so a hand-edited file or one
+        // written by an older build can, and archiving the row would then leave
+        // two records of it. Resolved at load, which is the only boundary where
+        // the contradiction can arrive.
+        let id = SessionId::new(1);
+        let cwd = Path::new(".").to_path_buf();
+        let spec = spec_for(Agent::Claude, &cwd);
+        let session = Session::new(id.clone(), &spec);
+        let command = ResolvedCommand {
+            program: PathBuf::from("claude.exe"),
+            args: Vec::new(),
+            cwd: cwd.clone(),
+        };
+        let registry = SessionRegistry::from_store(SessionStoreSnapshot {
+            sessions: vec![StoredSession {
+                session: session.clone(),
+                spec,
+                command: command.clone(),
+                scrollback: Vec::new(),
+                queue: Default::default(),
+            }],
+            archives: vec![crate::store::ArchivedSession::from_session(&session, &command)],
+            ..SessionStoreSnapshot::default()
+        });
+
+        assert_eq!(registry.snapshot().len(), 1, "the live row is kept");
+        assert!(
+            registry.archives().is_empty(),
+            "a row that is live is not also archived"
+        );
+
+        // And archiving it now files exactly one record rather than a second.
+        registry.archive(&id).expect("archive the restored row");
+        let archived: Vec<_> = registry
+            .archives()
+            .into_iter()
+            .map(|archive| archive.id)
+            .collect();
+        assert_eq!(archived, vec![id]);
     }
 
     #[test]

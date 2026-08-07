@@ -10,16 +10,6 @@ widths. No pre-existing test, lint or build failure exists. Verification: every 
 below was traced to a real caller; the theming finding was observed live (Vite + headless Chromium,
 both `prefers-color-scheme` values) rather than inferred from source.
 
-- [ ] P3 — The archive dedup guard is unreachable by the model and uncovered by any test
-  Category: testing
-  Where: `crates/terminalai-core/src/registry/mod.rs:948` (`state.archives.retain(|item| item.id != *id)` in `archive`), model at `crates/terminalai-core/tests/registry_model.rs`
-  Problem: the guard preventing a duplicate archive entry when an id is archived twice is dead under every existing test: the model keeps live/archived disjoint (an archived id never returns), and no example test archives the same id twice. Mutation-testing during the 2026-08-07 model work confirmed removing it changes nothing observable today. The reachable route is a store holding the same id in both `sessions` and `archives` (hand-edited, or written by a buggy earlier build) — `from_store` restores both without cross-checking, and archiving the live row would then duplicate the entry without the guard.
-  Evidence: removed the `retain` line and ran the full model + example suites — all green (2026-08-07 session). `from_store` performs no cross-check between `sessions` and `archives` ids.
-  Fix: add one example test next to the other archive tests: build a `SessionStoreSnapshot` whose `sessions` and `archives` both contain `s0001`, `from_store` it, archive the row, assert `archives()` holds exactly one `s0001` entry. Better root cause, if preferred: make `from_store` drop an archive entry whose id is also live, test that, and delete the guard in `archive`.
-  Acceptance: the new test fails when the `retain` (or the chosen `from_store` normalisation) is removed, and passes with it.
-  Confidence: Verified
-  Effort: S
-
 - [ ] P3 — Decompose `web/src/main.js`
   Category: maintainability
   Where: `web/src/main.js` (~3,690 lines, 151.5 KB)
