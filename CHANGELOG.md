@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-08-07
+
 ### Added
 
 - The fleet says so when its state stops reaching disk. A failed session-store write was an
