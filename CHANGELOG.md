@@ -5,6 +5,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Added
+
+- Model-based tests over the registry and session store. A reference model with no threads, pty,
+  disk or clock runs alongside the real registry over generated operation sequences — archive, pin,
+  focus, mark read, record a landing, queue a prompt, and persist-and-reload — and every field the
+  operator can see is compared after each step. A divergence shrinks to the shortest sequence that
+  still produces it. Scoped to the deterministic surface: `launch` and `kill` are asynchronous by
+  design, so including them would mean waiting for quiescence between operations, which is how a
+  state-machine test turns into a sleep-based one that fails under load.
+- `focus_is_not_part_of_what_the_daemon_persists` states a contract that was previously only
+  implicit: a reloaded daemon has no window attached, so nothing is focused, and the operator's next
+  click sets it. The row itself survives; only the view's focus does not.
+
 ## [0.14.0] — 2026-08-07
 
 ### Added

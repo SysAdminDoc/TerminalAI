@@ -134,13 +134,6 @@ additions; where they touch, the note says so.
 
 ### P2
 
-- [ ] P2 — Model-based tests over the registry and session store
-  Why: 411 example-based tests are structurally blind to the failure this program is most exposed to — an *ordering* of individually legal operations whose end state diverges from what the model says it should be.
-  Evidence: `proptest` is already a workspace dependency and used in exactly one module (`crates/terminalai-core/src/grid.rs`). `proptest-state-machine` provides `ReferenceStateMachine` + `StateMachineTest` + `prop_state_machine!` and lives in the proptest repo — https://docs.rs/proptest-state-machine/ . The surface under test — create, kill, restart, archive, lease, release, persist, reload, quarantine — is `crates/terminalai-core/src/registry/` plus `store.rs`. The decomposition this item was waiting on has landed: admission and restart policy are now pure modules (`admission.rs`, `restart.rs`) the reference model can be written against directly, and the registry itself is split into `mod.rs` plus ingest/lifecycle/output/prompt_queue/provisioning/sampling.
-  Touches: `crates/terminalai-core/tests/`, `crates/terminalai-core/Cargo.toml`
-  Acceptance: a reference model with no threads, PTY or disk runs alongside the real registry and store over generated operation sequences; a divergence shrinks to a minimal reproducing sequence. Start sequential-mode only.
-  Complexity: L
-
 ### P3
 
 - [ ] P3 — Implement origin mode, or say the grid does not have it

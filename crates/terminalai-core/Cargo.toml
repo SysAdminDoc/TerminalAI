@@ -25,6 +25,7 @@ getrandom.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+proptest-state-machine.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
