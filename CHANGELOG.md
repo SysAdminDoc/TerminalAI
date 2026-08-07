@@ -5,6 +5,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Changed
+
+- The supervisor's two policies are now modules of their own that decide over state passed in, with
+  no lock, no thread and no clock. `admission` answers whether the fleet may start anything new from
+  the configuration and a summary of what it already holds; `restart` answers what one process exit
+  means from the exit code, the restarts already spent and how long the process ran. Both were
+  previously private functions reaching into live registry state, so neither could be exercised
+  without building a fleet. Every symbol is re-exported from where it used to live, so no caller
+  changed.
+- `registry.rs` was 6,106 lines and the highest-churn Rust file in the tree. It is now a directory:
+  `mod.rs` owns fleet state, process lifecycle and the event stream, and six siblings own one
+  concern each — agent-event ingestion, the scrollback tiers, the prompt queue and broadcast, lease
+  and worktree provisioning, memory and cost sampling, and shared test fixtures. Submodules are
+  children rather than crate-level siblings so the registry's internals stay private instead of
+  being widened to make a split possible. Behaviour is unchanged and no assertion was edited.
+
+### Fixed
+
+- The slow-setup launch test asserted that `launch` returned inside one second. The setup hook it
+  must not wait for sleeps about four, so the bound proved the point on an idle machine and nothing
+  at all on a busy one — it is the test that failed under the last two release bumps, always while
+  cargo was still compiling and always green on its own. The bound is now derived from the hook's
+  own duration.
+- `poll_transcripts`' documentation sat above `sample_memory`, so one was documented as reading
+  transcripts and the other was undocumented. Each is now on the item it describes.
+
 ## [0.12.1] — 2026-08-06
 
 ### Changed

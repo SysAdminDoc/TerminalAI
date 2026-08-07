@@ -143,7 +143,7 @@ additions; where they touch, the note says so.
 
 - [ ] P2 — Model-based tests over the registry and session store
   Why: 411 example-based tests are structurally blind to the failure this program is most exposed to — an *ordering* of individually legal operations whose end state diverges from what the model says it should be.
-  Evidence: `proptest` is already a workspace dependency and used in exactly one module (`crates/terminalai-core/src/grid.rs`). `proptest-state-machine` provides `ReferenceStateMachine` + `StateMachineTest` + `prop_state_machine!` and lives in the proptest repo — https://docs.rs/proptest-state-machine/ . The surface under test — create, kill, restart, archive, lease, release, persist, reload, quarantine — is `registry.rs` (4,545 lines) plus `store.rs`.
+  Evidence: `proptest` is already a workspace dependency and used in exactly one module (`crates/terminalai-core/src/grid.rs`). `proptest-state-machine` provides `ReferenceStateMachine` + `StateMachineTest` + `prop_state_machine!` and lives in the proptest repo — https://docs.rs/proptest-state-machine/ . The surface under test — create, kill, restart, archive, lease, release, persist, reload, quarantine — is `crates/terminalai-core/src/registry/` plus `store.rs`. The decomposition this item was waiting on has landed: admission and restart policy are now pure modules (`admission.rs`, `restart.rs`) the reference model can be written against directly, and the registry itself is split into `mod.rs` plus ingest/lifecycle/output/prompt_queue/provisioning/sampling.
   Touches: `crates/terminalai-core/tests/`, `crates/terminalai-core/Cargo.toml`
   Acceptance: a reference model with no threads, PTY or disk runs alongside the real registry and store over generated operation sequences; a divergence shrinks to a minimal reproducing sequence. Start sequential-mode only.
   Complexity: L
@@ -220,13 +220,6 @@ the historical `R-NN` scheme and the entries below follow the current convention
   Touches: `crates/terminalai-app/src/preset.rs`, `crates/terminalai-core/src/store.rs`, `crates/terminalai-daemon/src/lib.rs`, `web/src/main.js`
   Acceptance: a named working set records the launch spec, project folder, pin state and grouping for many sessions and can be relaunched as one action; restoring it obeys every existing refusal — admission, memory budget, spend ceiling, dirty tree — rather than bypassing them, and reports per session which ones it declined to start and why. Restoring never adopts an existing worktree or branch, for the reason the worktree feature already refuses to.
   Complexity: M
-
-- [ ] P2 — Decompose `registry.rs`
-  Why: it is 6,106 lines and the highest-churn Rust file in the tree, it grew 34% in the two days since the last research pass measured it at 4,545, and two already-filed items are explicitly waiting on it.
-  Evidence: `wc -l crates/terminalai-core/src/registry.rs` = 6,106; 62 of the last 300 commits touch it, ~1.3x the next Rust file. The "Model-based tests over the registry and session store" item names it as the surface under test, and `RESEARCH.md` rejected `loom`/`shuttle` with "Revisit if `registry.rs` is decomposed for other reasons — the extraction of admission and restart policy would get most of the way there." The natural seams are already named in that rejection: admission, restart policy, and the time-dependent state machines the mock-clock item targets.
-  Touches: `crates/terminalai-core/src/registry.rs`, new modules under `crates/terminalai-core/src/`
-  Acceptance: admission and restart policy are separate modules with no `Mutex`, thread spawn or `Instant` call of their own — they take decisions as pure functions over state passed in — and `registry.rs` is under 3,000 lines. Behaviour is unchanged, proven by the existing suite passing without edits to assertions. Do this before the model-based-test item, not after: the reference model is far cheaper to write against extracted policy.
-  Complexity: L
 
 - [ ] P2 — Decide whether status can come from the session's own output instead of the operator's settings file
   Why: this tool writes managed hooks into the user's global Claude and Codex configuration to learn what its own child processes are doing, and Claude Code now emits the same lifecycle events on the session's stdout — which would make the fleet observable without touching anything outside the process it launched.
