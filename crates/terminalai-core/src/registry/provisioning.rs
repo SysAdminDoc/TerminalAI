@@ -313,7 +313,7 @@ pub(super) fn run_lease_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry::tests::spool_scratch;
+    use crate::registry::testing::spool_scratch;
 
     #[test]
     fn lease_command_child_probe() {

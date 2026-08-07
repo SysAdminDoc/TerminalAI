@@ -413,3 +413,289 @@ fn is_input_flag(value: &str) -> bool {
     let value = value.to_ascii_lowercase();
     value.contains("input") || value.contains("user")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::Agent;
+    use crate::app_server::{AppServerEvent, AppServerThreadStatus, AppServerTokenUsage};
+    
+    use crate::launch::spec_for;
+    use crate::registry::testing::*;
+    use std::path::{Path, PathBuf};
+    
+    
+
+    #[test]
+    fn hooks_bind_resume_id_and_distinguish_attention_states() {
+        let registry = SessionRegistry::new();
+        let cwd = Path::new(".").to_path_buf();
+        let spec = spec_for(Agent::Claude, &cwd);
+        let id = SessionId::new(1);
+        let session = Session::new(id.clone(), &spec);
+        lock_state(&registry.inner).entries.insert(
+            id.clone(),
+            Entry {
+                session,
+                command: ResolvedCommand {
+                    program: PathBuf::from("test-agent"),
+                    args: Vec::new(),
+                    cwd: cwd.clone(),
+                },
+                spec,
+                pty: None,
+                scrollback: RingBuffer::default(),
+                grid: TerminalGrid::default(),
+                queue: crate::queue::PromptQueue::default(),
+                generation: 1,
+                stop_requested: false,
+                teardown_done: true,
+                branch_checked: None,
+                span: tracing::Span::none(),
+            },
+        );
+
+        assert!(apply_test_hook(&registry, HookEvent {
+            agent: Agent::Claude,
+            session_id: Some("--dangerously-skip-permissions".into()),
+            cwd: Some(cwd.clone()),
+            signal: HookSignal::SessionStart,
+            progress: None,
+        }));
+        assert_eq!(
+            registry.snapshot()[0].resume_id,
+            None,
+            "a flag-like hook id must not become a resume id"
+        );
+
+        assert!(apply_test_hook(&registry, HookEvent {
+            agent: Agent::Claude,
+            session_id: Some("native-1".into()),
+            cwd: Some(cwd.clone()),
+            signal: HookSignal::SessionStart,
+            progress: None,
+        }));
+        assert!(apply_test_hook(&registry, HookEvent {
+            agent: Agent::Claude,
+            session_id: Some("native-1".into()),
+            cwd: Some(cwd.clone()),
+            signal: HookSignal::Notification {
+                notification: HookNotification::PermissionPrompt,
+            },
+            progress: None,
+        }));
+        let session = registry.snapshot().pop().expect("session");
+        assert_eq!(session.resume_id.as_deref(), Some("native-1"));
+        assert_eq!(session.status, SessionStatus::NeedsApproval);
+        assert!(session.unread);
+
+        assert!(apply_test_hook(&registry, HookEvent {
+            agent: Agent::Claude,
+            session_id: Some("native-1".into()),
+            cwd: Some(cwd),
+            signal: HookSignal::Stop,
+            progress: None,
+        }));
+        assert_eq!(registry.snapshot()[0].status, SessionStatus::Idle);
+    }
+
+    #[test]
+    fn attention_notifications_dedupe_and_retract_on_progress() {
+        let registry = SessionRegistry::new();
+        let cwd = Path::new(".").to_path_buf();
+        let spec = spec_for(Agent::Claude, &cwd);
+        let id = SessionId::new(1);
+        let mut session = Session::new(id.clone(), &spec);
+        session.status = SessionStatus::Idle;
+        session.state_since = std::time::SystemTime::UNIX_EPOCH;
+        lock_state(&registry.inner).entries.insert(
+            id.clone(),
+            Entry {
+                session,
+                command: ResolvedCommand {
+                    program: PathBuf::from("test-agent"),
+                    args: Vec::new(),
+                    cwd: cwd.clone(),
+                },
+                spec,
+                pty: None,
+                scrollback: RingBuffer::default(),
+                grid: TerminalGrid::default(),
+                queue: crate::queue::PromptQueue::default(),
+                generation: 1,
+                stop_requested: false,
+                teardown_done: true,
+                branch_checked: None,
+                span: tracing::Span::none(),
+            },
+        );
+        let events = registry.subscribe();
+        let attention = HookEvent {
+            agent: Agent::Claude,
+            session_id: Some("native-1".into()),
+            cwd: Some(cwd.clone()),
+            signal: HookSignal::Notification {
+                notification: HookNotification::PermissionPrompt,
+            },
+            progress: None,
+        };
+
+        assert!(apply_test_hook(&registry, attention.clone()));
+        let first: Vec<_> = events.try_iter().collect();
+        assert!(first.iter().any(|event| matches!(
+            event,
+            RegistryEvent::Notification {
+                event: NotificationEvent::Raised { notification }
+            } if notification.dedup_key.contains("session=s0001")
+        )));
+
+        assert!(apply_test_hook(&registry, attention));
+        assert!(!events
+            .try_iter()
+            .any(|event| matches!(event, RegistryEvent::Notification { .. })));
+
+        assert!(apply_test_hook(&registry, HookEvent {
+            agent: Agent::Claude,
+            session_id: Some("native-1".into()),
+            cwd: Some(cwd),
+            signal: HookSignal::PreToolUse,
+            progress: None,
+        }));
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            RegistryEvent::Notification {
+                event: NotificationEvent::Retracted { .. }
+            }
+        )));
+    }
+
+    #[test]
+    fn a_hook_cannot_bind_to_a_session_it_did_not_come_from() {
+        let registry = SessionRegistry::new();
+        let first = SessionId::new(1);
+        let second = SessionId::new(2);
+        insert_session(&registry, &first, SessionStatus::Starting);
+        insert_session(&registry, &second, SessionStatus::Starting);
+        let first_token = {
+            let state = lock_state(&registry.inner);
+            state
+                .entries
+                .get(&first)
+                .map(|entry| entry.session.hook_token.clone())
+                .expect("first hook token")
+        };
+        let cwd = Path::new(".").to_path_buf();
+
+        assert!(registry.apply_hook_with_token(
+            HookEvent {
+                agent: Agent::Claude,
+                session_id: Some("native-first".into()),
+                cwd: Some(cwd.clone()),
+                signal: HookSignal::SessionStart,
+                progress: None,
+            },
+            Some(&first_token),
+        ));
+        assert!(!registry.apply_hook_with_token(
+            HookEvent {
+                agent: Agent::Claude,
+                session_id: Some("native-second".into()),
+                cwd: Some(cwd),
+                signal: HookSignal::SessionStart,
+                progress: None,
+            },
+            Some(&first_token),
+        ));
+
+        let sessions = registry.snapshot();
+        assert_eq!(
+            sessions
+                .iter()
+                .find(|session| session.id == first)
+                .and_then(|session| session.resume_id.as_deref()),
+            Some("native-first")
+        );
+        assert_eq!(
+            sessions
+                .iter()
+                .find(|session| session.id == second)
+                .and_then(|session| session.resume_id.as_deref()),
+            None
+        );
+    }
+
+    #[test]
+    fn hooks_from_other_sessions_are_ignored() {
+        let registry = SessionRegistry::new();
+        assert!(!apply_test_hook(&registry, HookEvent {
+            agent: Agent::Codex,
+            session_id: Some("missing".into()),
+            cwd: Some(PathBuf::from(".")),
+            signal: HookSignal::Stop,
+            progress: None,
+        }));
+    }
+
+    #[test]
+    fn app_server_events_update_codex_rows_and_remain_on_the_event_stream() {
+        let registry = SessionRegistry::new();
+        let cwd = Path::new(".").to_path_buf();
+        let spec = spec_for(Agent::Codex, &cwd);
+        let id = SessionId::new(1);
+        let mut session = Session::new(id.clone(), &spec);
+        session.resume_id = Some("thread-1".into());
+        lock_state(&registry.inner).entries.insert(
+            id.clone(),
+            Entry {
+                session,
+                command: ResolvedCommand {
+                    program: PathBuf::from("test-agent"),
+                    args: Vec::new(),
+                    cwd: cwd.clone(),
+                },
+                spec,
+                pty: None,
+                scrollback: RingBuffer::default(),
+                grid: TerminalGrid::default(),
+                queue: crate::queue::PromptQueue::default(),
+                generation: 1,
+                stop_requested: false,
+                teardown_done: true,
+                branch_checked: None,
+                span: tracing::Span::none(),
+            },
+        );
+        let events = registry.subscribe();
+
+        assert!(registry.apply_agent_event(AgentEvent::AppServer(
+            AppServerEvent::ThreadStatusChanged {
+                thread_id: "thread-1".into(),
+                status: AppServerThreadStatus {
+                    kind: "active".into(),
+                    active_flags: vec!["waitingOnApproval".into()],
+                },
+            },
+        )));
+        assert_eq!(registry.snapshot()[0].status, SessionStatus::NeedsApproval);
+
+        assert!(registry.apply_agent_event(AgentEvent::AppServer(
+            AppServerEvent::TokenUsageUpdated {
+                thread_id: "thread-1".into(),
+                usage: AppServerTokenUsage {
+                    input_tokens: 1,
+                    cached_input_tokens: 0,
+                    output_tokens: 2,
+                    reasoning_output_tokens: 0,
+                    total_tokens: 3,
+                    model_context_window: None,
+                },
+            },
+        )));
+        assert!(events.try_iter().any(|event| matches!(
+            event,
+            RegistryEvent::AgentEvent {
+                event: AgentEvent::AppServer(AppServerEvent::TokenUsageUpdated { .. })
+            }
+        )));
+    }
+}
