@@ -275,6 +275,36 @@ async fn session_history(
     .await
 }
 
+/// Find a string in every session's retained output.
+///
+/// A read: it needs no write token and wakes nothing. The bytes searched per
+/// session are the daemon's history ceiling, the same budget the focused pane's
+/// "load older output" spends — a search that read less than that would answer
+/// "not found" about output the operator can see by scrolling.
+#[tauri::command]
+async fn search_fleet(
+    state: State<'_, AppState>,
+    needle: String,
+    case_sensitive: bool,
+) -> Result<Vec<terminalai_core::search::SessionMatches>, String> {
+    let client = daemon_client(&state)?;
+    run_blocking("search_fleet", move || {
+        let request = Request::SearchScrollback {
+            query: terminalai_core::search::SearchQuery {
+                needle,
+                case_sensitive,
+            },
+            max_bytes: terminalai_daemon::MAX_HISTORY_BYTES,
+        };
+        match daemon_response(&client, request)? {
+            Response::SearchResults { matches, .. } => Ok(matches),
+            Response::Error { message } => Err(message),
+            other => Err(format!("unexpected search response: {other:?}")),
+        }
+    })
+    .await
+}
+
 /// Checkouts this tool created that no live session owns.
 ///
 /// Reporting only. What to do about a branch holding unmerged work is the
@@ -2135,6 +2165,7 @@ fn run_app() -> Result<(), String> {
             review_snapshot,
             external_sessions,
             session_history,
+            search_fleet,
             stale_worktrees,
             reap_worktree,
             mark_reviewed,

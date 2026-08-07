@@ -441,6 +441,32 @@ reason-unknown = No reason recorded
 context-explained = { $used } of { $window } tokens in the context window ({ $percent }% full)
 context-no-window = { $used } tokens in the context window; this agent does not report its window size, so there is no percentage to show
 context-unmeasured = No context reading yet for this session
+button-search-short = Search
+fleet-search-title = Search the fleet
+fleet-search-note = Searches the output each session still has on disk, which is a bounded tail — the beginning of a long run is genuinely gone. Colour and cursor sequences are removed before matching, so what is searched is what was legible.
+fleet-search-placeholder = Find in every session
+fleet-search-case = Match case
+fleet-search-run = Search
+fleet-search-too-short = Type at least two characters. A shorter search matches most of every transcript and costs a read of the whole fleet to say so.
+fleet-search-none = Nothing in the retained output matched "{ $needle }".
+fleet-search-summary = { $sessions ->
+    [one] 1 session, { $total } match(es)
+   *[other] { $sessions } sessions, { $total } match(es)
+}
+fleet-search-hits = { $count ->
+    [one] 1 match
+   *[other] { $count } matches
+}
+fleet-search-truncated = Excerpts stop here; the count above is still the whole total.
+
+find-placeholder = Find in this pane
+find-next = Next match
+find-previous = Previous match
+find-close = Close find
+find-searching = searching…
+find-none = no matches
+find-position = { $index } of { $total }
+
 context-compactions = { $count ->
     [one] Compacted once so far
    *[other] Compacted { $count } times so far

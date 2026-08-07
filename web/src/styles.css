@@ -659,6 +659,101 @@ button {
   min-width: 0;
 }
 
+/* Find-in-pane. A strip under the toolbar rather than an overlay on the
+   terminal: an overlay covers the output being searched, which is the one
+   thing the operator is looking at. */
+.terminal-find {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border-bottom: 1px solid rgba(88, 91, 112, .28);
+  background: var(--mantle);
+}
+
+.terminal-find[hidden] {
+  display: none;
+}
+
+.terminal-find input {
+  flex: 1;
+  min-width: 0;
+}
+
+.fleet-search-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.fleet-search-controls input[type="search"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.search-result {
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(88, 91, 112, .28);
+}
+
+.search-result-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.search-result-count {
+  color: var(--subtext0);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.search-hits {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.search-hits li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.search-hits code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+  font-size: 12px;
+  color: var(--subtext1);
+}
+
+.search-hit-line {
+  color: var(--subtext0);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  min-width: 44px;
+  text-align: right;
+}
+
+.search-truncated {
+  display: block;
+  margin-top: 6px;
+  color: var(--subtext0);
+}
+
+.terminal-find-count {
+  color: var(--subtext0);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .toolbar-title {
   display: flex;
   align-items: baseline;

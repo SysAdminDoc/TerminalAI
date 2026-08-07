@@ -354,6 +354,16 @@ pub enum Request {
         id: SessionId,
         max_bytes: u64,
     },
+    /// Find a string in every session's retained output.
+    ///
+    /// A read, so it needs no write token. `max_bytes` is per session and
+    /// clamped like `ScrollbackHistory`: the whole point is to search more than
+    /// one pane, so an unclamped value would multiply the fleet's disk reads by
+    /// whatever a client asked for.
+    SearchScrollback {
+        query: terminalai_core::search::SearchQuery,
+        max_bytes: u64,
+    },
     /// The parsed terminal state for a pinned or background session.
     ///
     /// Distinct from `Scrollback`, which returns raw bytes for the one focused
@@ -469,6 +479,13 @@ pub enum Response {
     },
     ScrollbackHistory {
         data: Vec<u8>,
+    },
+    SearchResults {
+        /// Only sessions with at least one match, in fleet order.
+        matches: Vec<terminalai_core::search::SessionMatches>,
+        /// Bytes of history searched per session, after clamping — so a result
+        /// says what it looked at rather than implying it read everything.
+        searched_bytes: u64,
     },
     Broadcast {
         results: Vec<terminalai_core::BroadcastResult>,
@@ -1692,6 +1709,23 @@ fn dispatch_with_endpoint(
         Request::ScrollbackHistory { id, max_bytes } => {
             match registry.scrollback_history(&id, max_bytes.min(MAX_HISTORY_BYTES)) {
                 Ok(data) => Response::ScrollbackHistory { data },
+                Err(error) => Response::Error {
+                    message: error.to_string(),
+                },
+            }
+        }
+        Request::SearchScrollback { query, max_bytes } => {
+            // Validated here rather than at the type, because a needle short
+            // enough to match everything costs a fleet-wide disk read to say
+            // so — and the client can act on being told why.
+            match terminalai_core::search::SearchQuery::new(query.needle, query.case_sensitive) {
+                Ok(query) => {
+                    let searched_bytes = max_bytes.min(MAX_HISTORY_BYTES);
+                    Response::SearchResults {
+                        matches: registry.search_scrollback(&query, searched_bytes),
+                        searched_bytes,
+                    }
+                }
                 Err(error) => Response::Error {
                     message: error.to_string(),
                 },

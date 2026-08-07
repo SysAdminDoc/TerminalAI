@@ -76,13 +76,6 @@ item above; where the two touch, the note says so.
   Acceptance: the launcher can set a compaction threshold per session, it reaches the previewed argv for both agents, and the row shows it beside the occupancy so a session near its own threshold is visible before it compacts. An agent with no equivalent is refused rather than silently launched without it, per `LaunchError::Unsupported`.
   Complexity: S
 
-- [ ] P2 — Search the focused pane and the on-disk scrollback
-  Why: the project keeps a 512 KB ring over an 8 MB rotating spool per session and offers no way to query either; "where did that error print" across twenty sessions is currently a manual scroll.
-  Evidence: `web/package.json` imports `@xterm/addon-fit`, `-unicode11` and `-webgl` only — no `addon-search`. `crates/terminalai-core/src/scrollback.rs` writes segments no reader queries. `@xterm/addon-search` 0.16.0 ships a `SearchLineCache` making 6.0 materially faster (https://github.com/xtermjs/xterm.js/releases).
-  Touches: `web/package.json`, `web/src/main.js`, `crates/terminalai-core/src/scrollback.rs`, `crates/terminalai-daemon/src/lib.rs`, `crates/terminalai-app/src/main.rs`
-  Acceptance: find-in-pane with match count in the focused terminal, plus a fleet search that reports which sessions match a string in their retained scrollback and how many times. `rendererCapabilities.test.mjs` gains the addon to its explicit allowlist.
-  Complexity: M
-
 ### P3
 
 - [ ] P3 — Say when the vendored price table is stale

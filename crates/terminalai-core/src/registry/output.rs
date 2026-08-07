@@ -245,6 +245,43 @@ mod tests {
     }
 
     #[test]
+    fn a_fleet_search_reaches_the_disk_tier_and_reports_only_what_matched() {
+        // The headline case: "where did that error print" across many sessions.
+        // The marker is buried under more than the ring holds, so a search that
+        // only read memory would answer "no session matched" — the one wrong
+        // answer that looks exactly like a correct one.
+        let dir = spool_scratch("fleet-search");
+        let registry = SessionRegistry::new();
+        registry.set_scrollback_spool(Arc::new(ScrollbackSpool::new(&dir.0).expect("spool")));
+        let matching = SessionId::new(1);
+        let quiet = SessionId::new(2);
+        insert_session(&registry, &matching, SessionStatus::Working);
+        insert_session(&registry, &quiet, SessionStatus::Working);
+
+        // Line-oriented filler, because agent output is: a single 400 KB run
+        // with no break would put the marker on the same line as all of it.
+        let filler = |mark: u8| {
+            let mut line = vec![mark; 79];
+            line.push(b'\n');
+            line.repeat(5 * 1024)
+        };
+        feed(&registry, &matching, &filler(b'x'));
+        // Coloured, because that is how an agent prints an error and the
+        // sequences must not hide it.
+        feed(&registry, &matching, b"\x1b[31mE0432: unresolved import\x1b[0m\n");
+        feed(&registry, &matching, &filler(b'y'));
+        feed(&registry, &quiet, b"everything is fine\n");
+        registry.inner.spool().expect("spool").flush();
+
+        let query = crate::search::SearchQuery::new("e0432", false).expect("query");
+        let results = registry.search_scrollback(&query, MAX_SCROLLBACK_BYTES as u64 + 128 * 1024);
+        assert_eq!(results.len(), 1, "a session with no match must be omitted");
+        assert_eq!(results[0].id, matching);
+        assert_eq!(results[0].total_matches, 1);
+        assert_eq!(results[0].hits[0].text, "E0432: unresolved import");
+    }
+
+    #[test]
     fn history_for_an_unknown_session_is_an_error_not_an_empty_answer() {
         // An empty answer would read as "this session produced nothing".
         let registry = SessionRegistry::new();

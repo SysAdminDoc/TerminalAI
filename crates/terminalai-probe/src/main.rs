@@ -46,6 +46,7 @@ USAGE:
   terminalai-probe pin     <session-id> --json      (toggle a pinned live grid)
   terminalai-probe grid    <session-id> --json      (parsed grid for a pinned pane)
   terminalai-probe history <session-id> [bytes] [--json]  (output the memory ring has dropped)
+  terminalai-probe search <needle> [--case] [--json]   (find a string across every session)
   terminalai-probe archives --json                   (sessions this supervisor finished)
   terminalai-probe archive <session-id> [--json]     (retire a stopped row into the history)
   terminalai-probe worktrees [--json]                (checkouts no live session owns)
@@ -106,6 +107,7 @@ fn main() {
         Some("pin") => cmd_pin(&args[1..]),
         Some("grid") => cmd_grid(&args[1..]),
         Some("history") => cmd_history(&args[1..]),
+        Some("search") => cmd_search(&args[1..]),
         Some("archives") => cmd_archives(&args[1..]),
         Some("archive") => cmd_archive(&args[1..]),
         Some("worktrees") => cmd_worktrees(&args[1..]),
@@ -706,6 +708,53 @@ fn cmd_archives(args: &[String]) -> i32 {
             0
         }
         Ok(other) => print_control_response(other, machine),
+        Err(error) => print_control_error(error, machine),
+    }
+}
+
+/// Find a string in every session's retained output.
+///
+/// The headline case this exists for: "where did that error print" across
+/// twenty sessions, which was a manual scroll through twenty panes.
+fn cmd_search(args: &[String]) -> i32 {
+    let (machine, rest) = without_json(args);
+    let case_sensitive = rest.iter().any(|arg| arg == "--case");
+    let needle: Vec<&String> = rest.iter().filter(|arg| *arg != "--case").collect();
+    let Some(needle) = needle.first() else {
+        return control_usage("search <needle> [--case] [--json]");
+    };
+    match control_call(Request::SearchScrollback {
+        query: terminalai_core::search::SearchQuery {
+            needle: (*needle).clone(),
+            case_sensitive,
+        },
+        max_bytes: terminalai_daemon::MAX_HISTORY_BYTES,
+    }) {
+        Ok(Response::SearchResults {
+            matches,
+            searched_bytes,
+        }) if machine => print_json(serde_json::json!({
+            "searched_bytes_per_session": searched_bytes,
+            "sessions": matches,
+        })),
+        Ok(Response::SearchResults { matches, .. }) => {
+            if matches.is_empty() {
+                println!("no session matched");
+                return 0;
+            }
+            for session in matches {
+                let more = if session.truncated { " (excerpts capped)" } else { "" };
+                println!(
+                    "{} {} — {} match(es){more}",
+                    session.id.0, session.name, session.total_matches
+                );
+                for hit in session.hits {
+                    println!("  {:>6}: {}", hit.line, hit.text);
+                }
+            }
+            0
+        }
+        Ok(response) => print_control_response(response, machine),
         Err(error) => print_control_error(error, machine),
     }
 }

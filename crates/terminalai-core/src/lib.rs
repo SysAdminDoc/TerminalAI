@@ -39,6 +39,7 @@ pub mod restart;
 pub mod review;
 pub mod roadmap;
 pub mod scrollback;
+pub mod search;
 pub mod session;
 pub mod spend;
 pub mod tail;

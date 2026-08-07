@@ -12,6 +12,7 @@
     "allow-fleet-snapshot",
     "allow-review-snapshot",
     "allow-external-sessions",
+    "allow-search-fleet",
     "allow-session-history",
     "allow-stale-worktrees",
     "allow-reap-worktree",

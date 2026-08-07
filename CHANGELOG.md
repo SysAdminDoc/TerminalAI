@@ -7,6 +7,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Find-in-pane in the focused terminal, with the match count `@xterm/addon-search` reports rather
+  than a recount that could disagree with its own highlights. A scan still running says so instead
+  of reporting zero matches, because those are different answers and one arrives before the other.
+  The highlight colours are read from the theme tokens, not written as literals: decorations paint
+  into the same canvas no DOM contrast gate can see.
+- Fleet search. The daemon can be asked which sessions printed a string and how many times, over
+  the retained scrollback each one still has on disk — the reason the disk tier exists, since the
+  other twenty-nine sessions have no renderer to search. Available in the app, and as
+  `terminalai-probe search <needle>`. Not exposed over MCP, which states that session transcripts
+  are never exposed.
+- Escape sequences are removed before anything is matched. Retained output is a rendered TUI, so
+  searching the raw bytes both misses (a word the agent coloured has an SGR sequence inside it) and
+  invents (`31m` is in every red thing ever printed). A sequence cut off by the spool's tail
+  boundary emits no fragment, and a bare carriage return is treated as a line break so a redraw
+  cannot join two lines into a match that was never on one.
 - The wide fleet row shows how full each session's context window is, with an em dash when nothing
   has measured it. Occupancy is the **last request's prompt**, never the running token total: the
   totals column sums every request a session ever made, so a twenty-turn session divided by its

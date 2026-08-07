@@ -37,9 +37,17 @@ test("allowProposedApi unlocks only the unicode addon", () => {
   // clipboard gate is the addon's absence, asserted above, and this flag never
   // controlled it. Keep the addon list explicit so a future proposed-API addon
   // has to be justified here rather than arriving with the flag already on.
+  // `addon-search` was added 2026-08-07 for find-in-pane. It is not proposed
+  // API — it registers no OSC handler and reads the buffer it is attached to,
+  // so it cannot be a route from agent output to anything outside the pane.
   assert.match(main, /allowProposedApi: true,/);
   const addons = [...main.matchAll(/from "@xterm\/(addon-[a-z0-9]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(addons.sort(), ["addon-fit", "addon-unicode11", "addon-webgl"]);
+  assert.deepEqual(addons.sort(), [
+    "addon-fit",
+    "addon-search",
+    "addon-unicode11",
+    "addon-webgl",
+  ]);
 });
 
 /** Every `${...}` in `source`, brace-balanced so nested template literals stay whole. */

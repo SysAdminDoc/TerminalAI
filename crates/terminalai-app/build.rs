@@ -17,6 +17,7 @@ const COMMANDS: &[&str] = &[
     "review_snapshot",
     "external_sessions",
     "session_history",
+    "search_fleet",
     "stale_worktrees",
     "reap_worktree",
     "mark_reviewed",

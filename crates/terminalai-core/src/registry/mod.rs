@@ -1367,6 +1367,47 @@ impl SessionRegistry {
         Ok(ring[start..].to_vec())
     }
 
+    /// Search every session's retained output for a string.
+    ///
+    /// Reads outside the state lock, deliberately and at some cost in accuracy:
+    /// this touches up to `max_bytes` of disk per session across the whole
+    /// fleet, and every byte of agent output passes through that same lock, so
+    /// holding it here would stall the fleet for the length of a fleet-wide
+    /// disk read. The window between snapshotting the rows and reading their
+    /// history is real — a session archived in that window reads as empty
+    /// rather than as an error, which is the right way for a search to be
+    /// wrong.
+    ///
+    /// Sessions with no match are omitted. Order follows the fleet's own, so
+    /// the results read in the same order as the rows behind them.
+    pub fn search_scrollback(
+        &self,
+        query: &crate::search::SearchQuery,
+        max_bytes: u64,
+    ) -> Vec<crate::search::SessionMatches> {
+        let targets: Vec<(SessionId, String)> = {
+            let state = lock_state(&self.inner);
+            let mut sessions: Vec<_> = state
+                .entries
+                .values()
+                .map(|entry| entry.session.clone())
+                .collect();
+            sessions.sort_by(fleet_order);
+            sessions
+                .into_iter()
+                .map(|session| (session.id, session.name))
+                .collect()
+        };
+        targets
+            .into_iter()
+            .filter_map(|(id, name)| {
+                let history = self.scrollback_history(&id, max_bytes).ok()?;
+                let matches = crate::search::search_output(id, name, &history, query);
+                (matches.total_matches > 0).then_some(matches)
+            })
+            .collect()
+    }
+
     /// Return the parsed terminal state held for a background or pinned pane.
     /// The focused browser renderer does not need this path: it resets once and
     /// replays the raw bounded ring returned by [`Self::scrollback`].

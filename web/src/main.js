@@ -1,11 +1,13 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { contextLabel, contextTitle, contextTone } from "./contextPressure.js";
+import { renderSearchResults, searchSummary } from "./fleetSearch.js";
 import { reconcileGroupChip, reconcileKeyedRows } from "./fleetRows.js";
 import { countMessage, localizeDom, relativeDwell, t } from "./i18n.js";
 import { quotaLabel, quotaUnreportedLabel, rateLimitTitle, rateLimitedLabel } from "./rateLimit.js";
@@ -2331,6 +2333,49 @@ async function startWorkRun() {
   renderWorkRun();
 }
 
+/// Ask the daemon which sessions printed a string, and how many times.
+///
+/// Find-in-pane answers the same question for the one attached renderer; this
+/// is the reason the disk tier exists at all — the other twenty-nine sessions
+/// have no renderer, and until now their output could only be read by focusing
+/// each one in turn.
+async function runFleetSearch() {
+  const needle = $("fleet-search-input").value.trim();
+  const body = $("fleet-search-body");
+  const count = $("fleet-search-count");
+  if (needle.length < 2) {
+    count.textContent = "";
+    body.innerHTML = `<p class="rollup-total">${escapeHtml(t("fleet-search-too-short"))}</p>`;
+    return;
+  }
+  const button = $("fleet-search-run");
+  button.disabled = true;
+  body.innerHTML = `<p class="rollup-total">${escapeHtml(t("loading"))}</p>`;
+  try {
+    const matches = await invoke("search_fleet", {
+      needle,
+      caseSensitive: $("fleet-search-case").checked,
+    });
+    count.textContent = t("fleet-search-summary", searchSummary(matches));
+    body.innerHTML = renderSearchResults(matches, {
+      escape: escapeHtml,
+      translate: t,
+      needle,
+    });
+    for (const element of body.querySelectorAll("[data-search-focus]")) {
+      element.addEventListener("click", () => {
+        $("search-dialog").close();
+        void focusSession(element.dataset.searchFocus);
+      });
+    }
+  } catch (error) {
+    count.textContent = "";
+    body.innerHTML = `<p class="rollup-total">${escapeHtml(String(error))}</p>`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function openSessionHistory() {
   const dialog = $("history-dialog");
   if (!dialog.open) dialog.showModal();
@@ -2582,6 +2627,77 @@ function createOutputChannel(id) {
 const MAX_SCROLLBACK_BYTES = 512 * 1024;
 const HISTORY_OLDER_BYTES = 128 * 1024;
 const HISTORY_REQUEST_BYTES = MAX_SCROLLBACK_BYTES + HISTORY_OLDER_BYTES;
+
+/// Show or hide the find bar over the focused pane.
+///
+/// Closing clears the search rather than leaving it: xterm keeps its highlight
+/// decorations until told otherwise, so a hidden bar with a live search leaves
+/// the pane marked up for a query the operator can no longer see.
+function toggleFind(next = null) {
+  const bar = $("terminal-find");
+  const open = next === null ? bar.hidden : next;
+  bar.hidden = !open;
+  $("terminal-find-toggle").setAttribute("aria-pressed", String(open));
+  if (open) {
+    $("terminal-find-input").focus();
+    $("terminal-find-input").select();
+    runFind();
+  } else {
+    state.searchAddon?.clearDecorations();
+    $("terminal-find-count").textContent = "";
+    state.terminal?.focus();
+  }
+}
+
+/// Run the current query. `direction` moves to the adjacent match; omitting it
+/// re-runs in place, which is what a keystroke in the field wants.
+function runFind(direction = null) {
+  const needle = $("terminal-find-input").value;
+  if (!state.searchAddon) return;
+  if (!needle) {
+    state.searchAddon.clearDecorations();
+    $("terminal-find-count").textContent = "";
+    return;
+  }
+  // Read from the same tokens `terminalTheme` uses, not written as literals:
+  // decorations are painted into the same canvas no contrast gate can see, so
+  // a hardcoded palette here would be the theming defect again in a place the
+  // guard for it would not have looked.
+  const styles = getComputedStyle(document.documentElement);
+  const token = (name) => styles.getPropertyValue(name).trim();
+  const options = {
+    decorations: {
+      matchOverviewRuler: token("--yellow"),
+      activeMatchColorOverviewRuler: token("--red"),
+      matchBackground: token("--term-selection"),
+      activeMatchBackground: token("--yellow"),
+    },
+  };
+  if (direction === "previous") state.searchAddon.findPrevious(needle, options);
+  else state.searchAddon.findNext(needle, options);
+}
+
+/// Report the addon's own match count.
+///
+/// `resultCount` is -1 while the addon is still scanning a long buffer, and 0
+/// when nothing matched. The two are different answers and the row says which:
+/// showing "0 matches" during a scan is a wrong answer that arrives before the
+/// right one.
+function renderFindCount(results) {
+  const element = $("terminal-find-count");
+  if (!results || results.resultCount < 0) {
+    element.textContent = t("find-searching");
+    return;
+  }
+  if (results.resultCount === 0) {
+    element.textContent = t("find-none");
+    return;
+  }
+  element.textContent = t("find-position", {
+    index: results.resultIndex + 1,
+    total: results.resultCount,
+  });
+}
 
 /// Prepend output the in-memory ring has already dropped.
 ///
@@ -3384,6 +3500,13 @@ function setupTerminal() {
   followColorScheme();
   state.fitAddon = new FitAddon();
   state.terminal.loadAddon(state.fitAddon);
+  // Find-in-pane. The addon reports its own match count through
+  // `onDidChangeResults`, which is the number worth showing: a bare "found /
+  // not found" makes the operator page through the pane to learn how much
+  // there is.
+  state.searchAddon = new SearchAddon();
+  state.terminal.loadAddon(state.searchAddon);
+  state.searchAddon.onDidChangeResults((results) => renderFindCount(results));
   const unicode11 = new Unicode11Addon();
   state.terminal.loadAddon(unicode11);
   state.terminal.unicode.activeVersion = "11";
@@ -3621,6 +3744,17 @@ function bindEvents() {
   $("settings-toggle").addEventListener("click", () => void openSettings());
   $("history-toggle").addEventListener("click", () => void openSessionHistory());
   $("close-history-button").addEventListener("click", () => $("history-dialog").close());
+  $("fleet-search-toggle").addEventListener("click", () => {
+    const dialog = $("search-dialog");
+    if (!dialog.open) dialog.showModal();
+    $("fleet-search-input").focus();
+    $("fleet-search-input").select();
+  });
+  $("close-search-button").addEventListener("click", () => $("search-dialog").close());
+  $("fleet-search-run").addEventListener("click", () => void runFleetSearch());
+  $("fleet-search-input").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") void runFleetSearch();
+  });
   $("save-settings-button").addEventListener("click", () => void saveSettings());
   $("close-settings-button").addEventListener("click", () => $("settings-dialog").close());
   $("empty-explainer-button").addEventListener("click", () => openExplainer());
@@ -3664,6 +3798,11 @@ function bindEvents() {
   $("launch-button").addEventListener("click", () => void launchCurrentSpec());
   $("terminal-clear").addEventListener("click", () => state.terminal?.clear());
   $("terminal-history").addEventListener("click", () => void loadOlderOutput());
+  $("terminal-find-toggle").addEventListener("click", () => toggleFind());
+  $("terminal-find-close").addEventListener("click", () => toggleFind(false));
+  $("terminal-find-input").addEventListener("input", () => runFind());
+  $("terminal-find-next").addEventListener("click", () => runFind("next"));
+  $("terminal-find-previous").addEventListener("click", () => runFind("previous"));
   $("terminal-resize").addEventListener("click", async () => {
     if (!state.focused) return;
     try {
