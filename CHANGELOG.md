@@ -17,6 +17,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- The HTTP hook reader's request deadline now bounds the body as well as the headers. `read_exact`
+  armed the socket timeout once and looped internally, so every individual read got the full
+  two-second timeout and each successful byte re-armed it — a local client declaring a megabyte and
+  trickling one byte at a time held a worker indefinitely, before the bearer check, which runs on
+  the fully-read request. Four such connections could stop hook ingestion for the whole fleet, and
+  status updates would simply stop arriving.
 - The memory budget stopped counting a session the moment a provider rate-limited it. Releasing the
   admission *slot* is right — a session the provider is refusing must not keep a queued one waiting
   — but the same filter fed the memory projection, so an agent process still holding ~509 MB

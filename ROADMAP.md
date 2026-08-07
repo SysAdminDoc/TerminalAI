@@ -10,16 +10,6 @@ widths. No pre-existing test, lint or build failure exists. Verification: every 
 below was traced to a real caller; the theming finding was observed live (Vite + headless Chromium,
 both `prefers-color-scheme` values) rather than inferred from source.
 
-- [ ] P3 — The HTTP hook body read can outlive the request deadline, before authentication
-  Category: reliability
-  Where: `crates/terminalai-daemon/src/http_hooks.rs:377-390` (`read_request`, body `read_exact`)
-  Problem: the header loop re-checks `deadline` every iteration, but the body path arms the socket read timeout once (`remaining.min(READ_TIMEOUT)`) and then calls `read_exact`, which loops over as many `recv`s as the body needs — each individual read gets the full timeout, and every successful 1-byte read re-arms it. A local client that declares `Content-Length` up to `MAX_BODY_BYTES` (1 MiB) and trickles one byte per ~1.9 s holds a worker for days, and this happens BEFORE the bearer check (auth runs in `handle_connection` after the body is fully read). Four workers and a 16-deep queue mean four unauthenticated local connections starve hook ingestion for every real agent, and status updates silently stop.
-  Evidence: traced `read_request`: `stream.set_read_timeout(...)` is called once before `read_exact(&mut body[available..])`; `REQUEST_DEADLINE` (5 s) is only consulted again after `read_request` returns. The listener is loopback-only and the module comment promises a bounded reader with a deadline — the bound holds for headers and not for bodies.
-  Fix: read the body in a loop of bounded chunks, recomputing `remaining = deadline.saturating_duration_since(Instant::now())` before each read and failing with the existing 408/TimedOut path when it hits zero — mirroring the header loop's shape. No new dependency.
-  Acceptance: a test in `http_hooks.rs`'s test module: valid headers with a small `Content-Length`, body trickled one byte at a time past a shortened deadline — the connection is rejected once the deadline passes rather than read to completion; existing hook round-trip tests still pass.
-  Confidence: Verified
-  Effort: S
-
 - [ ] P3 — The overflow menus claim `role="menu"` semantics they do not implement
   Category: a11y
   Where: `web/index.html:25` (`#app-menu`), `web/index.html:56` (`#tools-menu`), `web/src/menus.js:13` (`wireOverflowMenus`)

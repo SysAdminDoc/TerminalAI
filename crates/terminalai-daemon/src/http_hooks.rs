@@ -267,6 +267,7 @@ struct HttpRequest {
     body: Vec<u8>,
 }
 
+#[cfg_attr(test, derive(Debug))]
 struct Rejection {
     status: u16,
     message: String,
@@ -376,16 +377,8 @@ fn read_request(
     }
     let mut body = bytes[header_end..].to_vec();
     body.resize(content_length, 0);
-    if body.len() > available {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "HTTP hook request deadline exceeded",
-            ));
-        }
-        stream.set_read_timeout(Some(remaining.min(READ_TIMEOUT)))?;
-        stream.read_exact(&mut body[available..])?;
+    if let Some(rejection) = read_body(stream, &mut body, available, deadline)? {
+        return Ok(Err(rejection));
     }
     Ok(Ok(HttpRequest {
         method: parts[0].to_owned(),
@@ -393,6 +386,65 @@ fn read_request(
         headers,
         body,
     }))
+}
+
+/// A source that can be read with a per-read timeout.
+///
+/// Exists so the deadline behaviour below can be tested against a fake that
+/// never delivers, rather than against a real socket and a real five seconds —
+/// a wall-clock test of a timeout is the kind that passes on an idle machine and
+/// fails during a release build.
+trait DeadlineRead {
+    fn arm(&mut self, timeout: Duration) -> io::Result<()>;
+    fn read_some(&mut self, buffer: &mut [u8]) -> io::Result<usize>;
+}
+
+impl DeadlineRead for TcpStream {
+    fn arm(&mut self, timeout: Duration) -> io::Result<()> {
+        self.set_read_timeout(Some(timeout))
+    }
+
+    fn read_some(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.read(buffer)
+    }
+}
+
+/// Fill `body` from `filled` onwards, giving up at `deadline`.
+///
+/// The deadline is re-checked before every read, exactly as the header loop
+/// does. `read_exact` cannot do this: it arms the timeout once and then loops
+/// internally, so each individual read gets the full `READ_TIMEOUT` and every
+/// successful byte re-arms it. A client that declares a megabyte and trickles
+/// one byte just inside the timeout holds a worker indefinitely — and none of
+/// this has reached the bearer check yet, which runs on the fully-read request.
+/// Four workers behind a sixteen-deep queue means four such connections stop
+/// hook ingestion for the whole fleet, and status updates simply stop arriving.
+fn read_body(
+    stream: &mut impl DeadlineRead,
+    body: &mut [u8],
+    filled: usize,
+    deadline: Instant,
+) -> io::Result<Option<Rejection>> {
+    let mut filled = filled;
+    while filled < body.len() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "HTTP hook request deadline exceeded",
+            ));
+        }
+        stream.arm(remaining.min(READ_TIMEOUT))?;
+        let read = stream.read_some(&mut body[filled..])?;
+        if read == 0 {
+            return Ok(Some(Rejection {
+                status: 400,
+                message: "request ended before the declared body".into(),
+            }));
+        }
+        filled += read;
+    }
+    Ok(None)
 }
 
 fn write_response(stream: &mut TcpStream, status: u16, message: &str) -> io::Result<()> {
@@ -541,6 +593,57 @@ mod tests {
             wrong_token.starts_with("HTTP/1.1 401 Unauthorized"),
             "{wrong_token}"
         );
+    }
+
+    /// A source that always has one more byte and never finishes — the shape of
+    /// a client trickling a declared body just inside the per-read timeout.
+    struct Trickle {
+        reads: usize,
+    }
+
+    impl DeadlineRead for Trickle {
+        fn arm(&mut self, _timeout: Duration) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn read_some(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            self.reads += 1;
+            buffer[0] = b'x';
+            Ok(1)
+        }
+    }
+
+    #[test]
+    fn a_body_that_never_arrives_stops_at_the_deadline() {
+        // `read_exact` arms the timeout once and loops internally, so every
+        // successful byte re-arms it and a trickling client holds a worker
+        // indefinitely — before authentication, since the bearer check runs on
+        // the fully-read request. Four such connections stop hook ingestion for
+        // the whole fleet.
+        let mut stream = Trickle { reads: 0 };
+        let mut body = vec![0u8; 64];
+        let error = read_body(&mut stream, &mut body, 0, Instant::now())
+            .expect_err("a deadline already spent must not read at all");
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(stream.reads, 0, "the deadline is checked before each read");
+    }
+
+    #[test]
+    fn a_body_that_arrives_in_pieces_is_still_assembled() {
+        // The bound must not cost correctness: a body split across reads, which
+        // is the ordinary case on a loopback socket, still completes.
+        let mut stream = Trickle { reads: 0 };
+        let mut body = vec![0u8; 4];
+        let rejection = read_body(
+            &mut stream,
+            &mut body,
+            0,
+            Instant::now() + Duration::from_secs(30),
+        )
+        .expect("a live deadline reads the body");
+        assert!(rejection.is_none());
+        assert_eq!(&body, b"xxxx");
+        assert_eq!(stream.reads, 4, "one byte per read, four reads");
     }
 
     #[test]
