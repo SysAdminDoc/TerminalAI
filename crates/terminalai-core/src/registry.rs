@@ -2287,7 +2287,8 @@ impl SessionRegistry {
             let mut stalled = Vec::new();
             for entry in state.entries.values_mut() {
                 let is_stalled = entry.session.is_stalled_at(now);
-                if entry.session.stalled != is_stalled {
+                let mut changed = entry.session.stalled != is_stalled;
+                if changed {
                     entry.session.stalled = is_stalled;
                     if is_stalled {
                         tracing::warn!(
@@ -2296,6 +2297,24 @@ impl SessionRegistry {
                             "session has held a working status past the stall threshold"
                         );
                     }
+                }
+                // The liveness verdict, which is a different question from the
+                // stall flag above: that one asks how long a status has been
+                // held, this one asks whether the process is still saying
+                // anything at all. It reports and never restarts — a silent
+                // agent may be thinking, and only a proven-dead process is
+                // brought back.
+                if entry.session.review_progress_at(now) {
+                    tracing::warn!(
+                        parent: &entry.span,
+                        silent_for = ?entry.session.silent_for(now).unwrap_or_default(),
+                        missed_deadlines = entry.session.missed_progress_deadlines,
+                        "session has produced no output, transcript or hook event; \
+                         marking it unresponsive without restarting it"
+                    );
+                    changed = true;
+                }
+                if changed {
                     stalled.push(entry.session.clone());
                 }
             }
@@ -2894,6 +2913,9 @@ impl SessionRegistry {
                 if let Some(message) = update.last_message {
                     if entry.session.last_message.as_deref() != Some(message.as_str()) {
                         entry.session.last_message = Some(message);
+                        // The transcript grew, so the agent is producing work
+                        // even if its status has not moved.
+                        entry.session.note_progress_at(SystemTime::now());
                         changed = true;
                     }
                 }
@@ -3504,6 +3526,11 @@ fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64, bytes: &[u
         }
         entry.scrollback.push(bytes);
         entry.grid.advance(bytes);
+        // Any byte at all is evidence the process is alive, whether or not it
+        // moves the status. A session can hold `Working` for an hour while
+        // printing a build log the whole way, and nothing else on this path
+        // would tell the supervisor the difference between that and a wedge.
+        entry.session.note_progress_at(SystemTime::now());
         // Queued, never written here: this runs on the pty reader thread with
         // the state lock held, so a blocking write would stall every other
         // session and back-pressure the agent that produced the bytes.

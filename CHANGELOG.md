@@ -26,6 +26,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- The supervisor's health verdict is no longer a restatement of whether a PID exists. `SessionHealth`
+  was recomputed from `status` and `pid` on every transition, so a session busy thinking and one that
+  had wedged were the same thing to it — the documented cause of restart storms in every system that
+  conflates them. Progress signals (a pty byte, a transcript append, an agent hook event) now extend a
+  per-session deadline; three consecutive misses mark the session `unresponsive`.
+
+  It is a report, never a restart. A silent agent may be thinking about a large repository, so only a
+  proven-dead process is brought back — and the supervisor's own bookkeeping does not count as
+  evidence of life, or the fleet would reassure itself by writing a status and reading it back.
+  Distinct from the existing stall flag, which asks how long a status has been *held*: a session
+  printing a build log for twenty minutes is stalled and perfectly healthy, which is the case the old
+  model could not express. The fleet row says which of the two it is looking at.
+
+  A store written by this version names a health state older builds do not know, so an older daemon
+  will quarantine it — the same version-skew rule that already applies to the session store.
+
 - The MCP server speaks the current protocol revision, `2026-07-28`, alongside the `2025-06-18`
   handshake it already spoke. The current revision deleted `initialize` and made every request
   carry its own version, so the server now answers the mandatory `server/discover`, negotiates from

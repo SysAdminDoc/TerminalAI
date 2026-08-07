@@ -82,10 +82,25 @@ function lastActivity(session) {
 /// loud so the mark is not an unexplained badge.
 const STALL_THRESHOLD_MINUTES = 15;
 
+/// How long a session may say nothing at all before the supervisor calls it
+/// unresponsive: `PROGRESS_DEADLINE` x `PROGRESS_FAILURE_THRESHOLD` in
+/// `session.rs`. A different measure from the one above, and a stronger one —
+/// that asks how long a status has been held, this asks whether the process is
+/// still producing anything.
+const SILENCE_THRESHOLD_MINUTES = 15;
+
+/// The supervisor found the process alive and completely silent. Stronger
+/// evidence than the dwell-based stall flag, so it wins the label.
+function isUnresponsive(session) {
+  return session?.health === "unresponsive";
+}
+
 function lifecycleLabel(session) {
   if (session?.phase === "preparing") return t("status-preparing");
   // Still nominally working, but for long enough that busy and wedged are no
   // longer the same thing. The supervisor decides this; the row says it.
+  if (isUnresponsive(session))
+    return t("status-unresponsive", { status: statusLabel(session?.status) });
   if (session?.stalled) return t("status-stalled", { status: statusLabel(session?.status) });
   if (session?.phase === "tearing-down") return t("status-tearing-down");
   // A session the supervisor gave up on and one that ended its own work both
@@ -110,6 +125,8 @@ function restartCount(session) {
 /// Only the terminal phases carry one: everything else already says what it is
 /// in its own label.
 function lifecycleDetail(session) {
+  if (isUnresponsive(session))
+    return t("status-unresponsive-detail", { minutes: SILENCE_THRESHOLD_MINUTES });
   if (session?.stalled) return t("status-stalled-detail", { minutes: STALL_THRESHOLD_MINUTES });
   if (session?.phase === "failed") {
     const code = session?.last_exit_code;
@@ -130,7 +147,7 @@ function lifecycleTone(session, meta) {
   if (session?.phase === "failed") return "red";
   // Louder than the yellow a healthy working row gets: the whole point is that
   // it no longer looks like one.
-  if (session?.stalled) return "peach";
+  if (isUnresponsive(session) || session?.stalled) return "peach";
   if (session?.phase === "finished") return "green";
   return meta.tone;
 }

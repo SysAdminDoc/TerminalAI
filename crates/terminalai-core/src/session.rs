@@ -48,6 +48,26 @@ pub const RESTART_WINDOW: Duration = Duration::from_secs(10 * 60);
 /// for it.
 pub const STALL_THRESHOLD: Duration = Duration::from_secs(15 * 60);
 
+/// How long a live session may give no evidence of life at all before the
+/// supervisor counts one missed deadline against it.
+///
+/// Deliberately shorter than [`STALL_THRESHOLD`], because it measures something
+/// different and much stronger. A stall is "has held one status a long time",
+/// which a session running a twenty-minute test suite does while printing to
+/// its pty the whole way. This is "has produced nothing at all" — no pty byte,
+/// no transcript append, no hook event. A working agent emits *something* far
+/// more often than every five minutes, so silence this long is a real signal
+/// rather than a slow moment.
+pub const PROGRESS_DEADLINE: Duration = Duration::from_secs(5 * 60);
+
+/// Consecutive missed deadlines before the fleet calls a session unresponsive.
+///
+/// Kubernetes' `failureThreshold` default, adopted for the reason it exists: a
+/// single missed probe is a slow moment, not a verdict, and acting on one is
+/// how a supervisor turns a busy machine into a restart storm. Three misses is
+/// fifteen minutes of complete silence from a process that should be talking.
+pub const PROGRESS_FAILURE_THRESHOLD: u32 = 3;
+
 /// `STATUS_CONTROL_C_EXIT` — what a Windows console process reports after the
 /// operator pressed Ctrl-C in its pane. It is a deliberate stop by a person,
 /// not a fault, so the supervisor treats it as one.
@@ -190,6 +210,14 @@ pub enum SessionPhase {
 }
 
 /// Health of the process and its supervision boundary.
+///
+/// Every variant but [`SessionHealth::Unresponsive`] is a function of the
+/// status and the PID — that is, of *whether the process exists*. Unresponsive
+/// is the one verdict carrying independent evidence: the process is running and
+/// has stopped saying anything. Keeping the two apart is the point. A session
+/// that is busy thinking and one that has wedged look identical to anything
+/// that only asks whether a PID is alive, and a supervisor that cannot tell
+/// them apart is the documented cause of restart storms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SessionHealth {
@@ -198,6 +226,13 @@ pub enum SessionHealth {
     Healthy,
     Degraded,
     Failed,
+    /// Alive, and silent past [`PROGRESS_FAILURE_THRESHOLD`] deadlines.
+    ///
+    /// Never a restart trigger. This is a report to the operator, not a verdict
+    /// on the process: only a *proven-dead* process is restarted, because the
+    /// alternative is killing an agent that was thinking hard about a large
+    /// repository.
+    Unresponsive,
     /// Ended by design. Not degraded — there is nothing wrong with it.
     Finished,
 }
@@ -309,6 +344,19 @@ pub struct Session {
     /// during one sort and can violate the total order `sort_by` requires.
     #[serde(default)]
     pub stalled: bool,
+    /// When this session last gave any evidence of being alive: a pty byte, a
+    /// transcript append, or a hook event.
+    ///
+    /// Distinct from `status_since`, which only moves when the status *changes*
+    /// — a session can hold `Working` for an hour while producing output the
+    /// whole time. `None` until the first signal arrives; the supervisor treats
+    /// the process start as the first deadline in that case.
+    #[serde(default)]
+    pub last_progress_at: Option<SystemTime>,
+    /// Consecutive missed progress deadlines. Reset by any evidence of life, so
+    /// this only climbs while the session is genuinely silent.
+    #[serde(default)]
+    pub missed_progress_deadlines: u32,
     pub restarts: u32,
     /// When the current process started, so the restart budget can be scoped to
     /// a window instead of counting for the life of the session. `None` before
@@ -417,6 +465,8 @@ impl Session {
             phase: SessionPhase::Starting,
             health: SessionHealth::Starting,
             stalled: false,
+            last_progress_at: None,
+            missed_progress_deadlines: 0,
             restarts: 0,
             process_started_at: None,
             last_exit_code: None,
@@ -490,16 +540,99 @@ impl Session {
             SessionStatus::NeedsApproval => SessionPhase::NeedsApproval,
             SessionStatus::Exited => SessionPhase::Resurrectable,
         };
+        // A status the agent itself reported is evidence it is alive, whatever
+        // the status says. Supervisor-sourced transitions are not: the
+        // supervisor deciding a session is `Unknown` says nothing about whether
+        // the agent is still working, and counting it as progress would let the
+        // fleet reassure itself.
+        if matches!(
+            source,
+            StatusSource::Hook
+                | StatusSource::AppServer
+                | StatusSource::Transcript
+                | StatusSource::PtyOutput
+        ) {
+            self.note_progress_at(now);
+        }
         self.health = match status {
             SessionStatus::Queued => SessionHealth::Queued,
             SessionStatus::Starting => SessionHealth::Starting,
             SessionStatus::Exited => SessionHealth::Degraded,
+            // A silence verdict outlives a status change: the agent moving from
+            // Thinking to Working while saying nothing to us is the supervisor's
+            // own bookkeeping, not the session speaking. Only real evidence
+            // clears it, and `note_progress_at` above is the only thing that
+            // does.
+            _ if self.health == SessionHealth::Unresponsive => SessionHealth::Unresponsive,
             _ if self.pid.is_some() => SessionHealth::Healthy,
             _ => SessionHealth::Degraded,
         };
         if previous != status {
             self.record_status_transition(Some(previous), status, source, now);
         }
+    }
+
+    /// Record evidence that the session is alive.
+    ///
+    /// Called for every pty byte, transcript append and agent hook event. It is
+    /// deliberately cheap and deliberately blind to *what* the evidence was:
+    /// the supervisor's question is only whether the process is still talking.
+    pub fn note_progress_at(&mut self, now: SystemTime) {
+        self.last_progress_at = Some(now);
+        self.missed_progress_deadlines = 0;
+        if self.health == SessionHealth::Unresponsive {
+            self.health = if self.pid.is_some() {
+                SessionHealth::Healthy
+            } else {
+                SessionHealth::Degraded
+            };
+        }
+    }
+
+    /// The supervisor's periodic liveness check. Returns whether the verdict
+    /// changed, so the caller only republishes a row that actually moved.
+    ///
+    /// This never restarts anything and never kills anything. It answers one
+    /// question — has this session gone quiet — and the answer is a report.
+    pub fn review_progress_at(&mut self, now: SystemTime) -> bool {
+        // Only a session that should be talking. A queued session has no
+        // process, an idle one is waiting on the operator by definition, and a
+        // rate-limited one is silent for a reason it already told us.
+        if !matches!(
+            self.status,
+            SessionStatus::Working | SessionStatus::Thinking | SessionStatus::Starting
+        ) || self.pid.is_none()
+        {
+            return false;
+        }
+        // Before the first signal, the process start is the deadline's origin —
+        // a session that has never said anything is still on the clock.
+        let since = self
+            .last_progress_at
+            .or(self.process_started_at)
+            .unwrap_or(self.status_since);
+        let Ok(silent_for) = now.duration_since(since) else {
+            return false;
+        };
+        // One deadline per elapsed period, so a supervisor that missed a sweep
+        // does not under-count the silence it slept through.
+        let missed = (silent_for.as_secs() / PROGRESS_DEADLINE.as_secs()) as u32;
+        if missed == self.missed_progress_deadlines {
+            return false;
+        }
+        self.missed_progress_deadlines = missed;
+        let unresponsive = missed >= PROGRESS_FAILURE_THRESHOLD;
+        if unresponsive && self.health != SessionHealth::Unresponsive {
+            self.health = SessionHealth::Unresponsive;
+            return true;
+        }
+        false
+    }
+
+    /// How long the session has been silent, when it has been silent at all.
+    pub fn silent_for(&self, now: SystemTime) -> Option<Duration> {
+        let since = self.last_progress_at.or(self.process_started_at)?;
+        now.duration_since(since).ok()
     }
 
     fn record_status_transition(
@@ -1216,6 +1349,178 @@ mod tests {
             // one — the exact reverse of what the old ordering produced.
             vec!["s0003", "s0002", "s0001"]
         );
+    }
+
+    /// A live session that should be talking, silent since `silent_for`.
+    fn working_session(now: SystemTime, silent_for: Duration) -> Session {
+        let spec = spec_for(Agent::Claude, Path::new("."));
+        let mut session = Session::new(SessionId::new(9), &spec);
+        session.status = SessionStatus::Working;
+        session.pid = Some(4242);
+        session.health = SessionHealth::Healthy;
+        session.process_started_at = Some(now - silent_for);
+        session.last_progress_at = Some(now - silent_for);
+        session
+    }
+
+    /// The distinction this whole verdict exists for. A twenty-minute test run
+    /// that prints the whole way is *busy*, and the old health field — derived
+    /// from status and PID alone — could not tell it from a wedge.
+    #[test]
+    fn a_session_producing_output_stays_healthy_however_long_it_works() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(500_000);
+        let mut session = working_session(now, Duration::ZERO);
+        // Four hours of work, reporting every minute.
+        for minute in 1..=240u64 {
+            session.note_progress_at(now + Duration::from_secs(minute * 60));
+            assert!(
+                !session.review_progress_at(now + Duration::from_secs(minute * 60)),
+                "a session that just spoke was called unresponsive at minute {minute}"
+            );
+        }
+        assert_eq!(session.health, SessionHealth::Healthy);
+        assert_eq!(session.missed_progress_deadlines, 0);
+    }
+
+    #[test]
+    fn a_silent_session_is_marked_unresponsive_and_is_not_restarted() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(500_000);
+        let mut session = working_session(now, PROGRESS_DEADLINE * PROGRESS_FAILURE_THRESHOLD);
+
+        assert!(session.review_progress_at(now), "the verdict did not change");
+        assert_eq!(session.health, SessionHealth::Unresponsive);
+        // The whole point: unresponsive is a report, not a restart. The process
+        // is alive and may be thinking, so nothing kills it.
+        assert_eq!(session.pid, Some(4242));
+        assert_eq!(session.status, SessionStatus::Working);
+        assert_eq!(session.restarts, 0);
+        assert!(session.backoff_until.is_none());
+        // And it does not re-announce itself on every later sweep.
+        assert!(!session.review_progress_at(now + PROGRESS_DEADLINE));
+    }
+
+    #[test]
+    fn one_missed_deadline_is_a_slow_moment_not_a_verdict() {
+        // Acting on a single missed probe is how a supervisor turns a busy
+        // machine into a restart storm.
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(500_000);
+        for missed in 1..PROGRESS_FAILURE_THRESHOLD {
+            let mut session = working_session(now, PROGRESS_DEADLINE * missed);
+            assert!(!session.review_progress_at(now), "{missed} misses acted on");
+            assert_eq!(session.health, SessionHealth::Healthy);
+            assert_eq!(session.missed_progress_deadlines, missed);
+        }
+    }
+
+    #[test]
+    fn evidence_of_life_clears_the_verdict() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(500_000);
+        let mut session = working_session(now, PROGRESS_DEADLINE * PROGRESS_FAILURE_THRESHOLD);
+        session.review_progress_at(now);
+        assert_eq!(session.health, SessionHealth::Unresponsive);
+
+        session.note_progress_at(now);
+        assert_eq!(session.health, SessionHealth::Healthy);
+        assert_eq!(session.missed_progress_deadlines, 0);
+    }
+
+    #[test]
+    fn the_supervisors_own_bookkeeping_is_not_evidence_the_agent_is_alive() {
+        // Otherwise the fleet reassures itself: the supervisor writes a status,
+        // the status counts as progress, and a wedged session looks healthy
+        // because something touched it.
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(500_000);
+        let mut session = working_session(now, PROGRESS_DEADLINE * PROGRESS_FAILURE_THRESHOLD);
+        session.review_progress_at(now);
+        assert_eq!(session.health, SessionHealth::Unresponsive);
+
+        for source in [
+            StatusSource::Supervisor,
+            StatusSource::ProcessQuery,
+            StatusSource::Manual,
+        ] {
+            let mut session = session.clone();
+            session.set_status_at(SessionStatus::Thinking, now, source, true);
+            assert_eq!(
+                session.health,
+                SessionHealth::Unresponsive,
+                "{source:?} cleared a silence verdict it is no evidence against"
+            );
+        }
+
+        // An agent-sourced transition is evidence, and does clear it.
+        for source in [
+            StatusSource::Hook,
+            StatusSource::Transcript,
+            StatusSource::PtyOutput,
+            StatusSource::AppServer,
+        ] {
+            let mut session = session.clone();
+            session.set_status_at(SessionStatus::Thinking, now, source, true);
+            assert_eq!(
+                session.health,
+                SessionHealth::Healthy,
+                "{source:?} is the agent speaking and should have cleared the verdict"
+            );
+        }
+    }
+
+    #[test]
+    fn a_session_with_nothing_to_say_is_not_judged_for_saying_nothing() {
+        // Idle means waiting on the operator; rate-limited already told us why
+        // it is quiet; queued has no process at all.
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(500_000);
+        for status in [
+            SessionStatus::Idle,
+            SessionStatus::RateLimited,
+            SessionStatus::NeedsApproval,
+            SessionStatus::AwaitingInput,
+            SessionStatus::Queued,
+            SessionStatus::Exited,
+        ] {
+            let mut session = working_session(now, PROGRESS_DEADLINE * 10);
+            session.status = status;
+            assert!(
+                !session.review_progress_at(now),
+                "{status:?} was judged for being silent; it is not stuck, it is waiting"
+            );
+            assert_ne!(session.health, SessionHealth::Unresponsive, "{status:?}");
+        }
+    }
+
+    #[test]
+    fn a_session_with_no_process_is_not_judged_at_all() {
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(500_000);
+        let mut session = working_session(now, PROGRESS_DEADLINE * 10);
+        session.pid = None;
+        assert!(!session.review_progress_at(now));
+        assert_ne!(session.health, SessionHealth::Unresponsive);
+    }
+
+    #[test]
+    fn a_missed_sweep_does_not_under_count_the_silence_it_slept_through() {
+        // The supervisor is not guaranteed to run on time. Counting one miss
+        // per sweep rather than per elapsed period would let a daemon that was
+        // paused for an hour report a single missed deadline.
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(500_000);
+        let mut session = working_session(now, PROGRESS_DEADLINE * 12);
+        assert!(session.review_progress_at(now));
+        assert_eq!(session.missed_progress_deadlines, 12);
+        assert_eq!(session.health, SessionHealth::Unresponsive);
+    }
+
+    #[test]
+    fn silence_and_stall_are_different_questions() {
+        // A session can be stalled without being silent — that is the case the
+        // old model could not express, and the reason health had to stop being
+        // a function of status and PID.
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(500_000);
+        let mut session = working_session(now, Duration::ZERO);
+        session.status_since = now - STALL_THRESHOLD - Duration::from_secs(60);
+
+        assert!(session.is_stalled_at(now), "it has held Working a long time");
+        assert!(!session.review_progress_at(now), "but it is still talking");
+        assert_eq!(session.health, SessionHealth::Healthy);
     }
 
     #[test]

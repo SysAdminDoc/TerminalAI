@@ -58,6 +58,9 @@ Working today (`terminalai-probe`, headless):
   xterm without corrupting multi-byte sequences split across reads
 - Windows PTY sessions use kill-on-close job objects so stopping a session reaps its descendants;
   daemon shutdown runs active teardown hooks once
+- Separates "is the process alive" from "is it still working": pty output, transcript growth and
+  hook events extend a per-session progress deadline, and three consecutive misses mark a session
+  unresponsive without restarting it — only a proven-dead process is restarted
 - Background ConPTY sessions use Windows EcoQoS and low memory priority while neither focused nor
   pinned; focus or pinning restores normal priority. Waiting-session counts appear as a numeric
   Windows taskbar overlay.

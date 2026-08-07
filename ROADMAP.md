@@ -162,13 +162,6 @@ additions; where they touch, the note says so.
   Acceptance: restart backoff, the restart window, lease expiry and notification grace are asserted by advancing a mock clock rather than sleeping; no test in those areas calls `thread::sleep`. Prerequisite for the windowed restart budget being testable at all.
   Complexity: M
 
-- [ ] P2 — Split the supervisor's health verdict from "is it running"
-  Why: a session that is busy thinking and one that has wedged are the same thing to the supervisor, which is the documented cause of restart storms in every system that conflates them.
-  Evidence: `SessionHealth` (`crates/terminalai-core/src/session.rs:135-141`) is recomputed from `status` and `pid` on every transition (`:386-392`), so it carries no independent signal. Nothing detects a wedged pty reader, though `pty.rs:110` and `registry.rs:2728` both document that blocking there stalls the fleet. Kubernetes separates liveness, readiness and startup probes and requires `failureThreshold` consecutive failures (default 3) before acting — https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/ ; systemd's `EXTEND_TIMEOUT_USEC` lets a slow-but-alive service push its own deadline out — https://man7.org/linux/man-pages/man3/sd_notify.3.html
-  Touches: `crates/terminalai-core/src/session.rs`, `crates/terminalai-core/src/registry.rs`
-  Acceptance: progress signals (pty output, transcript growth, hook events) extend a per-session deadline; missing it repeatedly marks the session unhealthy without restarting it, and only a proven-dead process restarts. Pairs with the "Detect a stalled session" item from 2026-08-03, which surfaces this to the operator — this item is the supervisor-side verdict that item displays.
-  Complexity: M
-
 ### P3
 
 - [ ] P3 — Close the coverage gaps the first `llvm-cov` run named
