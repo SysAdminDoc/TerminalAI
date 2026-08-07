@@ -196,3 +196,40 @@ test("the plugin URL field says what it does before it is used", () => {
   assert.match(label.textContent.toLowerCase(), /remote code/);
   assert.match(label.textContent.toLowerCase(), /http\(s\)/);
 });
+
+test("choosing Claude no longer rewrites a plan-mode selection", () => {
+  // The reset had been there unchanged since the first Tauri shell commit, with
+  // no test and no recorded reason, and it rewrote two of this tool's own
+  // built-in presets the moment the launcher synced its fields.
+  //
+  // Verified against the installed build rather than the documentation before
+  // removing it: `claude --help` lists `plan` among the accepted
+  // `--permission-mode` choices, and `claude --permission-mode plan --print`
+  // runs and exits 0.
+  assert.doesNotMatch(
+    main,
+    /permission-input"\)\.value === "plan"/,
+    "the launcher must not rewrite the operator's permission choice",
+  );
+  const fn = main.slice(main.indexOf("function syncAgentFields"));
+  const body = fn.slice(0, fn.indexOf("\n}"));
+  assert.doesNotMatch(body, /setPermissionValue/, "syncAgentFields sets no permission");
+});
+
+test("plan mode survives a built-in preset into the previewed argv", () => {
+  // Two built-in presets carry Permission::Plan, and both agents map it: Claude
+  // to `--permission-mode plan`, Codex to a collaboration mode. The mapping is
+  // asserted in the Rust that owns it; this pins the fact that the presets
+  // still ask for it, so a future edit cannot quietly drop the mode instead.
+  const presets = readFileSync(
+    new URL("../../crates/terminalai-app/src/preset.rs", import.meta.url),
+    "utf8",
+  ).replace(/\r\n/g, "\n");
+  const planning = presets.match(/permission: Some\(Permission::Plan\)/g) ?? [];
+  assert.ok(planning.length >= 2, `expected the planning presets to keep plan mode: ${planning.length}`);
+  const launch = readFileSync(
+    new URL("../../crates/terminalai-core/src/launch.rs", import.meta.url),
+    "utf8",
+  ).replace(/\r\n/g, "\n");
+  assert.match(launch, /Permission::Plan => "plan"/, "Claude still maps plan to its own flag");
+});

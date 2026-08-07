@@ -3188,7 +3188,16 @@ function syncAgentFields() {
   document.querySelectorAll(".codex-only").forEach((element) => element.classList.toggle("field-hidden", !codex));
   document.querySelectorAll(".claude-only").forEach((element) => element.classList.toggle("field-hidden", codex));
   renderCapabilityFields();
-  if (!codex && $("permission-input").value === "plan") setPermissionValue("ask");
+  // Choosing Claude used to silently rewrite a plan-mode selection to "ask".
+  // It had been there unchanged since the first Tauri shell commit, with no
+  // test and no recorded reason, and it rewrote two of this tool's own built-in
+  // presets the moment the launcher synced its fields.
+  //
+  // Removed 2026-08-07 after verifying against the installed build rather than
+  // the documentation: `claude --help` lists `plan` among the accepted
+  // `--permission-mode` choices, and `claude --permission-mode plan --print`
+  // runs and exits 0. `launch.rs` has always mapped Permission::Plan for both
+  // agents, so the launcher was the only thing that disagreed.
   document.querySelectorAll(".resume-id-field").forEach((element) => element.classList.toggle("field-hidden", $("resume-input").value === "new" || $("resume-input").value === "last"));
 }
 

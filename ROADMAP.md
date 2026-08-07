@@ -200,13 +200,6 @@ the historical `R-NN` scheme and the entries below follow the current convention
 
 ### P3
 
-- [ ] P3 — Decide whether the launcher should still force Claude off plan mode
-  Why: choosing Claude silently rewrites a plan-mode selection to "ask", but Claude Code supports `--permission-mode plan` and this project's own mapping table says so — the reset looks like it outlived whatever made it true.
-  Evidence: `web/src/main.js`'s `syncAgentFields` runs `if (!codex && $("permission-input").value === "plan") setPermissionValue("ask")`. It has been there unchanged since `1097e61`, the first Tauri shell commit, and no test covers it — `git log -S` finds only that commit. Meanwhile `launch.rs` maps `Permission::Plan` to `--permission-mode plan` for Claude and to `collaboration_mode.mode="Plan"` for Codex, so both agents express it, and `README.md`'s table lists Plan for both. Two built-in Claude presets ("Claude · Plan first", "Claude · Quick question") carry `Permission::Plan` and are therefore rewritten the moment the launcher syncs its fields.
-  Touches: `web/src/main.js`, `web/tests/launcherSafety.test.mjs`
-  Acceptance: either the reset is removed and a test asserts a Claude session keeps plan mode from a preset through to the previewed argv, or the reset is kept with a comment naming the Claude behaviour that requires it. Verify against a real `claude --permission-mode plan` launch before removing — the flag being documented is not proof this build accepts it.
-  Complexity: S
-
 - [ ] P3 — Tell the agent when the operator is using a screen reader
   Why: the app has an explicit opt-in screen-reader mode for its own terminal, and the agent whose output fills that terminal has a matching mode that is never turned on, so the accessible surface stops at the renderer.
   Evidence: the focused terminal toolbar's screen-reader opt-in is described in `README.md:132-133`. Claude Code exposes `--ax-screen-reader`, "render screen-reader friendly output; flat text without decorations (v2.1.181+)", and the environment variable `CLAUDE_AX_SCREEN_READER` (https://code.claude.com/docs/en/cli-reference, /settings). Neither is reachable: the flag is not in `launch.rs`'s table and the variable is not in `safe_environment_keys()`.

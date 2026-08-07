@@ -5,6 +5,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Fixed
+
+- Choosing Claude in the launcher no longer rewrites a plan-mode selection to "ask". The reset had
+  been there unchanged since the first Tauri shell commit, with no test and no recorded reason, and
+  it rewrote two of this tool's own built-in presets — "Claude · Plan first" and "Claude · Quick
+  question" — the moment the launcher synced its fields. Verified against the installed build rather
+  than the documentation before removing it: `claude --help` lists `plan` among the accepted
+  `--permission-mode` choices, and `claude --permission-mode plan --print` runs and exits 0.
+
 ### Added
 
 - `CwdChanged` is ingested, so a session that moves stops being described by where it used to be.
