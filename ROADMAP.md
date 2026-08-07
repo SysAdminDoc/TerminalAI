@@ -70,13 +70,6 @@ item above; where the two touch, the note says so.
 
 ### P3
 
-- [ ] P3 — Ingest the remaining hook events that change what a row means
-  Why: sixteen events are managed and the unhandled ones include the two that silently invalidate a row's contents and the one that would let this tool own agent-created worktrees.
-  Evidence: `crates/terminalai-core/src/hook_config.rs` manages SessionStart/End, Pre/PostToolUse, PostToolUseFailure, PostToolBatch, Pre/PostCompact, Permission{Request,Denied}, Stop, StopFailure, Subagent{Start,Stop}, UserPromptSubmit, Notification. Not handled: `CwdChanged` and `DirectoryAdded` (the row's folder and branch go stale), `WorktreeCreate` (can return a `worktreePath`, letting the supervisor place it), `TaskCreated`/`TaskCompleted` (tool progress beyond `TodoWrite`), `Elicitation`/`ElicitationResult`, `MessageDisplay`, `UserPromptExpansion`, `InstructionsLoaded`, `ConfigChange` — code.claude.com/docs/en/hooks
-  Touches: `crates/terminalai-core/src/hook_config.rs`, `hooks.rs`, `registry.rs`, `session.rs`
-  Acceptance: `CwdChanged` updates the row's folder and branch; `WorktreeCreate` returns a path under this tool's worktree root; each newly ingested event appears in the status history with its source. Events deliberately not ingested are listed with a reason.
-  Complexity: M
-
 - [ ] P3 — Corroborate cost from OpenTelemetry rather than only from an unsupported transcript format
   Why: Anthropic documents the transcript entry format as internal and version-changing, so the entire cost path rests on a contract that is explicitly not promised, while a sanctioned metrics surface exists.
   Evidence: code.claude.com/docs/en/sessions states the entry format "is internal to Claude Code and changes between versions". code.claude.com/docs/en/monitoring-usage defines `claude_code.cost.usage` and `claude_code.token.usage` with `query_source` (`main|subagent|auxiliary`) attribution; Codex exposes `[otel]` in config. Note both are client-side estimates, not bills.

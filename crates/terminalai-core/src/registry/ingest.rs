@@ -41,6 +41,21 @@ impl SessionRegistry {
         hook_token: Option<&str>,
         now: SystemTime,
     ) -> bool {
+        self.apply_hook_matching(event, hook_token, now).is_some()
+    }
+
+    /// Apply a hook and report *which* session it reached.
+    ///
+    /// The daemon needs the id to answer a hook that expects a reply —
+    /// `WorktreeCreate` is answered with a path — and re-deriving it there would
+    /// mean a second copy of the matching rule, including its token
+    /// authentication. One rule, two callers.
+    pub fn apply_hook_matching(
+        &self,
+        event: HookEvent,
+        hook_token: Option<&str>,
+        now: SystemTime,
+    ) -> Option<SessionId> {
         if let HookSignal::Unknown { event: hook_name } = &event.signal {
             tracing::warn!(
                 agent = ?event.agent,
@@ -68,6 +83,14 @@ impl SessionRegistry {
                 entry.session.branch.is_some(),
             )
         };
+        // A move is about to replace the working directory, so reading a branch
+        // from the one being left costs a process for an answer that is
+        // discarded a few lines later. The new directory's branch is read on the
+        // next event, because this runs outside the state lock and the new cwd
+        // is not known until inside it.
+        if matches!(signal, HookSignal::CwdChanged) {
+            return None;
+        }
         // A branch change is only visible after a tool ran, so a session start
         // and any expired cache are the moments worth spending a process on.
         let due = match checked {
@@ -102,7 +125,7 @@ impl SessionRegistry {
         source: StatusSource,
         hook_token: Option<&str>,
         now: SystemTime,
-    ) -> bool {
+    ) -> Option<SessionId> {
         // The pipe transport accepts an already-normalized event and therefore
         // bypasses `parse_hook`; enforce the same boundary for both transports.
         if event
@@ -151,16 +174,14 @@ impl SessionRegistry {
                         .map(|(id, _)| id.clone())
                 })
         };
-        let Some(id) = id else { return false };
+        let id = id?;
 
         // Resolved before the lock is taken: this shells out to Git.
         let branch = self.refreshed_branch(&id, &event.signal);
 
         let (session, notifications) = {
             let mut state = lock_state(&self.inner);
-            let Some(entry) = state.entries.get_mut(&id) else {
-                return false;
-            };
+            let entry = state.entries.get_mut(&id)?;
             let previous_status = entry.session.status;
             let previous_state_since = entry.session.state_since;
             if entry.session.resume_id.is_none()
@@ -235,6 +256,29 @@ impl SessionRegistry {
                 HookSignal::PermissionRequest | HookSignal::PermissionDenied => entry
                     .session
                     .set_status_from_at(SessionStatus::NeedsApproval, now, source),
+                // A move invalidates the row's folder *and* its branch, so the
+                // branch is dropped rather than left to expire: the cached one
+                // belongs to a directory this session has left, and thirty
+                // seconds of naming the wrong branch is thirty seconds of the
+                // row being wrong about which work is where.
+                //
+                // The status is deliberately untouched. Moving is not a
+                // lifecycle transition — an agent that `cd`s mid-task is still
+                // doing the same thing it was doing.
+                HookSignal::CwdChanged => {
+                    if let Some(cwd) = event.cwd.clone() {
+                        if entry.session.cwd != cwd {
+                            entry.session.cwd = cwd;
+                            entry.session.branch = None;
+                            entry.branch_checked = None;
+                            entry.session.note_moved_at(source, now);
+                        }
+                    }
+                }
+                // Answered by the daemon with a path rather than applied here:
+                // the row learns about the checkout when the agent reports it,
+                // and this hook is the request, not the report.
+                HookSignal::WorktreeCreate => {}
                 // Both compaction signals record an event as well as a status,
                 // because the status usually does not move: an agent compacting
                 // mid-turn is Thinking on both sides of a pause that can run to
@@ -364,7 +408,7 @@ impl SessionRegistry {
         // The queue advances on exactly this signal — the reported status the
         // fleet row is drawn from — rather than on a timer.
         self.pump_queue(&id);
-        true
+        Some(id)
     }
 
     /// Apply either a legacy hook or an app-server event without making the
@@ -428,6 +472,7 @@ impl SessionRegistry {
             None,
             now,
         )
+        .is_some()
     }
 
     /// Record a context reading against the Codex row carrying `native_id`.
@@ -1036,6 +1081,127 @@ mod tests {
         let pending = session.pending_approval.as_ref().expect("a pending request");
         assert_eq!(pending.tool.as_deref(), Some("command execution"));
         assert_eq!(pending.summary.as_deref(), Some("cargo build --release"));
+    }
+
+    /// A row whose native id is known, so a move can be matched by id rather
+    /// than by the working directory it is about to leave.
+    fn identified_row(registry: &SessionRegistry, id: &SessionId, native: &str) {
+        insert_session(registry, id, SessionStatus::Working);
+        let mut state = lock_state(&registry.inner);
+        let entry = state.entries.get_mut(id).expect("entry");
+        entry.session.resume_id = Some(native.to_owned());
+        entry.session.branch = Some("main".into());
+        entry.branch_checked = Some(std::time::Instant::now());
+    }
+
+    /// Deliver a hook using the token of the row with this native id.
+    ///
+    /// `apply_test_hook` locates the token by matching the event's cwd against
+    /// the row's, which a move breaks by definition — the event names the
+    /// directory the session moved *to*. The product does not have that
+    /// problem: it matches on the native id and the per-session token, and the
+    /// cwd fallback is only reached when no id was reported.
+    fn apply_identified_hook(registry: &SessionRegistry, native: &str, event: HookEvent) -> bool {
+        let token = {
+            let state = lock_state(&registry.inner);
+            state
+                .entries
+                .values()
+                .find(|entry| entry.session.resume_id.as_deref() == Some(native))
+                .map(|entry| entry.session.hook_token.clone())
+        };
+        registry.apply_hook_with_token(event, token.as_deref())
+    }
+
+    fn moved_to(native: &str, cwd: &str) -> HookEvent {
+        HookEvent {
+            agent: Agent::Claude,
+            session_id: Some(native.into()),
+            cwd: Some(PathBuf::from(cwd)),
+            signal: HookSignal::CwdChanged,
+            progress: None,
+            approval: None,
+        }
+    }
+
+    #[test]
+    fn a_move_updates_the_folder_and_drops_the_branch_that_belonged_to_it() {
+        // The row's folder and branch describe where the session *is*. Left
+        // unhandled, a moved session went on naming a directory it had left and
+        // a branch belonging to that directory — quietly, for the rest of the
+        // run.
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        identified_row(&registry, &id, "cc-1");
+        assert!(apply_identified_hook(&registry, "cc-1", moved_to("cc-1", "C:/repos/other")));
+
+        let session = &registry.snapshot()[0];
+        assert_eq!(session.cwd, PathBuf::from("C:/repos/other"));
+        assert_eq!(
+            session.branch, None,
+            "the old directory's branch must not survive the move"
+        );
+        assert_eq!(
+            session.status,
+            SessionStatus::Working,
+            "moving is not a lifecycle transition"
+        );
+        assert!(
+            session
+                .status_history
+                .iter()
+                .any(|entry| entry.reason.kind
+                    == crate::diagnostics::StatusReasonKind::WorkingDirectoryChanged),
+            "the move is not in the history: {:?}",
+            session.status_history
+        );
+    }
+
+    #[test]
+    fn a_move_to_the_same_directory_records_nothing() {
+        // Claude re-reports state freely. A no-op move that still wrote a
+        // diagnostic would fill the bounded history with nothing.
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        identified_row(&registry, &id, "cc-1");
+        let here = registry.snapshot()[0].cwd.display().to_string();
+        let before = registry.snapshot()[0].status_history.len();
+        assert!(apply_identified_hook(&registry, "cc-1", moved_to("cc-1", &here)));
+        let session = &registry.snapshot()[0];
+        assert_eq!(session.status_history.len(), before);
+        assert_eq!(session.branch.as_deref(), Some("main"), "nothing was invalidated");
+    }
+
+    #[test]
+    fn a_move_carrying_no_directory_changes_nothing() {
+        // The event is the only thing that knows where the session went. With
+        // no path there is nothing to apply, and blanking the row would replace
+        // a correct folder with none.
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        identified_row(&registry, &id, "cc-1");
+        let before = registry.snapshot()[0].cwd.clone();
+        let mut event = moved_to("cc-1", "C:/unused");
+        event.cwd = None;
+        apply_identified_hook(&registry, "cc-1", event);
+        assert_eq!(registry.snapshot()[0].cwd, before);
+        assert_eq!(registry.snapshot()[0].branch.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn a_worktree_placement_is_offered_only_when_a_root_is_configured() {
+        // Declining to place a checkout is safe; naming a path this tool cannot
+        // then manage is not, so no root means no answer and the agent keeps
+        // its own default.
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        insert_session(&registry, &id, SessionStatus::Working);
+        assert_eq!(registry.worktree_placement(&id), None, "no root configured");
+        assert_eq!(
+            registry.worktree_placement(&SessionId::new(99)),
+            None,
+            "an unknown session is never placed"
+        );
     }
 
     #[test]

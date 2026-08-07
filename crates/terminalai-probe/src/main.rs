@@ -903,6 +903,14 @@ fn cmd_hook(args: &[String]) -> i32 {
         Request::Hook { event, hook_token },
         timeout,
     ) {
+        // A path on stdout is how Claude Code takes a directive back from a
+        // hook. Printed only when the daemon supplied one, so every other event
+        // stays fire-and-forget: an adapter that wrote to stdout on an ordinary
+        // event would be answering a question the agent did not ask.
+        Ok(Response::Hook {
+            worktree_path: Some(path),
+            ..
+        }) => println!("{}", serde_json::json!({ "worktreePath": path })),
         Ok(Response::Hook { .. }) | Ok(Response::Ok) => {}
         Ok(other) => eprintln!("ignoring unexpected hook response: {other:?}"),
         Err(error) => eprintln!("ignoring hook delivery failure: {error}"),

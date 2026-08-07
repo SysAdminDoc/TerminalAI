@@ -486,6 +486,15 @@ pub enum Response {
     },
     Hook {
         matched: bool,
+        /// Where a checkout the agent is about to create should go.
+        ///
+        /// Only ever set for `WorktreeCreate`, and only when a worktree root is
+        /// configured and the session is known. `None` means the agent keeps
+        /// its own default — declining to place a checkout is safe, whereas
+        /// naming a path this tool cannot then manage is not.
+        #[serde(default)]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        worktree_path: Option<std::path::PathBuf>,
     },
     AgentEvent {
         matched: bool,
@@ -1545,9 +1554,25 @@ fn dispatch_with_endpoint(
                 message: "HTTP hook endpoint is unavailable".into(),
             },
         },
-        Request::Hook { event, hook_token } => Response::Hook {
-            matched: registry.apply_hook_with_token(event, hook_token.as_deref()),
-        },
+        Request::Hook { event, hook_token } => {
+            let wants_placement = matches!(event.signal, terminalai_core::HookSignal::WorktreeCreate);
+            let matched = registry.apply_hook_matching(
+                event,
+                hook_token.as_deref(),
+                std::time::SystemTime::now(),
+            );
+            Response::Hook {
+                // Answered only for the hook that asked. Every other event is
+                // fire-and-forget and must stay that way: an adapter that
+                // printed a path on an ordinary event would be handing the
+                // agent a directive it never requested.
+                worktree_path: matched
+                    .as_ref()
+                    .filter(|_| wants_placement)
+                    .and_then(|id| registry.worktree_placement(id)),
+                matched: matched.is_some(),
+            }
+        }
         Request::AgentEvent { event } => Response::AgentEvent {
             matched: registry.apply_agent_event(event),
         },

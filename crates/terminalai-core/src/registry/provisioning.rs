@@ -101,6 +101,35 @@ impl SessionRegistry {
     /// right, but nothing ever revisited it — so worktrees, branches and their
     /// registrations accumulated silently. Reports rather than deletes: what to
     /// do about unmerged work is the operator's call, not the supervisor's.
+    /// Where a checkout the *agent* is about to create should be placed.
+    ///
+    /// `WorktreeCreate` is the one hook that lets this supervisor own such a
+    /// checkout rather than discovering it later as a stray for the survey to
+    /// find. It answers with a path under the same root and by the same naming
+    /// rule the supervisor uses for its own, so an agent-made worktree is
+    /// indistinguishable from one this tool made — which is the point: the
+    /// cleanup, the survey and the land gate all already understand that shape.
+    ///
+    /// `None` when no root is configured or the session is unknown, in which
+    /// case the agent keeps its own default. Declining to place it is the safe
+    /// answer; naming a path we cannot manage is not.
+    pub fn worktree_placement(&self, id: &SessionId) -> Option<std::path::PathBuf> {
+        let root = self
+            .inner
+            .worktree_root
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone())?;
+        let cwd = {
+            let state = lock_state(&self.inner);
+            state.entries.get(id).map(|entry| entry.session.cwd.clone())?
+        };
+        // The repository, not the session's directory: a session already inside
+        // a worktree must not have the next one nested under it.
+        let repo = crate::worktree::repository_root(&cwd).ok()?;
+        Some(crate::worktree::path_for(&root, &repo, &id.0))
+    }
+
     pub fn stale_worktrees(&self) -> Vec<crate::worktree::StaleWorktree> {
         let Some(root) = self
             .inner

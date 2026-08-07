@@ -31,7 +31,46 @@ const CLAUDE_EVENTS: &[&str] = &[
     "SubagentStop",
     "PreCompact",
     "PostCompact",
+    // The row's folder and branch describe where the session is; an agent that
+    // moves invalidates both, and nothing else reports the move.
+    "CwdChanged",
+    // Answered with a path, so a checkout the agent makes lands under this
+    // tool's worktree root instead of becoming a stray for the survey to find.
+    "WorktreeCreate",
 ];
+
+/// Events this tool deliberately does not manage, and why.
+///
+/// Recorded because "not handled" and "handled by doing nothing" look identical
+/// from outside, and the next person to read the managed list should not have to
+/// re-derive which is which:
+///
+/// - `DirectoryAdded` — an *additional* directory, not a move. The row names one
+///   working directory by design; showing a session as being in two places is a
+///   worse answer than showing the one it was launched in.
+/// - `TaskCreated` / `TaskCompleted` — tool progress the row already gets from
+///   `TodoWrite` through `PostToolUse`. Ingesting both would double-count a plan.
+/// - `Elicitation` / `ElicitationResult` — the agent asking its *own* caller for
+///   input, which this tool is not. `PermissionRequest` is the one that concerns
+///   the operator and it is already managed.
+/// - `MessageDisplay`, `UserPromptExpansion`, `InstructionsLoaded` — content, not
+///   state. Ingesting them would put transcript-adjacent text on a row that is
+///   deliberately built from status alone.
+/// - `ConfigChange` — this tool writes managed hook entries into that same
+///   configuration, so ingesting its own writes is a feedback loop.
+#[allow(dead_code)]
+const DELIBERATELY_UNMANAGED: &[&str] = &[
+    "DirectoryAdded",
+    "TaskCreated",
+    "TaskCompleted",
+    "Elicitation",
+    "ElicitationResult",
+    "MessageDisplay",
+    "UserPromptExpansion",
+    "InstructionsLoaded",
+    "ConfigChange",
+];
+
 const CODEX_EVENTS: &[&str] = &[
     "SessionStart",
     "SessionEnd",

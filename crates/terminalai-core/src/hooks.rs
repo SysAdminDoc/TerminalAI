@@ -53,6 +53,18 @@ pub enum HookSignal {
     PostCompact,
     SubagentStart,
     SubagentStop,
+    /// The agent changed its working directory.
+    ///
+    /// The row's folder and branch describe where the session *is*, and an
+    /// agent that moves invalidates both. Unhandled, the row went on naming a
+    /// directory the session had left and a branch belonging to it — quietly,
+    /// and for the rest of the session.
+    CwdChanged,
+    /// The agent is about to create its own worktree and will accept a path.
+    ///
+    /// The one hook that lets this supervisor own a checkout the agent made
+    /// rather than discovering it later as a stray.
+    WorktreeCreate,
     Notification { notification: HookNotification },
     /// A provider quota is refusing work. Reported by the agent, never inferred
     /// from a session going quiet — silence is indistinguishable from a long
@@ -511,6 +523,8 @@ fn parse_lifecycle_signal(
         "precompact" | "pre_compact" => HookSignal::PreCompact,
         "postcompact" | "post_compact" => HookSignal::PostCompact,
         "subagentstart" | "subagent_start" => HookSignal::SubagentStart,
+        "cwdchanged" | "cwd_changed" => HookSignal::CwdChanged,
+        "worktreecreate" | "worktree_create" => HookSignal::WorktreeCreate,
         "subagentstop" | "subagent_stop" => HookSignal::SubagentStop,
         "notification" => HookSignal::Notification {
             notification: parse_notification(notification_name),

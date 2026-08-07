@@ -57,6 +57,9 @@ pub enum StatusReasonKind {
     /// Compaction finished. The occupancy reading taken before it described a
     /// window that no longer exists, so it is dropped rather than carried.
     ContextCompacted,
+    /// The agent moved to a different working directory, so the row's folder
+    /// and branch were re-read.
+    WorkingDirectoryChanged,
     Unknown,
 }
 

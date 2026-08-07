@@ -5,6 +5,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Added
+
+- `CwdChanged` is ingested, so a session that moves stops being described by where it used to be.
+  The row's folder and branch both name where the session *is*, and neither was updated: a moved
+  session went on naming a directory it had left and a branch belonging to that directory, quietly,
+  for the rest of the run. The branch is dropped rather than left to expire — thirty seconds of
+  naming the wrong branch is thirty seconds of the row being wrong about which work is where — and
+  re-read on the next event, because the new directory is only known inside the state lock and this
+  tool does not shell out to Git while holding it. Moving is not a lifecycle transition, so the
+  status is untouched; the move appears in the status history instead.
+- `WorktreeCreate` is answered with a path under this tool's worktree root, so a checkout the agent
+  makes is one the supervisor owns rather than a stray for the survey to find later. It uses the
+  same naming rule as a checkout this tool creates itself, which is what makes the existing cleanup,
+  survey and land gate understand it. No worktree root configured, or an unknown session, means no
+  answer: declining to place a checkout is safe, and naming a path that cannot then be managed is
+  not. Every other hook stays fire-and-forget — an adapter that wrote to stdout on an ordinary event
+  would be handing the agent a directive it never asked for.
+- The hook events this tool deliberately does not manage are now listed with a reason next to the
+  ones it does, because "not handled" and "handled by doing nothing" look identical from outside.
+
 ## [0.18.0] — 2026-08-07
 
 ### Added

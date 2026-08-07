@@ -683,6 +683,15 @@ impl Session {
         self.record_event(StatusReasonKind::ContextCompacted, source, at);
     }
 
+    /// Record that the session changed working directory.
+    ///
+    /// Separate from a status transition because moving is not one: an agent
+    /// that `cd`s mid-task is still doing what it was doing, and routing this
+    /// through `set_status_at` would restamp the dwell the fleet sorts by.
+    pub fn note_moved_at(&mut self, source: StatusSource, at: SystemTime) {
+        self.record_event(StatusReasonKind::WorkingDirectoryChanged, source, at);
+    }
+
     /// Push a diagnostic for something that happened to the session without
     /// changing its status.
     fn record_event(&mut self, kind: StatusReasonKind, source: StatusSource, at: SystemTime) {
