@@ -353,6 +353,13 @@ decision rather than a half-built mechanism nothing selects between.
 
 Verified against Claude Code 2.1.170 and codex-cli 0.146.0 on Windows 11 26100.
 
+**Architectures.** Releases ship **x86_64 only**. `aarch64-pc-windows-msvc` is type-checked by
+`scripts/check-cross-targets.ps1` on every run and compiles clean — the Windows-specific code is
+`windows-sys` calls rather than intrinsics — but no ARM64 bundle has been built or run on real
+hardware, so none is published. On a Snapdragon-class Windows machine the whole fleet therefore runs
+under emulation. Type-checking is not support, and an untested second architecture would be worse
+than an honest single one.
+
 ## Build
 
 ```powershell

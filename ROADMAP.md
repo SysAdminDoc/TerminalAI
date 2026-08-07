@@ -125,9 +125,3 @@ the historical `R-NN` scheme and the entries below follow the current convention
   Acceptance: when a provider reports rate limiting, the fleet can show which sessions consumed the current window and in what proportion, sourced from the same transcript arithmetic the rollup already uses, with unpriced sessions counted apart rather than as zero. It never presents an estimate as the provider's own accounting — the price-table tooltip's existing wording is the model.
   Complexity: M
 
-- [ ] P3 — Build for Windows on ARM
-  Why: the project's entire differentiator is Windows, and it ships x86_64 only, so every Snapdragon-class Windows machine runs the whole supervised fleet — daemon, probe and both agents — under emulation.
-  Evidence: `crates/terminalai-app/tauri.conf.json` declares no architecture and the bundle is produced for the host only; `scripts/check-cross-targets.ps1` defaults to `x86_64-unknown-linux-gnu` and its package list excludes `terminalai-app`. Nothing in the tree references `aarch64-pc-windows-msvc`. The Windows-specific code is `windows-sys` calls (job objects, EcoQoS, ConPTY, named pipes, taskbar) rather than intrinsics, so the port is a target and a bundle question rather than a code one — **Likely**, not verified by a build.
-  Touches: `scripts/check-cross-targets.ps1`, the release build step, `README.md`
-  Acceptance: `aarch64-pc-windows-msvc` is at least type-checked by the cross-target script alongside the Linux target, and the README states which architectures a release actually ships. If an ARM64 bundle is produced, it goes through `scripts/verify-installer.ps1` on real hardware before being called supported — an untested second architecture is worse than an honest single one.
-  Complexity: M

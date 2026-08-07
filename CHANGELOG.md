@@ -19,6 +19,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   the fixtures now declare `passthrough_args` and the check reports only what this tool is
   answerable for. The tool owns the argv it constructs, not the arguments a person passes through it.
 
+- `aarch64-pc-windows-msvc` is type-checked alongside the Linux target by
+  `scripts/check-cross-targets.ps1`, and compiles clean. This project's differentiator is Windows
+  while it ships x86_64 only, so every Snapdragon-class machine runs the entire fleet — daemon,
+  probe and both agents — under emulation; the Windows-specific code is `windows-sys` calls rather
+  than intrinsics, so the port should be a target-and-bundle question rather than a code one, and
+  compiling it is what turns that from an expectation into something the suite knows. The README
+  now states that releases ship x86_64 only, because type-checking is not support and an untested
+  second architecture is worse than an honest single one.
+
 - `terminalai-core::help` decides, from a help text and an argv, which flags the help does not list.
   Scanning stops at `--`, so the initial prompt (which both goldens deliberately set to
   `--dangerously-skip-permissions`, to prove it is not re-read as a flag) is positional by

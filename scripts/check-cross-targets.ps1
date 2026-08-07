@@ -13,6 +13,18 @@ run of this script found exactly that: the daemon's peer-PID check compared
 Running those branches is a separate job (WSL2). Compiling them is the cheap half
 and closes the larger hole.
 
+aarch64-pc-windows-msvc is checked for a different reason: this project's whole
+differentiator is Windows, and it ships x86_64 only, so every Snapdragon-class
+Windows machine runs the entire supervised fleet -- daemon, probe and both
+agents -- under emulation. The Windows-specific code here is `windows-sys` calls
+(job objects, EcoQoS, ConPTY, named pipes, taskbar) rather than intrinsics, so
+the port should be a target and bundle question rather than a code one. Type-
+checking it is what turns that "should be" into something the suite knows.
+
+Type-checking is NOT support. An ARM64 bundle would have to go through
+scripts/verify-installer.ps1 on real hardware before a release claimed it, and
+an untested second architecture is worse than an honest single one.
+
 terminalai-app is deliberately excluded: on Linux its Tauri dependency tree pulls
 `libdbus-sys`, whose build script needs a Linux pkg-config and dbus headers that
 cross-checking from Windows cannot supply. Its own `cfg(unix)` code is small and
@@ -30,7 +42,7 @@ pwsh -NoProfile -File scripts/check-cross-targets.ps1
 [CmdletBinding()]
 param(
     [string]$Toolchain = 'stable-x86_64-pc-windows-msvc',
-    [string[]]$Targets = @('x86_64-unknown-linux-gnu')
+    [string[]]$Targets = @('x86_64-unknown-linux-gnu', 'aarch64-pc-windows-msvc')
 )
 
 $ErrorActionPreference = 'Stop'
