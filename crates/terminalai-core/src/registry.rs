@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::admission::FleetDemand;
 use crate::agent::{AgentBinary, Origin};
 use crate::app_server::{AgentEvent, AppServerEvent};
 use crate::diagnostics::{LogEntry, StatusSource};
@@ -41,8 +42,6 @@ const SUBSCRIBER_QUEUE_CAPACITY: usize = 256;
 /// call; a branch changes far less often than that.
 const BRANCH_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const NOTIFICATION_RECHECK_INTERVAL: Duration = Duration::from_millis(250);
-pub const DEFAULT_MAX_LIVE_SESSIONS: usize = 3;
-pub const DEFAULT_SESSION_BUDGET_USD: f64 = 5.0;
 
 fn session_span(
     id: &SessionId,
@@ -57,277 +56,14 @@ fn session_span(
     )
 }
 
-/// Admission limits are owned by the daemon but kept in the registry so every
-/// process launch, including automatic restarts, observes the same cap.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct AdmissionConfig {
-    pub max_live_sessions: usize,
-    /// Applied to Claude launches that did not supply an explicit cap. Codex
-    /// has no equivalent launcher flag and therefore leaves this unused.
-    pub default_budget_usd: Option<f64>,
-    /// Fleet spend allowed inside `spend_window` before nothing new starts.
-    /// `None` disables the ceiling; running sessions are never stopped by it.
-    pub spend_ceiling_usd: Option<f64>,
-    /// How far back the ceiling looks.
-    pub spend_window: Duration,
-    /// Private commit the whole fleet may hold before nothing new starts.
-    /// Admission projects an unsampled session at its agent's measured typical
-    /// size rather than at zero, because admitting on "we have not looked yet"
-    /// is how a machine gets oversubscribed.
-    pub memory_budget_bytes: Option<u64>,
-    /// Per-session job memory cap. Exceeding it fails allocations inside the
-    /// agent; it does not terminate the session.
-    pub session_memory_cap_bytes: Option<u64>,
-    /// How many processes one session's job may hold at once.
-    pub max_processes_per_session: Option<u32>,
-}
-
-/// What one unsampled session is assumed to need.
-///
-/// Measured on the development machine and recorded in `CLAUDE.md`: Claude Code
-/// around 509 MB, Codex around 322 MB. Used only until the session reports its
-/// own figure, so a wrong guess corrects itself within a sampling interval.
-pub const ASSUMED_SESSION_BYTES_CLAUDE: u64 = 509 * 1024 * 1024;
-pub const ASSUMED_SESSION_BYTES_CODEX: u64 = 322 * 1024 * 1024;
-
-pub fn assumed_session_bytes(agent: crate::agent::Agent) -> u64 {
-    match agent {
-        crate::agent::Agent::Claude => ASSUMED_SESSION_BYTES_CLAUDE,
-        crate::agent::Agent::Codex => ASSUMED_SESSION_BYTES_CODEX,
-    }
-}
-
-impl AdmissionConfig {
-    pub fn new(max_live_sessions: usize, default_budget_usd: Option<f64>) -> Self {
-        Self {
-            max_live_sessions: max_live_sessions.max(1),
-            default_budget_usd: default_budget_usd
-                .filter(|value| value.is_finite() && *value >= 0.0),
-            spend_ceiling_usd: None,
-            spend_window: crate::spend::DEFAULT_SPEND_WINDOW,
-            memory_budget_bytes: None,
-            session_memory_cap_bytes: None,
-            max_processes_per_session: None,
-        }
-    }
-
-    /// Set the memory limits. Zero and non-finite figures disable rather than
-    /// admitting nothing, for the same reason the spend ceiling does: a
-    /// misconfigured limit must not halt the fleet.
-    pub fn with_memory_limits(
-        mut self,
-        budget_bytes: Option<u64>,
-        session_cap_bytes: Option<u64>,
-        max_processes: Option<u32>,
-    ) -> Self {
-        self.memory_budget_bytes = budget_bytes.filter(|bytes| *bytes > 0);
-        self.session_memory_cap_bytes = session_cap_bytes.filter(|bytes| *bytes > 0);
-        self.max_processes_per_session = max_processes.filter(|count| *count > 0);
-        self
-    }
-
-    /// The job limits one session's process tree is created with.
-    pub fn job_limits(&self) -> crate::process_tree::JobLimits {
-        crate::process_tree::JobLimits {
-            memory_bytes: self.session_memory_cap_bytes,
-            active_processes: self.max_processes_per_session,
-        }
-    }
-
-    /// Set the fleet ceiling. A non-finite or negative figure disables it
-    /// rather than admitting nothing, and a zero-length window is refused for
-    /// the same reason: a misconfigured ceiling must not halt the fleet.
-    pub fn with_spend_ceiling(
-        mut self,
-        ceiling_usd: Option<f64>,
-        window: Option<Duration>,
-    ) -> Self {
-        self.spend_ceiling_usd = ceiling_usd.filter(|value| value.is_finite() && *value >= 0.0);
-        self.spend_window = window
-            .filter(|value| !value.is_zero())
-            .unwrap_or(crate::spend::DEFAULT_SPEND_WINDOW);
-        self
-    }
-
-    /// Read daemon-wide limits without introducing a second config file.
-    /// TERMINALAI_DEFAULT_BUDGET_USD=none disables the Claude default cap.
-    pub fn from_environment() -> Result<Self, String> {
-        let max_live_sessions = std::env::var("TERMINALAI_MAX_LIVE_SESSIONS")
-            .ok()
-            .map(|value| {
-                value.parse::<usize>().map_err(|_| {
-                    "TERMINALAI_MAX_LIVE_SESSIONS must be a positive integer".to_string()
-                })
-            })
-            .transpose()?
-            .unwrap_or(DEFAULT_MAX_LIVE_SESSIONS);
-        let default_budget_usd = match std::env::var("TERMINALAI_DEFAULT_BUDGET_USD") {
-            Ok(value)
-                if value.eq_ignore_ascii_case("none") || value.eq_ignore_ascii_case("off") =>
-            {
-                None
-            }
-            Ok(value) => Some(value.parse::<f64>().map_err(|_| {
-                "TERMINALAI_DEFAULT_BUDGET_USD must be a non-negative decimal or 'none'".to_string()
-            })?),
-            Err(_) => Some(DEFAULT_SESSION_BUDGET_USD),
-        };
-        let spend_ceiling_usd = match std::env::var("TERMINALAI_SPEND_CEILING_USD") {
-            Ok(value)
-                if value.eq_ignore_ascii_case("none") || value.eq_ignore_ascii_case("off") =>
-            {
-                None
-            }
-            Ok(value) => Some(value.parse::<f64>().map_err(|_| {
-                "TERMINALAI_SPEND_CEILING_USD must be a non-negative decimal or 'none'".to_string()
-            })?),
-            Err(_) => None,
-        };
-        let spend_window = std::env::var("TERMINALAI_SPEND_WINDOW_HOURS")
-            .ok()
-            .map(|value| {
-                value
-                    .parse::<f64>()
-                    .ok()
-                    .filter(|hours| hours.is_finite() && *hours > 0.0)
-                    .map(|hours| Duration::from_secs_f64(hours * 3600.0))
-                    .ok_or_else(|| {
-                        "TERMINALAI_SPEND_WINDOW_HOURS must be a positive decimal".to_string()
-                    })
-            })
-            .transpose()?;
-        let config = Self::new(max_live_sessions, default_budget_usd);
-        if config.max_live_sessions != max_live_sessions {
-            return Err("TERMINALAI_MAX_LIVE_SESSIONS must be at least 1".into());
-        }
-        if config.default_budget_usd != default_budget_usd {
-            return Err("TERMINALAI_DEFAULT_BUDGET_USD must be finite and non-negative".into());
-        }
-        let config = config.with_spend_ceiling(spend_ceiling_usd, spend_window);
-        if config.spend_ceiling_usd != spend_ceiling_usd {
-            return Err("TERMINALAI_SPEND_CEILING_USD must be finite and non-negative".into());
-        }
-        let memory_budget_bytes = megabytes_from_env("TERMINALAI_MEMORY_BUDGET_MB")?;
-        let session_memory_cap_bytes = megabytes_from_env("TERMINALAI_SESSION_MEMORY_CAP_MB")?;
-        let max_processes_per_session = std::env::var("TERMINALAI_MAX_PROCESSES_PER_SESSION")
-            .ok()
-            .map(|value| {
-                value.parse::<u32>().map_err(|_| {
-                    "TERMINALAI_MAX_PROCESSES_PER_SESSION must be a positive integer".to_string()
-                })
-            })
-            .transpose()?;
-        let config = config.with_memory_limits(
-            memory_budget_bytes,
-            session_memory_cap_bytes,
-            max_processes_per_session,
-        );
-        Ok(config)
-    }
-}
-
-/// Megabytes from an environment variable, as bytes. `none`/`off` disables.
-fn megabytes_from_env(name: &str) -> Result<Option<u64>, String> {
-    match std::env::var(name) {
-        Ok(value) if value.eq_ignore_ascii_case("none") || value.eq_ignore_ascii_case("off") => {
-            Ok(None)
-        }
-        Ok(value) => value
-            .parse::<u64>()
-            .map(|megabytes| Some(megabytes.saturating_mul(1024 * 1024)))
-            .map_err(|_| format!("{name} must be a non-negative integer of megabytes or 'none'")),
-        Err(_) => Ok(None),
-    }
-}
-
-/// Why the gate is not starting anything new right now.
-///
-/// Kept as one value so every admission site gives the same answer, and so the
-/// operator is told which limit they hit rather than watching a row sit in
-/// `Queued` with no explanation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum AdmissionBlock {
-    /// Every live slot is taken.
-    SlotsFull,
-    /// Fleet spend inside the window has reached the ceiling.
-    SpendCeiling,
-    /// Admitting another session would put projected private commit over the
-    /// memory budget.
-    MemoryBudget,
-}
-
-impl Default for AdmissionConfig {
-    fn default() -> Self {
-        Self::new(DEFAULT_MAX_LIVE_SESSIONS, None)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct AdmissionSnapshot {
-    pub max_live_sessions: usize,
-    pub live_sessions: usize,
-    pub queued_sessions: usize,
-    pub aggregate_cost_usd: f64,
-    /// Nonblocking event delivery drops since daemon start. Output and row
-    /// updates are deliberately lossy when a subscriber is stalled; clients
-    /// can recover authoritative state with Snapshot/Reattach.
-    #[serde(default)]
-    pub dropped_events: u64,
-    /// Which price table any reported cost was computed against. Shown beside
-    /// the figure so a stale table is visible rather than assumed current.
-    #[serde(default)]
-    pub pricing_version: String,
-    /// How many sessions actually reported a cost. Zero means the fleet spend is
-    /// unknown, not zero.
-    #[serde(default)]
-    pub sessions_reporting_cost: usize,
-    /// Fleet spend inside the ceiling's window. Always reported, so the figure
-    /// is visible before a ceiling is ever configured.
-    #[serde(default)]
-    pub spend_window_usd: f64,
-    /// The configured ceiling, if any. `None` means nothing is being enforced.
-    #[serde(default)]
-    pub spend_ceiling_usd: Option<f64>,
-    /// Width of the rolling window, in hours.
-    #[serde(default)]
-    pub spend_window_hours: f64,
-    /// Why nothing new is starting, when something is stopping it.
-    #[serde(default)]
-    pub admission_block: Option<AdmissionBlock>,
-    /// Private commit the fleet may hold, if a budget is configured.
-    #[serde(default)]
-    pub memory_budget_bytes: Option<u64>,
-    /// What the fleet is expected to hold, counting unsampled sessions at their
-    /// agent's measured typical size.
-    #[serde(default)]
-    pub projected_memory_bytes: u64,
-    /// The per-session job cap, if one is configured.
-    #[serde(default)]
-    pub session_memory_cap_bytes: Option<u64>,
-    /// Sessions whose allocations the job is currently refusing.
-    #[serde(default)]
-    pub memory_limited_sessions: usize,
-    /// Agents that reported expired credentials. Only an explicit "not logged
-    /// in" lands here; an unreachable probe stays silent rather than raising a
-    /// banner the operator cannot act on.
-    #[serde(default)]
-    pub expired_auth: Vec<crate::auth::AgentAuth>,
-    /// Agents whose own launcher can enforce a per-session budget. Codex has no
-    /// documented equivalent, so its sessions are admission-refused only and
-    /// the header has to say so rather than implying a hard stop.
-    #[serde(default)]
-    pub budget_enforced_agents: Vec<String>,
-    /// Sessions a provider is currently refusing work. Surfaced in the header
-    /// because a limited fleet otherwise reads as a busy one.
-    #[serde(default)]
-    pub rate_limited_sessions: usize,
-    /// The earliest reported reset among them, if any of them said. `None` with
-    /// a nonzero count means no session reported a reset time — the header says
-    /// so rather than showing a guess.
-    #[serde(default)]
-    pub earliest_rate_limit_reset: Option<SystemTime>,
-}
+/// The admission gate itself lives in [`crate::admission`]: it decides over a
+/// summary passed in rather than over this module's lock and clock. Re-exported
+/// here because every caller reaches admission through the registry.
+pub use crate::admission::{
+    assumed_session_bytes, AdmissionBlock, AdmissionConfig, AdmissionSnapshot,
+    ASSUMED_SESSION_BYTES_CLAUDE, ASSUMED_SESSION_BYTES_CODEX, DEFAULT_MAX_LIVE_SESSIONS,
+    DEFAULT_SESSION_BUDGET_USD,
+};
 
 /// Events are deliberately coarse: a view can rebuild its rows from a session
 /// update and only the focused pane needs to consume output bytes.
@@ -3718,68 +3454,38 @@ fn next_sequence(id: &SessionId) -> u64 {
         .saturating_add(1)
 }
 
-/// Sessions holding an admission slot.
+/// What the fleet holds right now, as the admission gate sees it.
 ///
-/// Rate-limited sessions are excluded: they are running, but the provider is
-/// refusing them work, so counting them would keep a queued session waiting
-/// behind a process that provably cannot progress.
-/// The one place that decides whether anything new may start.
-///
-/// Every admission site calls this so the slot cap and the spend ceiling cannot
-/// drift apart: a second copy of "is there room" is how one path ends up
-/// enforcing a limit the other ignores.
-fn admission_block(state: &State) -> Option<AdmissionBlock> {
-    if admitted_count(state) >= state.admission.max_live_sessions {
-        return Some(AdmissionBlock::SlotsFull);
-    }
-    if let Some(ceiling) = state.admission.spend_ceiling_usd {
-        let spent = state
-            .spend
-            .window_total_at(SystemTime::now(), state.admission.spend_window);
-        if spent >= ceiling {
-            return Some(AdmissionBlock::SpendCeiling);
+/// Rate-limited sessions are excluded by `occupies_admission_slot`: they are
+/// running, but the provider is refusing them work, so counting them would keep
+/// a queued session waiting behind a process that provably cannot progress.
+fn admitted_demand(state: &State) -> FleetDemand {
+    let mut demand = FleetDemand::default();
+    for entry in state.entries.values() {
+        if entry.session.status.occupies_admission_slot() {
+            demand.admit(entry.session.agent, entry.session.memory_bytes);
         }
     }
-    if let Some(budget) = state.admission.memory_budget_bytes {
-        // Projection, not measurement: the session being admitted has no
-        // process yet, so the question is whether the fleet would still fit
-        // once it does. Headroom for one more is what makes this a gate rather
-        // than a post-mortem — blocking only once the total is already over
-        // admits exactly the session that puts it there.
-        let projected = projected_memory_bytes(state);
-        let headroom = ASSUMED_SESSION_BYTES_CLAUDE.min(ASSUMED_SESSION_BYTES_CODEX);
-        // An empty fleet always gets one session: a budget too small for any
-        // agent is a misconfiguration, and halting entirely would hide it.
-        let occupied = admitted_count(state) > 0;
-        if occupied && projected.saturating_add(headroom) > budget {
-            return Some(AdmissionBlock::MemoryBudget);
-        }
-    }
-    None
+    demand
 }
 
-/// Private commit the fleet is expected to hold, counting a session that has
-/// not been sampled yet at its agent's measured typical size.
+/// The gate's answer for this fleet. Reading the clock is the registry's job:
+/// [`crate::admission::block`] is given the spend already resolved so it stays a
+/// pure function of what it is handed.
+fn admission_block(state: &State) -> Option<AdmissionBlock> {
+    let mut demand = admitted_demand(state);
+    demand.spend_window_usd = state
+        .spend
+        .window_total_at(SystemTime::now(), state.admission.spend_window);
+    crate::admission::block(&state.admission, &demand)
+}
+
 fn projected_memory_bytes(state: &State) -> u64 {
-    state
-        .entries
-        .values()
-        .filter(|entry| entry.session.status.occupies_admission_slot())
-        .map(|entry| {
-            entry
-                .session
-                .memory_bytes
-                .unwrap_or_else(|| assumed_session_bytes(entry.session.agent))
-        })
-        .sum()
+    admitted_demand(state).projected_memory_bytes
 }
 
 fn admitted_count(state: &State) -> usize {
-    state
-        .entries
-        .values()
-        .filter(|entry| entry.session.status.occupies_admission_slot())
-        .count()
+    admitted_demand(state).admitted
 }
 
 #[derive(Default)]

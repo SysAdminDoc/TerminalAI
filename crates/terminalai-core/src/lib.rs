@@ -9,6 +9,7 @@
 //! Nothing in this crate depends on a UI toolkit; `terminalai-probe` drives it
 //! headlessly and the Tauri shell drives it from a command handler.
 
+pub mod admission;
 pub mod agent;
 pub mod app_server;
 pub mod atomic_file;
