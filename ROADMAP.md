@@ -228,13 +228,6 @@ the historical `R-NN` scheme and the entries below follow the current convention
   Acceptance: a named working set records the launch spec, project folder, pin state and grouping for many sessions and can be relaunched as one action; restoring it obeys every existing refusal — admission, memory budget, spend ceiling, dirty tree — rather than bypassing them, and reports per session which ones it declined to start and why. Restoring never adopts an existing worktree or branch, for the reason the worktree feature already refuses to.
   Complexity: M
 
-- [ ] P2 — Archive a session when its work has landed
-  Why: the archive exists and is bounded, but only the operator ever fills it, so a fleet accumulates finished rows that still read as live work.
-  Evidence: `Request::Archive` (`crates/terminalai-daemon/src/lib.rs:1577`) is operator-driven and `crates/terminalai-core/src/land.rs` never calls it; the bounded archive shipped in `1658e75`. Anthropic's redesigned desktop app does the opposite by default: "When a session's PR merges or closes, it archives itself so the sidebar stays focused on what's live" (https://claude.com/blog/claude-code-desktop-redesign).
-  Touches: `crates/terminalai-core/src/land.rs`, `registry.rs`, `crates/terminalai-daemon/src/lib.rs`, `web/src/main.js`
-  Acceptance: a successful landing offers to archive the session it landed and records the landing in the archive entry, so the survey of leftover checkouts can tell "finished and landed" from "abandoned". A refused or partial landing archives nothing. Auto-archive is opt-in and never removes a worktree holding unmerged commits — the existing worktree rule wins.
-  Complexity: M
-
 - [ ] P2 — Decompose `registry.rs`
   Why: it is 6,106 lines and the highest-churn Rust file in the tree, it grew 34% in the two days since the last research pass measured it at 4,545, and two already-filed items are explicitly waiting on it.
   Evidence: `wc -l crates/terminalai-core/src/registry.rs` = 6,106; 62 of the last 300 commits touch it, ~1.3x the next Rust file. The "Model-based tests over the registry and session store" item names it as the surface under test, and `RESEARCH.md` rejected `loom`/`shuttle` with "Revisit if `registry.rs` is decomposed for other reasons — the extraction of admission and restart policy would get most of the way there." The natural seams are already named in that rejection: admission, restart policy, and the time-dependent state machines the mock-clock item targets.

@@ -2340,6 +2340,17 @@ button {
   margin-bottom: 8px;
 }
 
+/* The per-landing opt-in. Sits with the toolbar's controls, not with its
+   summary text, so it reads as an action's setting rather than as status. */
+.review-archive-opt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--subtext1);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .review-toolbar > span:nth-child(2) {
   flex: 1;
   color: var(--subtext0);

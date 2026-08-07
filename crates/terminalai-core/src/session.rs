@@ -357,6 +357,15 @@ pub struct Session {
     /// this only climbs while the session is genuinely silent.
     #[serde(default)]
     pub missed_progress_deadlines: u32,
+    /// What this session's work landed, when it has landed.
+    ///
+    /// The one fact that separates a finished session from an abandoned one.
+    /// Everything else about a session whose work is done looks identical to one
+    /// somebody walked away from: no process, a checkout still on disk, a branch
+    /// nobody merged. Carried into the archive entry so the distinction survives
+    /// the row.
+    #[serde(default)]
+    pub landed: Option<crate::land::Landing>,
     pub restarts: u32,
     /// When the current process started, so the restart budget can be scoped to
     /// a window instead of counting for the life of the session. `None` before
@@ -467,6 +476,7 @@ impl Session {
             stalled: false,
             last_progress_at: None,
             missed_progress_deadlines: 0,
+            landed: None,
             restarts: 0,
             process_started_at: None,
             last_exit_code: None,

@@ -1656,10 +1656,17 @@ async function landSession(id, cwd, button) {
     button.textContent = t("review-landing");
   }
   try {
+    // Read at land time, not captured earlier: the operator may tick it while
+    // reading the diff.
+    const archiveOnSuccess = Boolean($("review-archive-on-land")?.checked);
     const outcome = await invoke("land_session", {
       request: {
         source: cwd,
         target: cwd,
+        // Named so a successful landing is recorded on the row it came from —
+        // the one fact that separates a finished session from an abandoned one.
+        session: id,
+        archive_on_success: archiveOnSuccess,
         // Pinned to what this review described, so a target that moved while
         // the operator was reading is refused rather than silently landed on.
         expected_target_head: entry.target_head ?? null,
@@ -1667,7 +1674,10 @@ async function landSession(id, cwd, button) {
       },
     });
     if (outcome.outcome === "landed") {
-      showToast(t("review-landed", { files: outcome.files_changed }), "success");
+      // The work landed either way. A refused archive is reported rather than
+      // swallowed, because it names something the operator can act on — the
+      // session is still running, or its worktree holds unmerged commits.
+      showToast(landedText(outcome), outcome.archive?.archive === "refused" ? "" : "success");
       await loadReview();
       return;
     }
@@ -1688,6 +1698,15 @@ async function landSession(id, cwd, button) {
 }
 
 /// Turn a structured refusal into one line the operator can act on.
+/// What a successful landing did, including what became of its session.
+function landedText(outcome) {
+  const files = outcome.files_changed;
+  if (outcome.archive?.archive === "archived") return t("review-landed-archived", { files });
+  if (outcome.archive?.archive === "refused")
+    return t("review-landed-not-archived", { files, reason: outcome.archive.detail });
+  return t("review-landed", { files });
+}
+
 function refusalText(outcome) {
   switch (outcome.reason) {
     case "target-moved":

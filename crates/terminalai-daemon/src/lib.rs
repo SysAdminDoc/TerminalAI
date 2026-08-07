@@ -54,7 +54,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(windows)]
 use std::sync::Condvar;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use interprocess::local_socket::{
     prelude::*, GenericNamespaced, ListenerNonblockingMode, ListenerOptions, Name, RecvHalf,
@@ -373,6 +373,21 @@ pub enum Request {
     },
 }
 
+/// What became of the session an opt-in landing asked to archive.
+///
+/// Reported rather than swallowed: archiving is refused for reasons the
+/// operator can act on -- the session is still running, or its worktree still
+/// holds unmerged commits -- and a landing that quietly did not archive looks
+/// exactly like one that did.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "archive", rename_all = "kebab-case")]
+pub enum ArchiveAfterLanding {
+    Archived,
+    /// The landing succeeded; the archive did not. The work is landed either
+    /// way, which is why this is not a landing failure.
+    Refused { detail: String },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 // Snapshot/status responses intentionally carry the full fleet row model;
@@ -398,6 +413,10 @@ pub enum Response {
     },
     Land {
         outcome: terminalai_core::land::LandOutcome,
+        /// What happened to the session afterwards, when the request asked for
+        /// it to be archived. `None` means it did not ask.
+        #[serde(default)]
+        archive: Option<ArchiveAfterLanding>,
     },
     ReviewSnapshot {
         entries: Vec<ReviewItem>,
@@ -1207,6 +1226,57 @@ fn drain_log_events(
     }
 }
 
+/// Whether `id` is the session whose tree `source` actually is.
+///
+/// A landing names both a source directory and a session, and nothing forces
+/// them to be the same thing. Left unchecked, `--session s0001` against any
+/// source at all records a landing on s0001's row and, with the opt-in, retires
+/// it — a fact about one session filed against another, and a row archived on
+/// the strength of work it never did. Both are silent and neither is easy to
+/// notice afterwards, which is why this refuses rather than warns.
+///
+/// A session's own worktree counts as its source: that is the whole point of
+/// giving it one.
+fn owns_source(
+    registry: &SessionRegistry,
+    id: &SessionId,
+    source: &std::path::Path,
+) -> Result<(), String> {
+    let session = registry
+        .snapshot()
+        .into_iter()
+        .find(|session| session.id == *id)
+        .ok_or_else(|| format!("session {id} does not exist"))?;
+    // Canonicalised on both sides: these are operator-supplied and daemon-stored
+    // paths that routinely disagree on separators and case while naming one
+    // directory.
+    let same = |candidate: &std::path::Path| match (candidate.canonicalize(), source.canonicalize())
+    {
+        (Ok(left), Ok(right)) => left == right,
+        // An unreadable path cannot be shown to match, and this is the side that
+        // must fail closed.
+        _ => false,
+    };
+    if same(&session.cwd) {
+        return Ok(());
+    }
+    if let Some(worktree) = session.worktree.as_ref() {
+        if same(&worktree.path) {
+            return Ok(());
+        }
+    }
+    Err(format!(
+        "session {id} did not produce {}; its own tree is {}",
+        source.display(),
+        session
+            .worktree
+            .as_ref()
+            .map(|worktree| worktree.path.clone())
+            .unwrap_or(session.cwd)
+            .display()
+    ))
+}
+
 #[cfg(test)]
 fn dispatch(request: Request, registry: &SessionRegistry) -> Response {
     dispatch_with_endpoint(request, registry, None, None)
@@ -1266,9 +1336,56 @@ fn dispatch_with_endpoint(
                 message: failures.join("; "),
             },
         },
-        Request::Land { request } => Response::Land {
-            outcome: land_queue().land(&request),
-        },
+        Request::Land { request } => {
+            let outcome = land_queue().land(&request);
+            // Only a whole, successful landing does anything further. A refusal
+            // -- including the mixed state a failed reversal leaves -- records
+            // nothing and archives nothing, because none of it finished.
+            let archive = match (&outcome, request.session.as_ref()) {
+                (
+                    terminalai_core::land::LandOutcome::Landed {
+                        files_changed,
+                        target_head,
+                        verified,
+                    },
+                    Some(id),
+                ) => match owns_source(registry, id, &request.source) {
+                    Err(detail) => {
+                        // The named row is not the one whose work this was, so
+                        // recording the landing on it would file a fact about
+                        // one session against another, and archiving it would
+                        // retire a row on the strength of an unrelated landing.
+                        // Refuse both, loudly. The work still landed.
+                        tracing::warn!(session = %id, %detail, "landed, but the named row does not own the source");
+                        request
+                            .archive_on_success
+                            .then_some(ArchiveAfterLanding::Refused { detail })
+                    }
+                    Ok(()) => {
+                        let landing = terminalai_core::land::Landing {
+                            at: SystemTime::now(),
+                            target: request.target.clone(),
+                            target_head: target_head.clone(),
+                            files_changed: *files_changed,
+                            verified: *verified,
+                        };
+                        if let Err(error) = registry.record_landing(id, landing) {
+                            // The work landed regardless; a row that vanished
+                            // between the two is not a landing failure.
+                            tracing::warn!(session = %id, %error, "landed, but the row could not record it");
+                        }
+                        request.archive_on_success.then(|| match registry.archive(id) {
+                            Ok(_) => ArchiveAfterLanding::Archived,
+                            Err(error) => ArchiveAfterLanding::Refused {
+                                detail: error.to_string(),
+                            },
+                        })
+                    }
+                },
+                _ => None,
+            };
+            Response::Land { outcome, archive }
+        }
         Request::AdmissionConfig => Response::Admission {
             admission: admission_settings(&registry.admission_config()),
         },
@@ -2108,6 +2225,99 @@ mod tests {
         let json = serde_json::to_string(&event).expect("encode");
         assert!(json.contains("\"kind\":\"event\""));
         assert!(!json.contains("\"id\":0"));
+    }
+
+    #[test]
+    fn a_session_owns_its_own_directory_and_its_own_worktree() {
+        // The guard must not be so strict it refuses the case it exists to
+        // allow: the session that actually did the work.
+        let cwd = std::env::temp_dir();
+        let spec = terminalai_core::launch::spec_for(terminalai_core::Agent::Claude, &cwd);
+        let session = terminalai_core::Session::new(SessionId::new(21), &spec);
+        let registry = SessionRegistry::from_store(terminalai_core::store::SessionStoreSnapshot {
+            magic: terminalai_core::store::SESSION_STORE_MAGIC.to_owned(),
+            schema_version: terminalai_core::store::SESSION_STORE_SCHEMA_VERSION,
+            spend: Vec::new(),
+            sessions: vec![terminalai_core::store::StoredSession {
+                session,
+                spec,
+                command: terminalai_core::ResolvedCommand {
+                    program: std::path::PathBuf::from("claude.exe"),
+                    args: Vec::new(),
+                    cwd: cwd.clone(),
+                },
+                scrollback: Vec::new(),
+                queue: Default::default(),
+            }],
+            archives: Vec::new(),
+            extra: Default::default(),
+        });
+        assert!(owns_source(&registry, &SessionId::new(21), &cwd).is_ok());
+    }
+
+    #[test]
+    fn a_landing_is_not_filed_against_a_session_that_did_not_produce_it() {
+        // Found the hard way: naming an unrelated session archived a real row
+        // on the strength of a landing it had nothing to do with, and wrote a
+        // landing record onto it that was simply false. Both are silent.
+        let registry = SessionRegistry::new();
+        let elsewhere = std::env::temp_dir();
+        assert!(owns_source(&registry, &SessionId("s0001".into()), &elsewhere).is_err());
+
+        let response = dispatch(
+            Request::Land {
+                request: Box::new(terminalai_core::land::LandRequest {
+                    source: elsewhere.clone(),
+                    target: elsewhere,
+                    session: Some(SessionId("s0001".into())),
+                    archive_on_success: true,
+                    expected_target_head: None,
+                    verify: Vec::new(),
+                    verify_timeout_secs: None,
+                }),
+            },
+            &registry,
+        );
+        let Response::Land { archive, .. } = response else {
+            panic!("expected a land response");
+        };
+        // Whatever the landing did, no unrelated row was retired for it.
+        assert!(!matches!(archive, Some(ArchiveAfterLanding::Archived)));
+    }
+
+    #[test]
+    fn a_refused_landing_archives_nothing() {
+        // The archive is offered on success only. A landing that refused left
+        // the target untouched, so the session still owns work nobody has
+        // landed -- archiving it there would file unfinished work as finished.
+        let missing = std::env::temp_dir().join("terminalai-not-a-repository-at-all");
+        let _ = std::fs::remove_dir_all(&missing);
+        let response = dispatch(
+            Request::Land {
+                request: Box::new(terminalai_core::land::LandRequest {
+                    source: missing.clone(),
+                    target: missing,
+                    session: Some(SessionId("s0001".into())),
+                    // Asked for, and still not done, because the landing failed.
+                    archive_on_success: true,
+                    expected_target_head: None,
+                    verify: Vec::new(),
+                    verify_timeout_secs: None,
+                }),
+            },
+            &SessionRegistry::new(),
+        );
+        let Response::Land { outcome, archive } = response else {
+            panic!("expected a land response");
+        };
+        assert!(matches!(
+            outcome,
+            terminalai_core::land::LandOutcome::Refused(_)
+        ));
+        assert!(
+            archive.is_none(),
+            "a refused landing reported an archive result: {archive:?}"
+        );
     }
 
     #[test]

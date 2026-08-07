@@ -93,6 +93,14 @@ pub struct ArchivedSession {
     /// first load. Unstamped records age out through the count bound instead.
     #[serde(default)]
     pub archived_at: Option<SystemTime>,
+    /// What this session landed, if it landed anything.
+    ///
+    /// Copied from the session rather than passed in, so every path that
+    /// archives carries it without having to remember to. This is what lets the
+    /// leftover-checkout survey tell "finished and landed" from "abandoned"
+    /// after the row itself is gone.
+    #[serde(default)]
+    pub landed: Option<crate::land::Landing>,
 }
 
 impl ArchivedSession {
@@ -108,6 +116,7 @@ impl ArchivedSession {
             cwd: session.cwd.clone(),
             command: command.preview(),
             archived_at: Some(at),
+            landed: session.landed.clone(),
         }
     }
 }
@@ -480,6 +489,7 @@ mod tests {
             cwd: PathBuf::from("."),
             command: "claude.exe".into(),
             archived_at: at,
+            landed: None,
         }
     }
 

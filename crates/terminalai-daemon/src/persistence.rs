@@ -384,6 +384,7 @@ mod tests {
                 cwd: spec.cwd.clone(),
                 command: "codex.exe".into(),
                 archived_at: Some(SystemTime::now()),
+                landed: None,
             }],
             extra: Default::default(),
         });

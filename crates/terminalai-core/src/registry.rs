@@ -1340,6 +1340,32 @@ impl SessionRegistry {
 
     /// Remove a stopped row from the live fleet while preserving only the
     /// layout, cwd and exact command in the durable archive.
+    /// Record that this session's work landed.
+    ///
+    /// Kept on the row rather than only in the landing's response, because the
+    /// response is read once and thrown away while the question it answers —
+    /// did this session finish, or did someone abandon it — is asked every time
+    /// anyone looks at the leftover checkouts.
+    pub fn record_landing(
+        &self,
+        id: &SessionId,
+        landing: crate::land::Landing,
+    ) -> Result<(), RegistryError> {
+        let session = {
+            let mut state = lock_state(&self.inner);
+            let entry = state
+                .entries
+                .get_mut(id)
+                .ok_or_else(|| RegistryError::Missing(id.clone()))?;
+            entry.session.landed = Some(landing);
+            entry.session.clone()
+        };
+        self.emit(RegistryEvent::SessionUpdated {
+            session: Box::new(session),
+        });
+        Ok(())
+    }
+
     pub fn archive(&self, id: &SessionId) -> Result<ArchivedSession, RegistryError> {
         {
             let state = lock_state(&self.inner);
@@ -4552,6 +4578,84 @@ mod tests {
         assert_eq!(output, "😀".as_bytes());
     }
 
+    /// A row with no process behind it, so archiving is reachable without
+    /// spawning anything.
+    fn restored_row(id: u64) -> SessionRegistry {
+        let cwd = Path::new(".").to_path_buf();
+        let spec = spec_for(Agent::Claude, &cwd);
+        let session = Session::new(SessionId::new(id), &spec);
+        SessionRegistry::from_store(SessionStoreSnapshot {
+            magic: crate::store::SESSION_STORE_MAGIC.to_owned(),
+            schema_version: crate::store::SESSION_STORE_SCHEMA_VERSION,
+            spend: Vec::new(),
+            sessions: vec![StoredSession {
+                session,
+                spec,
+                command: ResolvedCommand {
+                    program: PathBuf::from("claude.exe"),
+                    args: Vec::new(),
+                    cwd,
+                },
+                scrollback: Vec::new(),
+                queue: Default::default(),
+            }],
+            archives: Vec::new(),
+            extra: BTreeMap::new(),
+        })
+    }
+
+    fn a_landing(files_changed: usize) -> crate::land::Landing {
+        crate::land::Landing {
+            at: SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000),
+            target: PathBuf::from("C:/repos/project"),
+            target_head: "abc1234".into(),
+            files_changed,
+            verified: Some(true),
+        }
+    }
+
+    #[test]
+    fn a_landing_is_recorded_on_the_row_and_survives_into_the_archive() {
+        let registry = restored_row(11);
+        let id = SessionId::new(11);
+        registry
+            .record_landing(&id, a_landing(3))
+            .expect("record the landing");
+
+        let row = registry
+            .snapshot()
+            .into_iter()
+            .find(|session| session.id == id)
+            .expect("the row");
+        assert_eq!(row.landed.as_ref().expect("landed").files_changed, 3);
+
+        // The archive is where the question is actually asked: the row is gone
+        // by the time anyone surveys leftover checkouts.
+        let archived = registry.archive(&id).expect("archive");
+        assert_eq!(archived.landed.expect("the landing"), a_landing(3));
+        assert_eq!(
+            registry.archives()[0].landed.as_ref().expect("landed").target_head,
+            "abc1234"
+        );
+    }
+
+    #[test]
+    fn a_session_that_never_landed_is_archived_as_one_that_never_landed() {
+        // The distinction is only worth anything if the absence is recorded as
+        // faithfully as the presence: this is the abandoned case.
+        let registry = restored_row(12);
+        let archived = registry.archive(&SessionId::new(12)).expect("archive");
+        assert!(archived.landed.is_none());
+    }
+
+    #[test]
+    fn recording_a_landing_against_a_row_that_is_gone_is_an_error_not_a_panic() {
+        let registry = restored_row(13);
+        assert!(registry
+            .record_landing(&SessionId::new(99), a_landing(1))
+            .is_err());
+    }
+
     #[test]
     fn store_restore_keeps_rows_and_replay_bytes_without_starting_processes() {
         let cwd = Path::new(".").to_path_buf();
@@ -4677,6 +4781,7 @@ mod tests {
                     cwd: cwd.clone(),
                     command: "claude.exe".into(),
                     archived_at: Some(now),
+                    landed: None,
                 })
                 .collect(),
             ..Default::default()
@@ -4736,6 +4841,7 @@ mod tests {
                     cwd: cwd.clone(),
                     command: format!("claude.exe --model opus-{sequence}"),
                     archived_at: Some(now),
+                    landed: None,
                 })
                 .collect(),
             ..Default::default()
@@ -4764,6 +4870,7 @@ mod tests {
                     cwd: cwd.clone(),
                     command: "claude.exe".into(),
                     archived_at: Some(now),
+                    landed: None,
                 })
                 .collect(),
             ..Default::default()

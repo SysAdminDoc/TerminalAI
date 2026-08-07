@@ -363,11 +363,20 @@ fn mark_reviewed(id: SessionId, state: State<'_, AppState>) -> Result<(), String
 ///
 /// The daemon serialises these, so this command blocks while another landing is
 /// in flight — that wait is the feature, not an oversight.
+/// The landing and what became of the session, in one answer.
+#[derive(serde::Serialize)]
+struct LandResult {
+    #[serde(flatten)]
+    outcome: terminalai_core::land::LandOutcome,
+    /// Present only when the request asked to archive.
+    archive: Option<terminalai_daemon::ArchiveAfterLanding>,
+}
+
 #[tauri::command]
 async fn land_session(
     request: terminalai_core::land::LandRequest,
     state: State<'_, AppState>,
-) -> Result<terminalai_core::land::LandOutcome, String> {
+) -> Result<LandResult, String> {
     let client = daemon_client(&state)?;
     run_blocking("land_session", move || {
         match daemon_response(
@@ -376,7 +385,7 @@ async fn land_session(
                 request: Box::new(request),
             },
         )? {
-            Response::Land { outcome } => Ok(outcome),
+            Response::Land { outcome, archive } => Ok(LandResult { outcome, archive }),
             Response::Error { message } => Err(message),
             other => Err(format!("unexpected land response: {other:?}")),
         }

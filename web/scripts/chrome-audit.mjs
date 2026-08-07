@@ -41,6 +41,9 @@ const CONTRAST_LARGE = 3;
 /// is never opened is never checked, which is how the launcher disclosure shipped
 /// unverified in the first place.
 const SURFACES = [
+  // A view rather than a dialog, but hidden until asked for all the same, and
+  // it carries the landing controls.
+  { name: "review view", kind: "view", selector: "#review-view" },
   { name: "app overflow menu", kind: "menu", selector: "#app-menu" },
   { name: "tools overflow menu", kind: "menu", selector: "#tools-menu" },
   { name: "launcher", kind: "dialog", selector: "#launcher-dialog" },
@@ -105,6 +108,8 @@ async function auditSurface(page, surface) {
       if (surface.kind === "dialog") {
         if (typeof root.showModal === "function") root.showModal();
         else root.setAttribute("open", "");
+      } else if (surface.kind === "view") {
+        root.classList.remove("view-hidden");
       } else {
         root.hidden = false;
       }
@@ -233,6 +238,8 @@ async function auditSurface(page, surface) {
       if (surface.kind === "dialog") {
         if (typeof root.close === "function") root.close();
         else root.removeAttribute("open");
+      } else if (surface.kind === "view") {
+        root.classList.add("view-hidden");
       } else {
         root.hidden = true;
       }

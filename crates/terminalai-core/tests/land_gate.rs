@@ -84,6 +84,8 @@ fn repo_pair(name: &str, contents: &str) -> (Scratch, PathBuf, PathBuf) {
 
 fn request(source: &Path, target: &Path) -> LandRequest {
     LandRequest {
+        session: None,
+        archive_on_success: false,
         source: source.to_path_buf(),
         target: target.to_path_buf(),
         expected_target_head: None,

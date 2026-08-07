@@ -52,6 +52,7 @@ USAGE:
   terminalai-probe mcp     [--write-token <t> --write-session <id>]...  (MCP server on stdio)
   terminalai-probe land    --source <dir> --target <dir> [--expect-head <sha>]
                            [--verify <program> [--verify-arg <arg>]...] [--verify-timeout <s>]
+                           [--session <id> [--archive-on-success]]
   terminalai-probe hook    <claude|codex>    (read one hook JSON object from stdin)
   terminalai-probe hooks   <status|preview|install|remove> <claude|codex> [options]
   terminalai-probe cpu-idle [--sessions <n>] [--seconds <s>] [--poll]
@@ -341,6 +342,8 @@ fn cmd_land(args: &[String]) -> i32 {
     let mut expect_head: Option<String> = None;
     let mut verify: Vec<String> = Vec::new();
     let mut verify_timeout: Option<u64> = None;
+    let mut session: Option<String> = None;
+    let mut archive_on_success = false;
     let mut index = 0;
     while index < args.len() {
         let take = |index: &mut usize, flag: &str| -> Option<String> {
@@ -381,6 +384,13 @@ fn cmd_land(args: &[String]) -> i32 {
                 },
                 None => return 2,
             },
+            "--session" => match take(&mut index, "--session") {
+                Some(value) => session = Some(value),
+                None => return 2,
+            },
+            // Opt-in, and only meaningful with --session: there is nothing to
+            // archive when the landing is not a session's.
+            "--archive-on-success" => archive_on_success = true,
             "--json" => {}
             other => {
                 eprintln!("unknown land option: {other}");
@@ -392,9 +402,14 @@ fn cmd_land(args: &[String]) -> i32 {
     let (Some(source), Some(target)) = (source, target) else {
         return control_usage("land needs --source and --target");
     };
+    if archive_on_success && session.is_none() {
+        return control_usage("--archive-on-success needs --session; there is no row to archive");
+    }
     let request = terminalai_core::land::LandRequest {
         source,
         target,
+        session: session.map(terminalai_core::SessionId),
+        archive_on_success,
         expected_target_head: expect_head,
         verify,
         verify_timeout_secs: verify_timeout,
@@ -402,9 +417,11 @@ fn cmd_land(args: &[String]) -> i32 {
     match control_call(Request::Land {
         request: Box::new(request),
     }) {
-        Ok(Response::Land { outcome }) => {
+        Ok(Response::Land { outcome, archive }) => {
             let refused = matches!(outcome, terminalai_core::land::LandOutcome::Refused(_));
-            print_json(outcome);
+            // One object, both answers. A caller that asked to archive needs to
+            // see whether it happened without a second round trip.
+            print_json(serde_json::json!({ "land": outcome, "archive": archive }));
             // A refusal is a normal, expected answer, but it is not a success:
             // a script that lands in a loop must be able to tell them apart.
             i32::from(refused)

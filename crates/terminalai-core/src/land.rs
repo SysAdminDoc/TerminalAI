@@ -23,7 +23,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
+
+use crate::session::SessionId;
 
 #[cfg(windows)]
 use crate::process_tree::ProcessJob;
@@ -38,6 +40,25 @@ pub const DEFAULT_VERIFY_TIMEOUT: Duration = Duration::from_secs(600);
 pub const MAX_VERIFY_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 const MIN_EXPECTED_HEAD_LEN: usize = 4;
 
+/// What one landing did, kept so a finished session can be told from an
+/// abandoned one.
+///
+/// Recorded on the session and carried into its archive entry. Without it the
+/// leftover-checkout survey sees the same thing either way: a directory nobody
+/// is using. "Its work landed" and "someone walked away from it" want opposite
+/// answers, and only this distinguishes them.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Landing {
+    pub at: SystemTime,
+    /// The repository it landed into, which is not always the session's own cwd.
+    pub target: PathBuf,
+    /// The commit it was applied on top of.
+    pub target_head: String,
+    pub files_changed: usize,
+    /// `None` when no verify command was configured — absent, never a pass.
+    pub verified: Option<bool>,
+}
+
 /// What the operator asked to land, and what it must be true against.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LandRequest {
@@ -45,6 +66,21 @@ pub struct LandRequest {
     pub source: PathBuf,
     /// The repository the change lands in.
     pub target: PathBuf,
+    /// Whose work this is, when a session owns it.
+    ///
+    /// Optional because the probe can land a path with no session behind it.
+    /// When present, a successful landing is recorded on that session's row.
+    #[serde(default)]
+    pub session: Option<SessionId>,
+    /// Archive the session this landed, once it has landed.
+    ///
+    /// Opt-in, and deliberately a field on the request rather than a daemon-wide
+    /// mode: the operator says so per landing, from a preference they set. A
+    /// refused or partial landing archives nothing, and archiving still obeys
+    /// every existing rule — a running session is refused, and a worktree
+    /// holding unmerged commits is kept and reported rather than deleted.
+    #[serde(default)]
+    pub archive_on_success: bool,
     /// The target commit the operator reviewed against. A landing is refused
     /// when the target has moved since — that is the whole point of re-reading.
     /// `None` means the operator did not pin one, and only the dirty/conflict

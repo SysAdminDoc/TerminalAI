@@ -5,6 +5,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Added
+
+- A landing is now recorded on the session that produced it, and carried into that session's archive
+  entry. This is the one fact that separates a finished session from an abandoned one: everything
+  else about them looks identical — no process, a checkout still on disk, a branch nobody merged — so
+  the leftover-checkout survey had no way to tell them apart.
+
+- Archiving a session after its work lands is opt-in, from a checkbox on the review surface. A
+  refused or partial landing archives nothing, and archiving still obeys every existing rule: a
+  running session is refused, and a worktree holding unmerged commits is kept and reported rather
+  than deleted, because `worktree::remove` uses `git branch -d` and never `-D`. Whether it archived
+  is reported back rather than swallowed — a landing that quietly did not archive looks exactly like
+  one that did.
+
+- The landing is refused from filing itself against a session that did not produce it. A request
+  names both a source directory and a session, and nothing forced them to be the same thing: naming
+  an unrelated session wrote a false landing record onto its row and, with the opt-in, retired that
+  row on the strength of work it never did. Both were silent. The daemon now checks the named
+  session's own tree — its worktree if it has one, its working directory otherwise — against the
+  source, and refuses with both paths named. Found by driving the real binary, not by reading the
+  code.
+
+- `terminalai-probe land` gained `--session <id>` and `--archive-on-success`, so the whole path is
+  exercisable headlessly. `--archive-on-success` without `--session` is a usage error rather than a
+  silent no-op.
+
 ## [0.11.0] — 2026-08-06
 
 ### Changed
