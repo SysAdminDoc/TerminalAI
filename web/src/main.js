@@ -5,6 +5,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
+import { contextLabel, contextTitle, contextTone } from "./contextPressure.js";
 import { reconcileGroupChip, reconcileKeyedRows } from "./fleetRows.js";
 import { countMessage, localizeDom, relativeDwell, t } from "./i18n.js";
 import { quotaLabel, quotaUnreportedLabel, rateLimitTitle, rateLimitedLabel } from "./rateLimit.js";
@@ -1444,6 +1445,9 @@ const renderRow = createRowRenderer({
   STATUS_META,
   state,
   answerCountdownLabel,
+  contextClass: contextTone,
+  contextText: (session) => contextTitle(session, t),
+  contextValue: contextLabel,
   cost,
   dwell,
   escapeHtml,

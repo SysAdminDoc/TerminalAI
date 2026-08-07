@@ -5,6 +5,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Added
+
+- The wide fleet row shows how full each session's context window is, with an em dash when nothing
+  has measured it. Occupancy is the **last request's prompt**, never the running token total: the
+  totals column sums every request a session ever made, so a twenty-turn session divided by its
+  window would report several hundred percent of a window it is nowhere near filling. A window is
+  reported by the agent or not shown at all — a guessed denominator would put a percentage next to
+  a number nobody can check.
+- Codex's `thread/tokenUsage/updated` events now reach the row. They were parsed and discarded,
+  including the only context window either agent states about itself. The event's `last` object is
+  read for occupancy and its `total` object is not, for the reason above; an event carrying no
+  `last` leaves the previous reading alone rather than replacing it with a zero.
+- Compaction is visible in a session's status history. An agent compacting mid-turn is `Thinking`
+  on both sides of a pause that can run to tens of seconds, so the transition-only history recorded
+  nothing at all for it — indistinguishable from a stall. Both compaction hooks now record an event
+  whether or not the status moves, and the row counts how many times it has happened.
+
+### Fixed
+
+- A finished compaction drops the occupancy reading it invalidated. The window is smaller than the
+  last measurement said by an amount only the agent knows, so keeping the figure left the row
+  claiming pressure that had just been relieved.
+
 ## [0.16.0] — 2026-08-07
 
 ### Added

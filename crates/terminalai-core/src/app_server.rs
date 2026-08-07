@@ -72,6 +72,17 @@ pub struct AppServerTokenUsage {
     pub reasoning_output_tokens: u64,
     pub total_tokens: u64,
     pub model_context_window: Option<u64>,
+    /// Tokens occupying the context window as of the most recent turn: the
+    /// prompt the model was actually sent, cache hits included.
+    ///
+    /// Read from the event's `last` object, never from `total` above. The two
+    /// answer different questions and only one of them belongs over
+    /// `model_context_window`: `total` is everything the session has ever spent,
+    /// so a twenty-turn session divided by its window reports several hundred
+    /// percent of a window it is nowhere near filling. `None` when the event
+    /// reports only a cumulative figure — no occupancy is better than that one.
+    #[serde(default)]
+    pub context_tokens: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -368,6 +379,17 @@ fn parse_usage_event(params: &Value) -> Option<AppServerEvent> {
         usage_object,
         &["modelContextWindow", "model_context_window"],
     );
+    // Only ever from `last`. Falling back to the cumulative object here would
+    // reintroduce the exact error this field exists to avoid.
+    let context_tokens = usage_object
+        .get("last")
+        .and_then(Value::as_object)
+        .map(|last| {
+            number_field(last, &["inputTokens", "input_tokens"]).saturating_add(number_field(
+                last,
+                &["cachedInputTokens", "cached_input_tokens"],
+            ))
+        });
     Some(AppServerEvent::TokenUsageUpdated {
         thread_id,
         usage: AppServerTokenUsage {
@@ -377,6 +399,7 @@ fn parse_usage_event(params: &Value) -> Option<AppServerEvent> {
             reasoning_output_tokens,
             total_tokens,
             model_context_window,
+            context_tokens,
         },
     })
 }
@@ -469,6 +492,46 @@ mod tests {
                 && usage.total_tokens == 19
                 && usage.model_context_window == Some(100)
         ));
+    }
+
+    #[test]
+    fn context_occupancy_comes_from_the_last_turn_never_from_the_running_total() {
+        // The cumulative figure over the window is the error this field exists
+        // to prevent: 900 of a 100-token window is 900%, and the session is
+        // actually 42% full.
+        let message = parse_message(
+            r#"{"method":"thread/tokenUsage/updated","params":{"threadId":"thr-1","tokenUsage":{"total":{"inputTokens":600,"cachedInputTokens":200,"outputTokens":100,"totalTokens":900},"last":{"inputTokens":30,"cachedInputTokens":12,"outputTokens":5,"totalTokens":47},"modelContextWindow":100}}}"#,
+        )
+        .expect("usage notification");
+        let AppServerMessage::Notification {
+            event: AppServerEvent::TokenUsageUpdated { usage, .. },
+        } = message
+        else {
+            panic!("expected a usage notification");
+        };
+        assert_eq!(usage.total_tokens, 900, "the running total is still read");
+        assert_eq!(
+            usage.context_tokens,
+            Some(42),
+            "occupancy is the last turn's prompt, cache hits included"
+        );
+    }
+
+    #[test]
+    fn a_usage_event_with_no_last_turn_reports_no_occupancy() {
+        // Reporting the cumulative total here would be worse than reporting
+        // nothing, so the absence is carried through rather than filled in.
+        let message = parse_message(
+            r#"{"method":"thread/tokenUsage/updated","params":{"threadId":"thr-1","tokenUsage":{"total":{"inputTokens":600,"outputTokens":100,"totalTokens":700},"modelContextWindow":100}}}"#,
+        )
+        .expect("usage notification");
+        let AppServerMessage::Notification {
+            event: AppServerEvent::TokenUsageUpdated { usage, .. },
+        } = message
+        else {
+            panic!("expected a usage notification");
+        };
+        assert_eq!(usage.context_tokens, None);
     }
 
     #[test]

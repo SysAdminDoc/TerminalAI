@@ -177,6 +177,22 @@ impl SessionRegistry {
                         changed = true;
                     }
                 }
+                // Deliberately outside the `requests > 0` guard above and never
+                // overwriting a reading the agent stated itself: Codex reports
+                // its own window over the app-server transport, and a derived
+                // reading has no window at all, so letting the transcript win
+                // would replace a percentage with a bare number.
+                if let Some(used) = update.context_tokens {
+                    let derived = crate::context::ContextUsage::derived(used);
+                    let agent_reported = matches!(
+                        entry.session.context,
+                        Some(existing) if existing.source == crate::context::ContextSource::Agent
+                    );
+                    if !agent_reported && entry.session.context != Some(derived) {
+                        entry.session.context = Some(derived);
+                        changed = true;
+                    }
+                }
                 if changed {
                     updated.push(entry.session.clone());
                 }

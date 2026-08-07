@@ -10,6 +10,7 @@
 //
 // Not a `.test.mjs` file, so `node --test tests/*.test.mjs` does not run it.
 
+import { contextLabel, contextTitle, contextTone } from "../src/contextPressure.js";
 import { createRowRenderer } from "../src/rowMarkup.js";
 
 /// Stand-ins for the helpers `main.js` binds. Each returns something
@@ -25,6 +26,12 @@ const DEPS = {
   },
   state: { focused: null, wideMode: true },
   answerCountdownLabel: (session) => (session.status === "needs-you" ? "answers itself in 12s" : ""),
+  // The real functions, not stand-ins: what these three answer is the whole
+  // point of the cell, and a stub would let the row render a percentage the
+  // module would refuse to produce.
+  contextClass: contextTone,
+  contextText: (session) => contextTitle(session, (key, args) => (args ? `${key}:${JSON.stringify(args)}` : key)),
+  contextValue: contextLabel,
   cost: (value) => (value == null ? "—" : `$${value}`),
   dwell: () => "3m",
   escapeHtml: (value) =>

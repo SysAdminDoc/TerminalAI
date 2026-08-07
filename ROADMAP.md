@@ -69,13 +69,12 @@ item above; where the two touch, the note says so.
   Complexity: L
   Note (2026-08-06 research): hooks may not be the right mechanism. Claude Code documents `--permission-prompt-tool`, which designates an MCP tool to handle permission prompts, and this project already ships an MCP server (`crates/terminalai-core/src/mcp.rs`) — so the sanctioned route is to point the launched session at our own server rather than to intercept `PermissionRequest` in `hooks.rs`. Evaluate that first; it is fewer moving parts and it survives `disableAllHooks`. See https://code.claude.com/docs/en/cli-reference.
 
-- [ ] P2 — Show context pressure, and distinguish context exhaustion from refusal
-  Why: compaction and context loss are a top-tier community complaint, and a session approaching its window is about to lose quality in a way no current row state predicts.
-  Evidence: Claude Code's statusline payload carries `context_window.used_percentage`, `remaining_percentage` and `exceeds_200k_tokens` (code.claude.com/docs/en/statusline); Codex config exposes `model_context_window` and `model_auto_compact_token_limit`. Nothing in `crates/terminalai-core/src/session.rs` models context. Asked directly at https://github.com/Untrivial-ai/agent-orchestrator/issues/3322; community evidence at openai/codex#4106, #11325.
-  Touches: `crates/terminalai-core/src/transcript.rs`, `session.rs`, `web/src/main.js`, `web/src/i18n/terminalai.ftl`
-  Acceptance: the wide row shows context used against the model's window when the agent reports it, an em dash when it does not, and a compaction event is visible in the status history rather than appearing as an unexplained pause.
-  Complexity: M
-  Note (2026-08-06 research): compaction is now operator-controllable, so the row can show the threshold and not just the usage. Claude Code added `--autocompact <auto|tokens>` in v2.1.221 and the `CLAUDE_CODE_AUTO_COMPACT_WINDOW` variable (100000–1000000 tokens); Codex exposes `model_auto_compact_token_limit` alongside `model_context_window`. Both are launch-time inputs this launcher does not map, so the same work can set the threshold it displays.
+- [ ] P3 — Let the operator set the compaction threshold the row now displays
+  Why: the context reading landed 2026-08-07, so the fleet reports how full a window is but cannot influence when the agent acts on it — and both agents take the threshold as a launch-time input this launcher does not map.
+  Evidence: Claude Code added `--autocompact <auto|tokens>` in v2.1.221 and the `CLAUDE_CODE_AUTO_COMPACT_WINDOW` variable (100000–1000000 tokens); Codex exposes `model_auto_compact_token_limit`. `LaunchSpec` (`crates/terminalai-core/src/launch.rs:203`) maps neither; `max_budget_usd` is the shape to mirror — an existing optional numeric that is Claude-only in the same way. `web/src/contextPressure.js` already has the cell that would show the threshold beside the usage.
+  Touches: `crates/terminalai-core/src/launch.rs`, `environment.rs`, `web/src/main.js`, `web/src/contextPressure.js`, `crates/terminalai-core/tests/launch_golden.rs`
+  Acceptance: the launcher can set a compaction threshold per session, it reaches the previewed argv for both agents, and the row shows it beside the occupancy so a session near its own threshold is visible before it compacts. An agent with no equivalent is refused rather than silently launched without it, per `LaunchError::Unsupported`.
+  Complexity: S
 
 - [ ] P2 — Search the focused pane and the on-disk scrollback
   Why: the project keeps a 512 KB ring over an 8 MB rotating spool per session and offers no way to query either; "where did that error print" across twenty sessions is currently a manual scroll.

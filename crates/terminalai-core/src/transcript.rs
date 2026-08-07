@@ -217,6 +217,15 @@ impl Usage {
     /// When it does not, the whole write is charged at the 5-minute rate — the
     /// cheaper of the two, and the default TTL — rather than silently assuming
     /// the premium tier.
+    /// Everything the provider counted as the prompt for this request: fresh
+    /// input, cache reads and cache writes. A cache hit still occupies the
+    /// context window — it is only billed differently.
+    pub fn prompt_tokens(&self) -> u64 {
+        self.input_tokens
+            .saturating_add(self.cache_read_input_tokens)
+            .saturating_add(self.cache_creation_input_tokens)
+    }
+
     fn cache_write_split(&self) -> (u64, u64) {
         match (self.cache_write_5m_tokens, self.cache_write_1h_tokens) {
             (None, None) => (self.cache_creation_input_tokens, 0),
@@ -269,6 +278,10 @@ pub struct TranscriptAccumulator {
     cumulative: Usage,
     cumulative_requests: u64,
     cumulative_cost_usd: f64,
+    /// The prompt size of the most recent request seen, which is what occupies
+    /// the model's context window. Replaced on every request, never summed —
+    /// see [`crate::context`] for why the totals above cannot answer this.
+    latest_prompt_tokens: Option<u64>,
 }
 
 impl TranscriptAccumulator {
@@ -282,6 +295,7 @@ impl TranscriptAccumulator {
             cumulative: Usage::default(),
             cumulative_requests: 0,
             cumulative_cost_usd: 0.0,
+            latest_prompt_tokens: None,
         }
     }
 
@@ -320,6 +334,19 @@ impl TranscriptAccumulator {
         self.incremental_cost_usd + self.cumulative_cost_usd
     }
 
+    /// Tokens occupying the model's context window as of the last request, or
+    /// `None` before one has been priced.
+    ///
+    /// The prompt the provider counted: fresh input, cache reads and cache
+    /// writes. Output is excluded deliberately — it is not part of any request
+    /// yet, so including it would make this a projection of the next turn
+    /// rather than a measurement of the last one. The reading therefore lags by
+    /// one reply, which is the honest error direction: it under-reports
+    /// pressure rather than inventing it.
+    pub fn context_tokens(&self) -> Option<u64> {
+        self.latest_prompt_tokens
+    }
+
     /// Ingest one JSONL record. Returns `true` only when it changed totals.
     pub fn ingest_line(&mut self, line: &str) -> Result<bool, TranscriptError> {
         let value: Value = serde_json::from_str(line)?;
@@ -343,6 +370,10 @@ impl TranscriptAccumulator {
             }
         }
         self.incremental.add(record.usage);
+        // Replaced, not accumulated. Only the request-id path sets this: the
+        // cumulative path below reports session totals, and a session total is
+        // never a window occupancy.
+        self.latest_prompt_tokens = Some(record.usage.prompt_tokens());
         self.incremental_cost_usd += self
             .pricing
             .rates_for(record.model.as_deref())
@@ -683,6 +714,52 @@ mod tests {
         accumulator.ingest_line(line).unwrap();
         assert_eq!(accumulator.totals().output_tokens, 1_000_000);
         assert_eq!(accumulator.totals().input_tokens, 0);
+    }
+
+    #[test]
+    fn context_occupancy_is_the_last_request_not_the_running_sum() {
+        // The defect this exists to prevent: after ten turns the sum is ten
+        // times a window the session is comfortably inside, and the row would
+        // report a thousand percent.
+        let mut accumulator = TranscriptAccumulator::new(pricing());
+        for index in 0..10 {
+            let line = format!(
+                r#"{{"requestId":"req-{index}","model":"m","usage":{{"input_tokens":1000,"cache_read_input_tokens":40000,"output_tokens":500}}}}"#
+            );
+            accumulator.ingest_line(&line).unwrap();
+        }
+        assert_eq!(accumulator.totals().input_tokens, 10_000, "the sum still sums");
+        assert_eq!(
+            accumulator.context_tokens(),
+            Some(41_000),
+            "occupancy is one request's prompt: input plus cache reads"
+        );
+    }
+
+    #[test]
+    fn context_occupancy_counts_cache_writes_and_excludes_output() {
+        let mut accumulator = TranscriptAccumulator::new(pricing());
+        accumulator
+            .ingest_line(
+                r#"{"requestId":"req-1","model":"m","usage":{"input_tokens":10,"cache_read_input_tokens":20,"cache_creation_input_tokens":30,"output_tokens":9999}}"#,
+            )
+            .unwrap();
+        // A cache hit still occupies the window; the reply does not, because it
+        // has not been sent in any request yet.
+        assert_eq!(accumulator.context_tokens(), Some(60));
+    }
+
+    #[test]
+    fn a_cumulative_only_transcript_reports_no_occupancy() {
+        // Codex's rollout reports session totals with no request id. Reading
+        // one as a window occupancy is the same error in the other vendor's
+        // clothing, so this path must leave the reading absent.
+        let mut accumulator = TranscriptAccumulator::new(pricing());
+        accumulator
+            .ingest_line(r#"{"model":"m","usage":{"input_tokens":900000,"output_tokens":1000}}"#)
+            .unwrap();
+        assert!(accumulator.totals().input_tokens > 0, "the total is still read");
+        assert_eq!(accumulator.context_tokens(), None);
     }
 
     #[test]

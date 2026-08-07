@@ -47,6 +47,16 @@ pub enum StatusReasonKind {
     Manual,
     Restored,
     StatusChanged,
+    /// The agent has started compacting its context window.
+    ///
+    /// Recorded even when the status does not move, which is the usual case:
+    /// an agent that compacts mid-turn is `Thinking` before and after, so the
+    /// transition-only history showed nothing at all for a pause that can run
+    /// to tens of seconds. That silence is indistinguishable from a stall.
+    ContextCompacting,
+    /// Compaction finished. The occupancy reading taken before it described a
+    /// window that no longer exists, so it is dropped rather than carried.
+    ContextCompacted,
     Unknown,
 }
 

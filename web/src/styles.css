@@ -3039,6 +3039,18 @@ button {
   color: var(--red);
 }
 
+/* Context pressure. Only the two bands that ask for attention are coloured:
+   a comfortable window is the ordinary case and painting it green would put a
+   tone on every row in the fleet. A reading with no window gets no class at
+   all, so "we did not measure this" never renders as "this is fine". */
+.context-filling {
+  color: var(--yellow);
+}
+
+.context-critical {
+  color: var(--red);
+}
+
 .settings-body {
   display: grid;
   gap: 10px;

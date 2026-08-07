@@ -53,6 +53,12 @@ pub struct TranscriptUpdate {
     pub last_message: Option<String>,
     pub totals: UsageTotals,
     pub cost_usd: f64,
+    /// Tokens occupying the model's context window as of the last request.
+    ///
+    /// Separate from `totals`, which sums every request the session ever made.
+    /// Only one of the two can go over a context window — see
+    /// [`crate::context`].
+    pub context_tokens: Option<u64>,
     /// True when this poll saw anything new at all.
     pub changed: bool,
 }
@@ -371,6 +377,7 @@ impl TranscriptTail {
             last_message: self.last_message.clone(),
             totals: self.accumulator.totals(),
             cost_usd: self.accumulator.cost_usd(),
+            context_tokens: self.accumulator.context_tokens(),
             changed,
         }
     }

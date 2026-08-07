@@ -15,6 +15,9 @@ export function createRowRenderer(deps) {
     STATUS_META,
     state,
     answerCountdownLabel,
+    contextClass,
+    contextText,
+    contextValue,
     cost,
     dwell,
     escapeHtml,
@@ -127,6 +130,7 @@ export function createRowRenderer(deps) {
       `class="row-action row-action-danger" title="${escapeHtml(stopLabel)}" aria-label="` +
       `${escapeHtml(stopLabel)}"${stopHidden}>×</button></div>`;
 
+    const contextTone = contextClass(session);
     const wideMeta =
       `<div class="row-wide-meta"${wideHidden}><span><small>MODEL</small><b data-row-model>` +
       `${escapeHtml(model)}</b></span><span><small>EFFORT</small><b data-row-effort>` +
@@ -134,7 +138,10 @@ export function createRowRenderer(deps) {
       `${escapeHtml(cost(session.cost_usd))}</b></span><span><small>MEM</small><b ` +
       `data-row-memory${session.memory_limited ? ' class="row-memory-limited"' : ""} title="` +
       `${escapeHtml(session.memory_limited ? t("memory-limited-explained") : t("memory-explained"))}` +
-      `">${escapeHtml(memory(session.memory_bytes))}</b></span></div>`;
+      `">${escapeHtml(memory(session.memory_bytes))}</b></span><span><small>CTX</small><b ` +
+      `data-row-context${contextTone ? ` class="${escapeHtml(contextTone)}"` : ""} title="` +
+      `${escapeHtml(contextText(session))}">${escapeHtml(contextValue(session))}` +
+      `</b></span></div>`;
 
     const reply =
       `<div class="row-reply"${replyHidden}><input data-reply type="text" maxlength="500" ` +

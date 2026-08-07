@@ -13,7 +13,9 @@ use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use crate::agent::Agent;
-use crate::diagnostics::{StatusDiagnostic, StatusReason, StatusSource, MAX_STATUS_HISTORY};
+use crate::diagnostics::{
+    StatusDiagnostic, StatusReason, StatusReasonKind, StatusSource, MAX_STATUS_HISTORY,
+};
 use crate::launch::{Effort, LaunchSpec};
 
 /// The restart policy itself lives in [`crate::restart`], which decides over
@@ -364,6 +366,20 @@ pub struct Session {
     /// has actually been read; zero would claim a session did no work.
     #[serde(default)]
     pub tokens: Option<crate::transcript::UsageTotals>,
+    /// How full the model's context window is, when that is measurable.
+    ///
+    /// Deliberately not derived from `tokens` above, which is a running sum over
+    /// every request the session ever made — see [`crate::context`]. `None`
+    /// until something measurable arrives; zero would claim an empty window.
+    #[serde(default)]
+    pub context: Option<crate::context::ContextUsage>,
+    /// How many times this session's context has been compacted.
+    ///
+    /// Counted because a compaction is the one long pause the fleet can explain
+    /// and previously did not: the agent goes quiet for tens of seconds with no
+    /// status change, which reads exactly like a stall.
+    #[serde(default)]
+    pub compactions: u32,
     /// Set while a provider quota is refusing work for this session. Populated
     /// only from an explicit agent report — never from silence, which is
     /// indistinguishable from a long tool call.
@@ -438,6 +454,8 @@ impl Session {
             memory_bytes: None,
             memory_limited: false,
             tokens: None,
+            context: None,
+            compactions: 0,
             last_message: None,
             rate_limit: None,
             quota: None,
@@ -607,6 +625,47 @@ impl Session {
         now.duration_since(since).ok()
     }
 
+    /// Record that the agent has begun compacting its context.
+    ///
+    /// Deliberately separate from [`Self::set_status_from_at`]: compaction
+    /// usually happens *within* one status, and `set_status_at` returns early
+    /// when the status has not changed, so routing this through it would record
+    /// nothing at all for the one pause the fleet can actually explain.
+    pub fn note_compaction_started_at(&mut self, source: StatusSource, at: SystemTime) {
+        self.record_event(StatusReasonKind::ContextCompacting, source, at);
+    }
+
+    /// Record that compaction finished, and forget the occupancy reading it
+    /// invalidated.
+    ///
+    /// The window is smaller than the last measurement said, by an amount only
+    /// the agent knows. Keeping the old figure until the next request would
+    /// leave the row claiming pressure that has just been relieved — which is
+    /// the reading an operator would act on by intervening in a session that no
+    /// longer needs it.
+    pub fn note_compaction_finished_at(&mut self, source: StatusSource, at: SystemTime) {
+        self.compactions = self.compactions.saturating_add(1);
+        self.context = None;
+        self.record_event(StatusReasonKind::ContextCompacted, source, at);
+    }
+
+    /// Push a diagnostic for something that happened to the session without
+    /// changing its status.
+    fn record_event(&mut self, kind: StatusReasonKind, source: StatusSource, at: SystemTime) {
+        let status = self.status;
+        self.push_diagnostic(StatusDiagnostic {
+            at,
+            from: Some(status),
+            to: status,
+            source,
+            reason: StatusReason {
+                kind,
+                args: std::collections::BTreeMap::new(),
+            },
+            detail: None,
+        });
+    }
+
     fn record_status_transition(
         &mut self,
         from: Option<SessionStatus>,
@@ -614,7 +673,7 @@ impl Session {
         source: StatusSource,
         at: SystemTime,
     ) {
-        self.status_history.push(StatusDiagnostic {
+        self.push_diagnostic(StatusDiagnostic {
             at,
             from,
             to,
@@ -622,6 +681,10 @@ impl Session {
             reason: StatusReason::for_transition(from, to, source, self.last_exit_code),
             detail: None,
         });
+    }
+
+    fn push_diagnostic(&mut self, diagnostic: StatusDiagnostic) {
+        self.status_history.push(diagnostic);
         let overflow = self.status_history.len().saturating_sub(MAX_STATUS_HISTORY);
         if overflow > 0 {
             self.status_history.drain(..overflow);

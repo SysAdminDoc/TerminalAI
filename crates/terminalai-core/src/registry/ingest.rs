@@ -196,16 +196,28 @@ impl SessionRegistry {
                     .set_status_from_at(SessionStatus::Working, now, source),
                 HookSignal::PostToolUse
                 | HookSignal::PostToolUseFailure
-                | HookSignal::SubagentStop
-                | HookSignal::PostCompact => entry
+                | HookSignal::SubagentStop => entry
                     .session
                     .set_status_from_at(SessionStatus::Thinking, now, source),
                 HookSignal::PermissionRequest | HookSignal::PermissionDenied => entry
                     .session
                     .set_status_from_at(SessionStatus::NeedsApproval, now, source),
-                HookSignal::PreCompact => entry
-                    .session
-                    .set_status_from_at(SessionStatus::Thinking, now, source),
+                // Both compaction signals record an event as well as a status,
+                // because the status usually does not move: an agent compacting
+                // mid-turn is Thinking on both sides of a pause that can run to
+                // tens of seconds, and a transition-only history showed nothing.
+                HookSignal::PreCompact => {
+                    entry
+                        .session
+                        .set_status_from_at(SessionStatus::Thinking, now, source);
+                    entry.session.note_compaction_started_at(source, now);
+                }
+                HookSignal::PostCompact => {
+                    entry
+                        .session
+                        .set_status_from_at(SessionStatus::Thinking, now, source);
+                    entry.session.note_compaction_finished_at(source, now);
+                }
                 HookSignal::Notification { notification } => match notification {
                     HookNotification::PermissionPrompt => entry
                         .session
@@ -350,6 +362,21 @@ impl SessionRegistry {
         if !self.has_native_session(crate::agent::Agent::Codex, thread_id) {
             return false;
         }
+        if let AppServerEvent::TokenUsageUpdated { usage, .. } = &event {
+            // The only place in the fleet where a context *denominator* arrives
+            // from the agent rather than being inferred. An event that reports
+            // no last turn leaves the row's previous reading alone: a usage
+            // event that cannot answer the question has not answered it with a
+            // zero.
+            if let Some(used) = usage.context_tokens {
+                let reading = crate::context::ContextUsage::reported(
+                    used,
+                    usage.model_context_window,
+                );
+                self.apply_context_reading(thread_id, reading);
+            }
+            return true;
+        }
         let Some(signal) = app_server_signal(&event) else {
             return true;
         };
@@ -367,6 +394,31 @@ impl SessionRegistry {
             None,
             now,
         )
+    }
+
+    /// Record a context reading against the Codex row carrying `native_id`.
+    ///
+    /// Not routed through the hook path: a usage event is a measurement, not a
+    /// status signal, and pushing it through `apply_hook_from_at` would restamp
+    /// the session's status clock every time the agent counted its tokens.
+    fn apply_context_reading(&self, native_id: &str, reading: crate::context::ContextUsage) {
+        let updated = {
+            let mut state = lock_state(&self.inner);
+            let Some(entry) = state.entries.values_mut().find(|entry| {
+                entry.session.agent == crate::agent::Agent::Codex
+                    && entry.session.resume_id.as_deref() == Some(native_id)
+            }) else {
+                return;
+            };
+            if entry.session.context == Some(reading) {
+                return;
+            }
+            entry.session.context = Some(reading);
+            entry.session.clone()
+        };
+        self.emit(RegistryEvent::SessionUpdated {
+            session: Box::new(updated),
+        });
     }
 
     fn has_native_session(&self, agent: crate::agent::Agent, native_id: &str) -> bool {
@@ -713,6 +765,7 @@ mod tests {
                     reasoning_output_tokens: 0,
                     total_tokens: 3,
                     model_context_window: None,
+                    context_tokens: None,
                 },
             },
         )));
@@ -722,5 +775,135 @@ mod tests {
                 event: AgentEvent::AppServer(AppServerEvent::TokenUsageUpdated { .. })
             }
         )));
+    }
+
+    /// A Codex row with a native thread id, ready for app-server events.
+    fn codex_row(registry: &SessionRegistry, thread_id: &str) -> SessionId {
+        let id = SessionId::new(1);
+        insert_session(registry, &id, SessionStatus::Working);
+        let mut state = lock_state(&registry.inner);
+        let entry = state.entries.get_mut(&id).expect("entry");
+        entry.session.agent = Agent::Codex;
+        entry.session.resume_id = Some(thread_id.to_owned());
+        drop(state);
+        id
+    }
+
+    fn usage_event(thread_id: &str, context_tokens: Option<u64>, window: Option<u64>) -> AgentEvent {
+        AgentEvent::AppServer(AppServerEvent::TokenUsageUpdated {
+            thread_id: thread_id.into(),
+            usage: AppServerTokenUsage {
+                input_tokens: 900_000,
+                cached_input_tokens: 0,
+                output_tokens: 1_000,
+                reasoning_output_tokens: 0,
+                // Deliberately enormous: if the running total ever reaches the
+                // context field, this test says so.
+                total_tokens: 901_000,
+                model_context_window: window,
+                context_tokens,
+            },
+        })
+    }
+
+    #[test]
+    fn a_reported_context_window_reaches_the_row_with_the_last_turn_over_it() {
+        let registry = SessionRegistry::new();
+        codex_row(&registry, "thread-1");
+        assert!(registry.apply_agent_event(usage_event("thread-1", Some(42_000), Some(200_000))));
+        let context = registry.snapshot()[0].context.expect("a context reading");
+        assert_eq!(context.used_tokens, 42_000, "not the 901,000 running total");
+        assert_eq!(context.window_tokens, Some(200_000));
+        assert_eq!(context.source, crate::context::ContextSource::Agent);
+        assert_eq!(context.pressure(), Some(crate::context::ContextPressure::Comfortable));
+    }
+
+    #[test]
+    fn a_usage_event_with_no_last_turn_leaves_the_previous_reading_alone() {
+        // Absence of an answer is not an answer of zero: a row that was 90%
+        // full must not read as empty because one event omitted the breakdown.
+        let registry = SessionRegistry::new();
+        codex_row(&registry, "thread-1");
+        registry.apply_agent_event(usage_event("thread-1", Some(180_000), Some(200_000)));
+        registry.apply_agent_event(usage_event("thread-1", None, Some(200_000)));
+        let context = registry.snapshot()[0].context.expect("a context reading");
+        assert_eq!(context.used_tokens, 180_000);
+        assert_eq!(context.pressure(), Some(crate::context::ContextPressure::Critical));
+    }
+
+    #[test]
+    fn a_usage_event_does_not_restamp_the_status_clock() {
+        // Counting tokens is a measurement, not the session doing something.
+        // Routing it through the hook path would make every count look like a
+        // status transition and reset the dwell the row is sorted by.
+        let registry = SessionRegistry::new();
+        codex_row(&registry, "thread-1");
+        let before = registry.snapshot()[0].status_since;
+        let history = registry.snapshot()[0].status_history.len();
+        registry.apply_agent_event(usage_event("thread-1", Some(1_000), Some(200_000)));
+        let after = &registry.snapshot()[0];
+        assert_eq!(after.status_since, before);
+        assert_eq!(after.status_history.len(), history);
+    }
+
+    #[test]
+    fn compaction_is_recorded_even_though_the_status_never_changes() {
+        // The whole point. An agent compacting mid-turn is Thinking on both
+        // sides, so a transition-only history showed nothing at all for a pause
+        // that can run to tens of seconds — indistinguishable from a stall.
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        insert_session(&registry, &id, SessionStatus::Thinking);
+        let event = |signal| HookEvent {
+            agent: Agent::Claude,
+            session_id: None,
+            cwd: Some(PathBuf::from(".")),
+            signal,
+            progress: None,
+        };
+        assert!(apply_test_hook(&registry, event(HookSignal::PreCompact)));
+        assert!(apply_test_hook(&registry, event(HookSignal::PostCompact)));
+
+        let session = &registry.snapshot()[0];
+        assert_eq!(session.status, SessionStatus::Thinking, "no transition happened");
+        assert_eq!(session.compactions, 1);
+        let kinds: Vec<_> = session
+            .status_history
+            .iter()
+            .map(|entry| entry.reason.kind)
+            .collect();
+        assert!(
+            kinds.contains(&crate::diagnostics::StatusReasonKind::ContextCompacting),
+            "history: {kinds:?}"
+        );
+        assert!(
+            kinds.contains(&crate::diagnostics::StatusReasonKind::ContextCompacted),
+            "history: {kinds:?}"
+        );
+    }
+
+    #[test]
+    fn compaction_drops_the_occupancy_reading_it_invalidated() {
+        // The window just shrank by an amount only the agent knows. Keeping the
+        // old figure leaves the row claiming pressure that has been relieved,
+        // which is the reading an operator would act on.
+        let registry = SessionRegistry::new();
+        let id = codex_row(&registry, "thread-1");
+        registry.apply_agent_event(usage_event("thread-1", Some(190_000), Some(200_000)));
+        assert_eq!(
+            registry.snapshot()[0].context.and_then(|c| c.pressure()),
+            Some(crate::context::ContextPressure::Critical)
+        );
+        assert!(apply_test_hook(&registry, HookEvent {
+            agent: Agent::Codex,
+            session_id: Some("thread-1".into()),
+            cwd: Some(PathBuf::from(".")),
+            signal: HookSignal::PostCompact,
+            progress: None,
+        }));
+        let session = &registry.snapshot()[0];
+        assert_eq!(session.context, None, "a stale window is worse than none");
+        assert_eq!(session.compactions, 1);
+        let _ = id;
     }
 }

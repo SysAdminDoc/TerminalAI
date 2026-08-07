@@ -434,7 +434,17 @@ reason-supervisor = Supervisor update
 reason-manual = Operator action
 reason-restored = Restored from the session store
 reason-status-changed = State changed to { $status }
+reason-context-compacting = Compacting the context window
+reason-context-compacted = Context window compacted
 reason-unknown = No reason recorded
+
+context-explained = { $used } of { $window } tokens in the context window ({ $percent }% full)
+context-no-window = { $used } tokens in the context window; this agent does not report its window size, so there is no percentage to show
+context-unmeasured = No context reading yet for this session
+context-compactions = { $count ->
+    [one] Compacted once so far
+   *[other] Compacted { $count } times so far
+}
 
 relative-now = just now
 empty-no-focused-session = No focused session
