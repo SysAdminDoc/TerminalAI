@@ -3332,6 +3332,46 @@ function useWebglRenderer(terminal) {
   return addon;
 }
 
+/// The terminal's palette, read from the same custom properties every other
+/// surface uses.
+///
+/// It used to be a literal here, which meant the one surface that fills most of
+/// the window ignored `prefers-color-scheme` entirely: in light mode the
+/// operator got a light panel framing a hard dark rectangle, and focusing a
+/// session flipped the pane's apparent theme. The canvas is not DOM text, so no
+/// contrast gate could see it.
+function terminalTheme() {
+  const styles = getComputedStyle(document.documentElement);
+  const token = (name) => styles.getPropertyValue(name).trim();
+  return {
+    background: token("--term-bg"),
+    foreground: token("--term-fg"),
+    cursor: token("--term-cursor"),
+    selectionBackground: token("--term-selection"),
+    black: token("--term-black"),
+    red: token("--red"),
+    green: token("--green"),
+    yellow: token("--yellow"),
+    blue: token("--blue"),
+    magenta: token("--mauve"),
+    cyan: token("--teal"),
+    white: token("--term-white"),
+  };
+}
+
+/// Repaint the terminal when the OS theme changes under a running window.
+///
+/// The rest of the chrome is CSS and follows on its own; the canvas is painted
+/// from values read once, so without this the pane keeps the palette it started
+/// with and becomes the only surface out of step.
+function followColorScheme() {
+  const scheme = window.matchMedia?.("(prefers-color-scheme: dark)");
+  scheme?.addEventListener?.("change", () => {
+    if (!state.terminal) return;
+    state.terminal.options.theme = terminalTheme();
+  });
+}
+
 function setupTerminal() {
   state.terminal = new Terminal({
     // Required by the unicode11 addon. Without it xterm measures character
@@ -3356,21 +3396,9 @@ function setupTerminal() {
     lineHeight: 1.25,
     scrollback: 2000,
     screenReaderMode: false,
-    theme: {
-      background: "#11111b",
-      foreground: "#cdd6f4",
-      cursor: "#f5e0e6",
-      selectionBackground: "#585b70",
-      black: "#181825",
-      red: "#f38ba8",
-      green: "#a6e3a1",
-      yellow: "#f9e2af",
-      blue: "#89b4fa",
-      magenta: "#cba6f7",
-      cyan: "#94e2d5",
-      white: "#bac2de",
-    },
+    theme: terminalTheme(),
   });
+  followColorScheme();
   state.fitAddon = new FitAddon();
   state.terminal.loadAddon(state.fitAddon);
   const unicode11 = new Unicode11Addon();

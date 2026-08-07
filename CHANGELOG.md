@@ -17,6 +17,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- The focused terminal follows the theme. Its palette was a literal in the renderer, so the one
+  surface that fills most of the window ignored `prefers-color-scheme` entirely: in light mode a
+  light panel framed a hard dark rectangle, and focusing a session flipped the pane's apparent
+  theme. The canvas is not DOM text, so no contrast gate could see it. The palette is now read from
+  the same custom properties every other surface uses, the pane's own background is the terminal's
+  so the two cannot drift apart, and a window whose OS theme changes repaints. The light ANSI set
+  comes from the contrast-tuned light accents rather than the dark theme's pastels, and every colour
+  an agent prints in clears 4.5:1 against its own background in both themes.
 - The two overflow panels no longer claim ARIA menu semantics they do not implement. They were
   `role="menu"` with `role="menuitem"` children, but the app panel holds a `<select>` and a heading
   — invalid children of a menu, which makes a screen reader announce the wrong item count — and

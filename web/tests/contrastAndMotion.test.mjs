@@ -151,3 +151,59 @@ test("screen reader mode is explicit and opt-in", () => {
   assert.match(main, /state\.terminal\.options\.screenReaderMode = state\.screenReaderMode/);
   assert.match(main, /screen-reader-toggle.*setScreenReaderMode\(!state\.screenReaderMode\)/);
 });
+
+test("the terminal follows the theme instead of carrying its own palette", () => {
+  // The pane fills most of the window and its canvas is not DOM text, so no
+  // contrast gate can see what it painted. It used to hold a literal dark
+  // Catppuccin theme regardless of `prefers-color-scheme`: in light mode a light
+  // panel framed a hard dark rectangle, and focusing a session flipped the
+  // pane's apparent theme.
+  assert.match(main, /theme: terminalTheme\(\)/);
+  assert.doesNotMatch(
+    main,
+    /background:\s*"#[0-9a-f]{6}"/i,
+    "the renderer must not reintroduce a hardcoded terminal background",
+  );
+  // The pane's own surface is the terminal's, so the two cannot drift apart.
+  assert.match(css, /\.terminal-panel \{[^}]*background: var\(--term-bg\);/);
+  // A window whose OS theme changes must repaint; the canvas is painted from
+  // values read once, unlike the CSS around it.
+  assert.match(main, /prefers-color-scheme: dark[\s\S]*?options\.theme = terminalTheme\(\)/);
+
+  const palette = (block) =>
+    Object.fromEntries(
+      [...block.matchAll(/--(term-[\w-]+|red|green|yellow|blue|mauve|teal):\s*(#[0-9a-f]{6})/g)]
+        .map(([, name, value]) => [name, value]),
+    );
+  const luminance = (hex) => {
+    const channels = [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255);
+    return channels
+      .map((channel) => (channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4))
+      .reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0);
+  };
+  const contrast = (foreground, background) => {
+    const [high, low] = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+    return (high + 0.05) / (low + 0.05);
+  };
+
+  const lightStart = css.indexOf("@media (prefers-color-scheme: light)");
+  assert.ok(lightStart > 0);
+  for (const [mode, block] of [
+    ["dark", css.slice(0, lightStart)],
+    ["light", css.slice(lightStart)],
+  ]) {
+    const tokens = palette(block);
+    assert.ok(tokens["term-bg"], `${mode} declares no terminal background`);
+    // ANSI black is excluded on purpose: it is the colour programs print when
+    // they mean "the background", and every terminal renders it near-invisible
+    // against a dark surface. Everything an agent actually prints in must read.
+    for (const name of ["term-fg", "term-cursor", "term-white", "red", "green", "yellow", "blue", "mauve", "teal"]) {
+      const value = tokens[name];
+      assert.ok(value, `${mode} declares no --${name}`);
+      assert.ok(
+        contrast(value, tokens["term-bg"]) >= 4.5,
+        `${mode} --${name} (${value}) is ${contrast(value, tokens["term-bg"]).toFixed(2)}:1 on the terminal background`,
+      );
+    }
+  }
+});

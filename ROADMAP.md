@@ -10,16 +10,6 @@ widths. No pre-existing test, lint or build failure exists. Verification: every 
 below was traced to a real caller; the theming finding was observed live (Vite + headless Chromium,
 both `prefers-color-scheme` values) rather than inferred from source.
 
-- [ ] P3 — The focused terminal is hardcoded dark and ignores the light theme
-  Category: visual
-  Where: `web/src/main.js:3341-3354` (xterm `theme:` literal), `web/src/styles.css` light-theme block at ~line 2905
-  Problem: every other surface follows `prefers-color-scheme`, but the xterm canvas paints `background: "#11111b"` with the dark Catppuccin ANSI palette regardless. In light mode the operator gets a light panel (`.terminal-panel` composites to `rgb(239,241,245)`) framing a hard dark rectangle, and the empty-vs-focused pane flips the panel's apparent theme. The chrome gate cannot see it: the canvas is not DOM text.
-  Evidence: observed live (headless Chromium, `colorScheme: "light"`): `.terminal-panel` = rgb(239,241,245), xterm DOM background transparent, canvas painted from the hardcoded theme literal. Dark mode is self-consistent.
-  Fix: decide it, either way, and implement the decision: (a) intentional dark terminal — then frame it: in the light block, set `.terminal-panel`/`#terminal-host` (and the terminal toolbar) to the terminal's own dark surface so the pane reads as a deliberate dark island; or (b) theme the terminal — build the `theme:` object from resolved CSS custom properties and re-apply on `matchMedia("(prefers-color-scheme: dark)")` change. (a) is smaller and matches how most terminal apps behave.
-  Acceptance: in light mode there is no light-framed dark rectangle: either the pane is deliberately dark edge-to-edge including its toolbar, or the terminal renders with a light palette. A chrome-audit-style probe of `.terminal-panel` vs the canvas colour agrees in both themes.
-  Confidence: Verified
-  Effort: S
-
 - [ ] P3 — "Update available" arrives as a 4-second toast with no way to act on it
   Category: ux
   Where: `web/src/main.js:460` (`checkForUpdates`), `showToast` at `web/src/main.js:275`

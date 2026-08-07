@@ -29,6 +29,17 @@
   --red: #f38ba8;
   --green: #a6e3a1;
   --teal: #94e2d5;
+  /* The focused terminal's palette. Declared as tokens rather than left in the
+     renderer's `theme` literal so the pane follows the theme like every other
+     surface; `setupTerminal` reads these and re-reads them when the scheme
+     changes. The ANSI eight reuse the accent tokens above, which are already
+     tuned for contrast in each mode. */
+  --term-bg: #11111b;
+  --term-fg: #cdd6f4;
+  --term-cursor: #f5e0e6;
+  --term-selection: #585b70;
+  --term-black: #181825;
+  --term-white: #bac2de;
 }
 
 * {
@@ -627,7 +638,7 @@ button {
   display: flex;
   min-height: 0;
   flex-direction: column;
-  background: #11111b;
+  background: var(--term-bg);
 }
 
 /* `min-width: 0` on both children is what stops this row overflowing its panel
@@ -2924,6 +2935,18 @@ button {
     --red: #a8002a;
     --green: #14532d;
     --teal: #005f73;
+    /* A light terminal, from the same tokens. The accents above are the
+       contrast-tuned light variants, so the ANSI eight come out readable on a
+       light background rather than as the dark theme's pastels. */
+    --term-bg: #eff1f5;
+    --term-fg: #303446;
+    --term-cursor: #7c2d54;
+    --term-selection: #bcc0cc;
+    --term-black: #4c4f69;
+    /* One step darker than the --overlay0 it started from: ANSI white is the
+       dim/secondary colour programs actually print in, and at #6c6f85 it landed
+       at 4.37:1 on this background — just under AA. */
+    --term-white: #63667c;
   }
   body {
     background:
@@ -2936,9 +2959,6 @@ button {
   }
   .fleet-panel {
     background: rgba(239, 241, 245, .88);
-  }
-  .terminal-panel {
-    background: var(--base);
   }
   .filter-wrap, .menu-section select {
     background: rgba(255, 255, 255, .78);
