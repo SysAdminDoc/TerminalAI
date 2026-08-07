@@ -1,4 +1,38 @@
 //! Windows process-tree containment shared by agent and environment workers.
+//!
+//! An agent spawns compilers, test runners, package managers and language
+//! servers. If the supervisor dies without containing them, they survive as
+//! orphans holding the operator's ports, file locks and CPU — so every session
+//! is created inside a job object with kill-on-close, and closing the handle is
+//! what guarantees teardown even when this process is terminated rather than
+//! asked to exit.
+//!
+//! # The gap between existing and being contained is 34.8 µs, and that is a
+//! # decision rather than an oversight
+//!
+//! A process can only be *born* inside a job via
+//! `PROC_THREAD_ATTRIBUTE_JOB_LIST` on the `CreateProcessW` attribute list, and
+//! `portable-pty` 0.9 builds that list itself — `ProcThreadAttributeList::
+//! with_capacity(1)`, one entry, hard-coded to the pseudoconsole — so nothing
+//! short of forking the crate or reimplementing ConPTY can reach it. Both were
+//! rejected: a forked pty crate is a permanent maintenance cost on the one code
+//! path the whole fleet's teardown depends on.
+//!
+//! What *was* reachable is the length of the gap. The job is created and fully
+//! configured before `spawn_command`, leaving exactly one
+//! `AssignProcessToJobObject` between the process existing and it being
+//! contained — measured 2026-08-04 at **34.8 µs**, down from three syscalls,
+//! and pinned by `containment_costs_one_syscall_after_the_process_exists`.
+//!
+//! Membership is read back with `IsProcessInJob` rather than inferred from the
+//! assignment's return value, because "the call returned success" and "this
+//! process is in this job" are different claims and only the second one is the
+//! thing teardown depends on.
+//!
+//! Residual exposure, stated rather than hidden: a grandchild spawned by the
+//! agent inside those 34.8 µs escapes kill-on-close. No agent reaches its own
+//! entry point that fast. Revisit if `portable-pty` ever exposes the attribute
+//! list.
 
 #[cfg(windows)]
 use std::mem::size_of;

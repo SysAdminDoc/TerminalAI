@@ -107,8 +107,24 @@ impl AdmissionConfig {
     /// Read daemon-wide limits without introducing a second config file.
     /// TERMINALAI_DEFAULT_BUDGET_USD=none disables the Claude default cap.
     pub fn from_environment() -> Result<Self, String> {
-        let max_live_sessions = std::env::var("TERMINALAI_MAX_LIVE_SESSIONS")
-            .ok()
+        Self::from_lookup(|name| std::env::var(name).ok())
+    }
+
+    /// The same reading, against any source of names.
+    ///
+    /// Split out because the environment is process-global: a test that sets
+    /// `TERMINALAI_MAX_LIVE_SESSIONS` changes it for every other test running
+    /// at the same time, so this parsing was simply never asserted on. Mutation
+    /// testing made that concrete on 2026-08-07 — every mutant in this function
+    /// survived, including replacing the whole body with `Ok(Default::default())`,
+    /// which is as much as saying the operator's configuration could have been
+    /// ignored entirely and nothing would have noticed.
+    ///
+    /// Same shape as the clock injection elsewhere in this crate (`observe(..,
+    /// now)`, `is_expired(now)`): the ambient thing becomes a parameter, and
+    /// the wrapper is the only part that reaches for it.
+    pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
+        let max_live_sessions = lookup("TERMINALAI_MAX_LIVE_SESSIONS")
             .map(|value| {
                 value.parse::<usize>().map_err(|_| {
                     "TERMINALAI_MAX_LIVE_SESSIONS must be a positive integer".to_string()
@@ -116,30 +132,29 @@ impl AdmissionConfig {
             })
             .transpose()?
             .unwrap_or(DEFAULT_MAX_LIVE_SESSIONS);
-        let default_budget_usd = match std::env::var("TERMINALAI_DEFAULT_BUDGET_USD") {
-            Ok(value)
+        let default_budget_usd = match lookup("TERMINALAI_DEFAULT_BUDGET_USD") {
+            Some(value)
                 if value.eq_ignore_ascii_case("none") || value.eq_ignore_ascii_case("off") =>
             {
                 None
             }
-            Ok(value) => Some(value.parse::<f64>().map_err(|_| {
+            Some(value) => Some(value.parse::<f64>().map_err(|_| {
                 "TERMINALAI_DEFAULT_BUDGET_USD must be a non-negative decimal or 'none'".to_string()
             })?),
-            Err(_) => Some(DEFAULT_SESSION_BUDGET_USD),
+            None => Some(DEFAULT_SESSION_BUDGET_USD),
         };
-        let spend_ceiling_usd = match std::env::var("TERMINALAI_SPEND_CEILING_USD") {
-            Ok(value)
+        let spend_ceiling_usd = match lookup("TERMINALAI_SPEND_CEILING_USD") {
+            Some(value)
                 if value.eq_ignore_ascii_case("none") || value.eq_ignore_ascii_case("off") =>
             {
                 None
             }
-            Ok(value) => Some(value.parse::<f64>().map_err(|_| {
+            Some(value) => Some(value.parse::<f64>().map_err(|_| {
                 "TERMINALAI_SPEND_CEILING_USD must be a non-negative decimal or 'none'".to_string()
             })?),
-            Err(_) => None,
+            None => None,
         };
-        let spend_window = std::env::var("TERMINALAI_SPEND_WINDOW_HOURS")
-            .ok()
+        let spend_window = lookup("TERMINALAI_SPEND_WINDOW_HOURS")
             .map(|value| {
                 value
                     .parse::<f64>()
@@ -162,10 +177,13 @@ impl AdmissionConfig {
         if config.spend_ceiling_usd != spend_ceiling_usd {
             return Err("TERMINALAI_SPEND_CEILING_USD must be finite and non-negative".into());
         }
-        let memory_budget_bytes = megabytes_from_env("TERMINALAI_MEMORY_BUDGET_MB")?;
-        let session_memory_cap_bytes = megabytes_from_env("TERMINALAI_SESSION_MEMORY_CAP_MB")?;
-        let max_processes_per_session = std::env::var("TERMINALAI_MAX_PROCESSES_PER_SESSION")
-            .ok()
+        let memory_budget_bytes =
+            megabytes_from("TERMINALAI_MEMORY_BUDGET_MB", lookup("TERMINALAI_MEMORY_BUDGET_MB"))?;
+        let session_memory_cap_bytes = megabytes_from(
+            "TERMINALAI_SESSION_MEMORY_CAP_MB",
+            lookup("TERMINALAI_SESSION_MEMORY_CAP_MB"),
+        )?;
+        let max_processes_per_session = lookup("TERMINALAI_MAX_PROCESSES_PER_SESSION")
             .map(|value| {
                 value.parse::<u32>().map_err(|_| {
                     "TERMINALAI_MAX_PROCESSES_PER_SESSION must be a positive integer".to_string()
@@ -181,17 +199,19 @@ impl AdmissionConfig {
     }
 }
 
-/// Megabytes from an environment variable, as bytes. `none`/`off` disables.
-fn megabytes_from_env(name: &str) -> Result<Option<u64>, String> {
-    match std::env::var(name) {
-        Ok(value) if value.eq_ignore_ascii_case("none") || value.eq_ignore_ascii_case("off") => {
+/// Megabytes from a configured value, as bytes. `none`/`off` disables.
+///
+/// `name` is carried only so the error names the setting the operator wrote.
+fn megabytes_from(name: &str, value: Option<String>) -> Result<Option<u64>, String> {
+    match value {
+        Some(value) if value.eq_ignore_ascii_case("none") || value.eq_ignore_ascii_case("off") => {
             Ok(None)
         }
-        Ok(value) => value
+        Some(value) => value
             .parse::<u64>()
             .map(|megabytes| Some(megabytes.saturating_mul(1024 * 1024)))
             .map_err(|_| format!("{name} must be a non-negative integer of megabytes or 'none'")),
-        Err(_) => Ok(None),
+        None => Ok(None),
     }
 }
 
@@ -498,5 +518,131 @@ mod tests {
         assert_eq!(config.memory_budget_bytes, None);
         assert_eq!(config.session_memory_cap_bytes, None);
         assert_eq!(config.max_processes_per_session, None);
+    }
+    /// A stand-in environment. Every one of these tests would otherwise have to
+    /// mutate the real process environment, which is shared with every test
+    /// running beside it -- the reason none of this was asserted before.
+    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value).to_owned())
+        }
+    }
+
+    #[test]
+    fn an_empty_environment_gives_the_documented_defaults() {
+        let config = AdmissionConfig::from_lookup(env(&[])).expect("defaults are valid");
+        assert_eq!(config.max_live_sessions, DEFAULT_MAX_LIVE_SESSIONS);
+        assert_eq!(config.default_budget_usd, Some(DEFAULT_SESSION_BUDGET_USD));
+        assert_eq!(config.spend_ceiling_usd, None);
+        assert_eq!(config.spend_window, crate::spend::DEFAULT_SPEND_WINDOW);
+        assert_eq!(config.memory_budget_bytes, None);
+        assert_eq!(config.session_memory_cap_bytes, None);
+        assert_eq!(config.max_processes_per_session, None);
+    }
+
+    #[test]
+    fn every_setting_is_actually_read() {
+        // The whole function surviving as `Ok(Default::default())` was a real
+        // mutant. Each field is asserted against a value that is not its
+        // default, so ignoring the configuration cannot pass.
+        let config = AdmissionConfig::from_lookup(env(&[
+            ("TERMINALAI_MAX_LIVE_SESSIONS", "7"),
+            ("TERMINALAI_DEFAULT_BUDGET_USD", "12.5"),
+            ("TERMINALAI_SPEND_CEILING_USD", "40"),
+            ("TERMINALAI_SPEND_WINDOW_HOURS", "2.5"),
+            ("TERMINALAI_MEMORY_BUDGET_MB", "4096"),
+            ("TERMINALAI_SESSION_MEMORY_CAP_MB", "512"),
+            ("TERMINALAI_MAX_PROCESSES_PER_SESSION", "9"),
+        ]))
+        .expect("a fully configured environment is valid");
+        assert_eq!(config.max_live_sessions, 7);
+        assert_eq!(config.default_budget_usd, Some(12.5));
+        assert_eq!(config.spend_ceiling_usd, Some(40.0));
+        assert_eq!(config.spend_window, Duration::from_secs(9000));
+        // Megabytes, not bytes: the multiplication is the part a mutant can
+        // turn into an addition and still produce a plausible-looking number.
+        assert_eq!(config.memory_budget_bytes, Some(4096 * 1024 * 1024));
+        assert_eq!(config.session_memory_cap_bytes, Some(512 * 1024 * 1024));
+        assert_eq!(config.max_processes_per_session, Some(9));
+    }
+
+    #[test]
+    fn none_and_off_disable_rather_than_parse() {
+        for word in ["none", "off", "NONE", "Off"] {
+            let config = AdmissionConfig::from_lookup(env(&[
+                ("TERMINALAI_DEFAULT_BUDGET_USD", word),
+                ("TERMINALAI_SPEND_CEILING_USD", word),
+                ("TERMINALAI_MEMORY_BUDGET_MB", word),
+                ("TERMINALAI_SESSION_MEMORY_CAP_MB", word),
+            ]))
+            .unwrap_or_else(|error| panic!("{word} should disable, not fail: {error}"));
+            assert_eq!(config.default_budget_usd, None, "{word}");
+            assert_eq!(config.spend_ceiling_usd, None, "{word}");
+            assert_eq!(config.memory_budget_bytes, None, "{word}");
+            assert_eq!(config.session_memory_cap_bytes, None, "{word}");
+        }
+    }
+
+    #[test]
+    fn only_the_two_disabling_words_are_special() {
+        // The guard is `none || off`. Turning that `||` into `&&` makes it
+        // always false, so both words start being parsed as numbers -- which is
+        // an error, and only shows up if something asserts on the error.
+        let error = AdmissionConfig::from_lookup(env(&[("TERMINALAI_DEFAULT_BUDGET_USD", "nope")]))
+            .expect_err("an unrecognised word is not a budget");
+        assert!(error.contains("TERMINALAI_DEFAULT_BUDGET_USD"), "{error}");
+    }
+
+    #[test]
+    fn a_setting_that_cannot_be_read_is_refused_by_name() {
+        // Each arm names its own setting. A mutant that swaps a comparison
+        // still has to produce the right message for the right variable.
+        for (name, value) in [
+            ("TERMINALAI_MAX_LIVE_SESSIONS", "many"),
+            ("TERMINALAI_DEFAULT_BUDGET_USD", "cheap"),
+            ("TERMINALAI_SPEND_CEILING_USD", "lots"),
+            ("TERMINALAI_SPEND_WINDOW_HOURS", "soon"),
+            ("TERMINALAI_MEMORY_BUDGET_MB", "plenty"),
+            ("TERMINALAI_SESSION_MEMORY_CAP_MB", "plenty"),
+            ("TERMINALAI_MAX_PROCESSES_PER_SESSION", "several"),
+        ] {
+            let error = AdmissionConfig::from_lookup(env(&[(name, value)]))
+                .expect_err("an unreadable setting must be refused, not defaulted");
+            assert!(error.contains(name), "{name}={value} produced: {error}");
+        }
+    }
+
+    #[test]
+    fn a_zero_session_cap_is_refused_rather_than_quietly_raised() {
+        // `new` clamps to at least 1, so accepting 0 would silently give the
+        // operator a fleet of one while they asked for none. The check that
+        // catches it is `config.max_live_sessions != max_live_sessions`.
+        let error = AdmissionConfig::from_lookup(env(&[("TERMINALAI_MAX_LIVE_SESSIONS", "0")]))
+            .expect_err("zero sessions must be refused");
+        assert!(error.contains("at least 1"), "{error}");
+    }
+
+    #[test]
+    fn a_negative_budget_is_refused_rather_than_dropped() {
+        // `new` filters a negative budget to None, which reads identically to
+        // "no cap configured" -- the opposite of what was asked for.
+        let error = AdmissionConfig::from_lookup(env(&[("TERMINALAI_DEFAULT_BUDGET_USD", "-1")]))
+            .expect_err("a negative budget must be refused");
+        assert!(error.contains("non-negative"), "{error}");
+        let error = AdmissionConfig::from_lookup(env(&[("TERMINALAI_SPEND_CEILING_USD", "-1")]))
+            .expect_err("a negative ceiling must be refused");
+        assert!(error.contains("non-negative"), "{error}");
+    }
+
+    #[test]
+    fn a_spend_window_must_be_a_positive_finite_number_of_hours() {
+        for bad in ["0", "-3", "nan", "inf"] {
+            let error = AdmissionConfig::from_lookup(env(&[("TERMINALAI_SPEND_WINDOW_HOURS", bad)]))
+                .expect_err("a non-positive window must be refused");
+            assert!(error.contains("positive decimal"), "{bad} produced: {error}");
+        }
     }
 }

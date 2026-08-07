@@ -1,0 +1,48 @@
+# What `cargo mutants` is allowed to change, and what it must not.
+#
+# A large green suite says code was executed, not that it was asserted on. The
+# arithmetic most likely to be executed-without-assertion here is exactly what
+# the supervisor turns on: backoff, cap comparisons, threshold boundaries and
+# error-branch returns. This project has already shipped one of those — a
+# rate-limit window test that slept for a boundary it never reached and passed
+# on an assertion that could not fail.
+#
+# Scope is the pure policy surface, deliberately. Those modules were separated
+# from the registry precisely so a decision could be stated without a Mutex, a
+# thread or a clock, which is also what makes them fast and deterministic to
+# mutate. A full-tree run is explicitly not the goal: it would spend hours on
+# generated serde impls and on code whose behaviour is a real process.
+examine_globs = [
+    "crates/terminalai-core/src/admission.rs",
+    "crates/terminalai-core/src/restart.rs",
+    "crates/terminalai-core/src/context.rs",
+    "crates/terminalai-core/src/waiting.rs",
+    "crates/terminalai-core/src/search.rs",
+    "crates/terminalai-core/src/help.rs",
+    "crates/terminalai-core/src/spend.rs",
+]
+
+# Never mutated, and not because they are unimportant.
+#
+# `pty.rs` and `registry/lifecycle.rs` own real ConPTY handles and real child
+# processes. A mutant there does not fail a test, it leaves an orphaned agent
+# process and a pseudo-console behind, and cargo-mutants would time out rather
+# than report. `scrollback.rs` and `store.rs` write real files. Their coverage
+# question is a live one and it is answered by the probe, not here.
+exclude_globs = [
+    "crates/terminalai-core/src/pty.rs",
+    "crates/terminalai-core/src/registry/lifecycle.rs",
+    "crates/terminalai-core/src/scrollback.rs",
+    "crates/terminalai-core/src/store.rs",
+]
+
+# The policy modules are pure, so only their own tests can kill their mutants.
+# Running the whole workspace per mutant would multiply the wall clock by the
+# pty and daemon suites without changing a single verdict.
+test_package = ["terminalai-core"]
+
+# Generous, because the first run of any mutant pays for a full compile. Not
+# generous enough to hide a hang: a pure function that takes 300s is a mutant
+# that made it loop, which is a caught mutant and not a timeout to wait out.
+timeout_multiplier = 5.0
+minimum_test_timeout = 120

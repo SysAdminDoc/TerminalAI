@@ -131,10 +131,3 @@ the historical `R-NN` scheme and the entries below follow the current convention
   Touches: `scripts/check-cross-targets.ps1`, the release build step, `README.md`
   Acceptance: `aarch64-pc-windows-msvc` is at least type-checked by the cross-target script alongside the Linux target, and the README states which architectures a release actually ships. If an ARM64 bundle is produced, it goes through `scripts/verify-installer.ps1` on real hardware before being called supported — an untested second architecture is worse than an honest single one.
   Complexity: M
-
-- [ ] P3 — Publish the design reasoning the repository currently keeps to itself
-  Why: this is a public MIT repository whose every non-obvious decision — the 28px row, push-not-poll, unwind-not-abort, the 34.8 µs containment window, refuse-do-not-drop — lives only in a gitignored file, so a reader sees the conclusions and none of the arguments.
-  Evidence: `.gitignore` excludes `CLAUDE.md`, which holds the Design decisions and Learned sections; there is no `docs/` directory and no architecture document in the tree. `README.md` is 396 lines and already carries some of this reasoning inline, which is why it is that long.
-  Touches: `docs/`, `README.md`
-  Acceptance: the design decisions and the platform traps worth publishing are moved into a tracked `docs/` file that the README links to, and the README shortens by what moved. `CLAUDE.md` keeps the working notes and the `## Learned` log; nothing about an AI author or agent workflow is copied across. Pairs with the already-filed `.github/` surface item — a bug template is more useful next to a document explaining what the daemon is.
-  Complexity: S

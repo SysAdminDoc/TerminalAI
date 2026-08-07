@@ -35,3 +35,6 @@ desktop.ini
 *.local.toml
 screenshots/tmp/
 web/artifacts/
+
+# cargo-mutants scratch output
+mutants.out/

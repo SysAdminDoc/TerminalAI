@@ -58,6 +58,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- The daemon's admission limits are read from the operator's configuration by a function that can
+  be tested. `AdmissionConfig::from_environment` read seven environment variables directly, and the
+  environment is process-global — a test that sets `TERMINALAI_MAX_LIVE_SESSIONS` changes it for
+  every test running beside it — so none of that parsing had ever been asserted on. Mutation
+  testing made it concrete: every mutant in the function survived, including replacing the entire
+  body with `Ok(Default::default())`. The fleet's session cap, spend ceiling, spend window and both
+  memory limits could have been ignored outright and the suite would have stayed green.
+
+  `from_lookup` now takes the lookup as a parameter and `from_environment` is the one line that
+  reaches for the real environment — the same shape as the clock injection already used across this
+  crate. Nine tests cover it, including that `none`/`off` disables rather than parses, that
+  megabytes are multiplied rather than added, that a zero session cap is refused instead of being
+  silently clamped up to one, and that a negative budget is refused instead of being filtered to
+  `None` and reading as "no cap configured".
+
 - The browser chrome audit now measures the fleet — the main view of the application, which it had
   never checked. With no backend answering, the preflight call rejects, the app enters preflight
   mode, and `#fleet-list`, `#fleet-state-strip` and `#column-labels` are all `view-hidden`; every
@@ -80,6 +95,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   anything was lost.
 
 ### Changed
+
+- The design reasoning is published, in the module documentation of the code that implements each
+  decision rather than in a separate design document. `cargo doc --no-deps -p terminalai-core -p
+  terminalai-daemon` is the entry point and the README says where to start. A design document is a
+  second place to be wrong — nothing fails when the code stops matching it — whereas a module's own
+  docs sit next to the thing they describe and are read by whoever is about to change it. Two
+  decisions that had never been written down anywhere tracked now are: why a process is contained
+  one syscall after it exists, what escapes in the 34.8 µs gap and why the pty crate is not forked
+  to close it; and why none of the daemon's three log sinks is unbounded.
 
 - Each fleet state chip names its status in `data-status`. The audit reads those to discover every
   status the fleet models and builds its fixture from them, so a status added to the app is

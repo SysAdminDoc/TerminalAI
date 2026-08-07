@@ -644,6 +644,29 @@ silently getting an unsandboxed Claude session is the kind of thing that costs y
 are placed after an explicit `--` option terminator, so pasted text beginning with `-` remains text.
 The `extra_args` escape hatch is trusted-input-only and is never populated from prompt text.
 
+## Where the reasoning lives
+
+This README says what the tool does. The arguments behind the non-obvious decisions — the 28px row,
+push-not-poll, unwind-not-abort, refuse-do-not-drop, the 34.8 µs containment window, bytes-not-lines
+scrollback — are in the module documentation of the code that implements each one, not in a separate
+design document:
+
+```powershell
+cargo doc --no-deps --open -p terminalai-core -p terminalai-daemon
+```
+
+That is deliberate. A design document is a second place to be wrong: it goes stale silently, because
+nothing fails when the code stops matching it. A module's own docs sit next to the thing they
+describe and are read by whoever is about to change it. Where a decision has a number behind it, the
+docs give the measurement and the date it was taken.
+
+Some starting points: `process_tree` for why a process is contained one syscall after it exists and
+what escapes in the gap; `agent` for why neither CLI is spawned from `PATH`; `scrollback` for why
+the limit is bytes and never lines; `admission` and `restart` for the two policies deliberately kept
+free of locks, threads and clocks; `hook_config` for why this tool writes into the operator's global
+agent settings and what was measured before accepting that; `logging` for why nothing the daemon
+records is unbounded.
+
 ## Layout
 
 ```

@@ -1,3 +1,33 @@
+//! Where the daemon says what it did, and why none of it is unbounded.
+//!
+//! This process runs for as long as the operator's machine is up and owns every
+//! supervised agent, so both obvious logging designs are wrong here. Writing to
+//! one file forever fills a disk on a long-lived process; keeping everything in
+//! memory for the GUI grows without limit in the process the whole fleet
+//! depends on staying alive.
+//!
+//! So there are three sinks and each is bounded by construction:
+//!
+//! - **On disk**, fourteen daily files under `%LOCALAPPDATA%\TerminalAI\logs\`.
+//!   Rotation by day rather than by size, because the question being answered
+//!   is almost always "what happened when that session died", and that is a
+//!   time, not an offset.
+//! - **In memory**, a 256-record tail for the diagnostics panel. A tail rather
+//!   than a full buffer: the GUI shows recent history, and a viewer that can
+//!   scroll back forever is a memory leak with a scrollbar.
+//! - **To the WebView**, batched no faster than every 100 ms. A chatty session
+//!   can emit records faster than a browser can lay them out, and an unbatched
+//!   stream turns a busy fleet into an unresponsive window.
+//!
+//! Records carry a session span — id, agent and working directory — so a line
+//! can be attributed to the session that produced it rather than read as
+//! whole-daemon noise.
+//!
+//! The `WorkerGuard` deliberately lives in the process entry point rather than
+//! here. It flushes on drop, and a panic record is exactly the one worth having;
+//! holding the guard in a shorter-lived scope would drop the appender before the
+//! records that explain why the process is ending have been written.
+
 use std::collections::{BTreeMap, VecDeque};
 use std::fs::create_dir_all;
 use std::path::PathBuf;
