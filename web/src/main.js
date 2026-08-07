@@ -15,6 +15,7 @@ import { hasOpenWork, openItemsCell, sortProjects, stalenessLabel, summarize as 
 import { renderSessionHistory } from "./sessionHistory.js";
 import { renderWorktrees } from "./worktrees.js";
 import { wireOverflowMenus } from "./menus.js";
+import { checkForUpdates as runUpdateCheck, RELEASES_PAGE } from "./updateCheck.js";
 import { systemTimeMs } from "./time.js";
 import "./styles.css";
 import { createRowRenderer } from "./rowMarkup.js";
@@ -62,10 +63,6 @@ const PREFLIGHT_META = {
   blocked: { glyph: "⊘", label: "preflight-blocked", tone: "red" },
   unsupported: { glyph: "—", label: "preflight-not-applicable", tone: "overlay0" },
 };
-const RELEASES_ENDPOINT = "https://api.github.com/repos/SysAdminDoc/TerminalAI/releases/latest";
-/// Where the operator goes when the check says there is something newer. The
-/// API endpoint above answers the question; this is the page that answers it.
-const RELEASES_PAGE = "https://github.com/SysAdminDoc/TerminalAI/releases/latest";
 const FALLBACK_APP_VERSION = __APP_VERSION__;
 
 /// What the row shows as "the last thing that happened".
@@ -439,21 +436,6 @@ function reviewNumber(value) {
   return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
 }
 
-function versionTuple(value) {
-  const match = String(value ?? "").replace(/^v/i, "").match(/^(\d+)\.(\d+)\.(\d+)/);
-  return match ? match.slice(1).map(Number) : null;
-}
-
-function isNewerVersion(candidate, current) {
-  const next = versionTuple(candidate);
-  const installed = versionTuple(current);
-  if (!next || !installed) return false;
-  for (let index = 0; index < next.length; index += 1) {
-    if (next[index] !== installed[index]) return next[index] > installed[index];
-  }
-  return false;
-}
-
 /// The one result the operator can act on stays where the action is.
 ///
 /// A newer version is the only outcome of the check that asks for anything, and
@@ -466,39 +448,20 @@ function showUpdateResult(message) {
   $("update-result-message").textContent = message ?? "";
 }
 
-async function checkForUpdates() {
-  const button = $("update-check-button");
-  if (button.disabled) return;
-  button.disabled = true;
-  showUpdateResult(null);
-  button.querySelector("span").textContent = t("update-checking");
-  try {
-    const current = state.appVersion ?? await invoke("app_version").catch(() => FALLBACK_APP_VERSION);
-    state.appVersion = current;
-    const response = await fetch(RELEASES_ENDPOINT, {
-      headers: {
-        Accept: "application/vnd.github+json",
-      },
-    });
-    if (response.status === 404) {
-      showToast(t("update-newest", { version: current }), "success");
-      return;
-    }
-    if (!response.ok) throw new Error(t("update-http-error", { status: response.status }));
-    const release = await response.json();
-    const latest = String(release.tag_name ?? "").replace(/^v/i, "");
-    if (!versionTuple(latest)) throw new Error(t("update-invalid-release"));
-    if (isNewerVersion(latest, current)) {
-      showUpdateResult(t("update-available", { latest, current }));
-    } else {
-      showToast(t("update-up-to-date", { version: current }), "success");
-    }
-  } catch (error) {
-    showToast(t("update-failed", { error: String(error) }));
-  } finally {
-    button.disabled = false;
-    button.querySelector("span").textContent = t("button-check-updates");
-  }
+/// Bind the update check to this module's collaborators.
+///
+/// The check itself lives in `updateCheck.js` and takes what it needs, so its
+/// version comparison is exercisable without a DOM, a backend or the network.
+function checkForUpdates() {
+  return runUpdateCheck({
+    $,
+    t,
+    invoke,
+    state,
+    showToast,
+    showUpdateResult,
+    fallbackVersion: FALLBACK_APP_VERSION,
+  });
 }
 
 function diagnosticSource(value) {
