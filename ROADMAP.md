@@ -10,16 +10,6 @@ widths. No pre-existing test, lint or build failure exists. Verification: every 
 below was traced to a real caller; the theming finding was observed live (Vite + headless Chromium,
 both `prefers-color-scheme` values) rather than inferred from source.
 
-- [ ] P3 — The overflow menus claim `role="menu"` semantics they do not implement
-  Category: a11y
-  Where: `web/index.html:25` (`#app-menu`), `web/index.html:56` (`#tools-menu`), `web/src/menus.js:13` (`wireOverflowMenus`)
-  Problem: both panels are `role="menu"`, but (a) `#app-menu` contains a `<select>`, a heading and inline buttons that are not `menuitem`s — invalid children for the menu role, so screen readers announce wrong item counts and the preset controls are unreachable in menu navigation mode; and (b) `wireOverflowMenus` implements no ArrowUp/ArrowDown/Home/End movement, which the WAI-ARIA menu pattern requires once the role is claimed. Focus lands on the first control and Tab walks out of the "menu".
-  Evidence: read both panels' markup (mixed children confirmed; 10 `role="menuitem"` buttons total) and the whole of `menus.js` (click, outside-click and Escape only — no arrow-key handler exists in the file, and `main.js`'s arrow handling is scoped to `#fleet-list`).
-  Fix: prefer honesty over ceremony: drop `role="menu"`/`role="menuitem"` and treat both panels as disclosure panels — the current Tab/Escape/outside-click behaviour is exactly right for that pattern. Keep `aria-expanded`/`aria-controls` on the triggers; restyle `role="separator"` as a plain rule. (Implementing full menu keyboard semantics and evicting the `<select>` cluster is the alternative, for no more accessibility at more cost.)
-  Acceptance: no ARIA violation for invalid menu children (axe or manual review); Tab flows through every control in both panels; the menu test asserts the roles match the implemented pattern.
-  Confidence: Verified
-  Effort: S
-
 - [ ] P3 — The focused terminal is hardcoded dark and ignores the light theme
   Category: visual
   Where: `web/src/main.js:3341-3354` (xterm `theme:` literal), `web/src/styles.css` light-theme block at ~line 2905

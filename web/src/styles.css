@@ -760,6 +760,7 @@ button {
 .menu-separator {
   height: 1px;
   margin: 4px 6px;
+  border: 0;
   background: var(--surface0);
 }
 

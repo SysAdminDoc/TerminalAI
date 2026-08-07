@@ -172,3 +172,24 @@ test("the advanced summary says what is inside it", () => {
   assert.match(hint.textContent, /model/);
   assert.match(hint.textContent, /sandbox/);
 });
+
+test("the panels are disclosures, and do not claim ARIA menu semantics", () => {
+  // They used to be `role="menu"` with `role="menuitem"` children. Two things
+  // made that a false claim: the app panel holds a <select> and a heading, which
+  // are invalid children of a menu and make a screen reader announce the wrong
+  // item count; and `wireOverflowMenus` implements no arrow-key movement, which
+  // the menu pattern requires once the role is taken. What it does implement —
+  // a trigger with aria-expanded/aria-controls, Tab through the contents,
+  // Escape and outside-click to close — is exactly a disclosure.
+  const { doc, id } = mount();
+  for (const panel of ["app-menu", "tools-menu"]) {
+    assert.equal(id(panel).getAttribute("role"), null, `${panel} claims a role it does not keep`);
+  }
+  assert.equal(doc.querySelectorAll('[role="menuitem"]').length, 0);
+  assert.equal(doc.querySelectorAll(".menu [role]").length, 0);
+  // The half that must survive: the trigger still announces the relationship.
+  for (const [button, panel] of [["app-menu-button", "app-menu"], ["tools-menu-button", "tools-menu"]]) {
+    assert.equal(id(button).getAttribute("aria-controls"), panel);
+    assert.equal(id(button).getAttribute("aria-expanded"), "false");
+  }
+});

@@ -9,6 +9,15 @@
  *
  * Closing on outside click and on Escape is what makes a menu feel like a menu;
  * a menu that only closes by re-clicking its trigger reads as broken.
+ *
+ * These are **disclosure panels**, not ARIA menus, and the markup says so. They
+ * used to claim `role="menu"` with `role="menuitem"` children, which is a
+ * promise neither the markup nor this file kept: the app panel holds a `<select>`
+ * and a heading, which are invalid children of a menu and make a screen reader
+ * announce the wrong item count, and nothing here implements the arrow-key
+ * movement the menu pattern requires once the role is claimed. Tab, Escape and
+ * outside-click — what is actually implemented — are exactly right for a
+ * disclosure, so the roles went rather than the behaviour.
  */
 export function wireOverflowMenus(doc = document) {
   const $ = (id) => doc.getElementById(id);

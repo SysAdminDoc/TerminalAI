@@ -22,7 +22,7 @@
           <button class="button button-primary" id="new-session-button"><span class="button-plus">+</span> <span data-i18n="button-new-session">New session</span></button>
           <div class="menu-wrap">
             <button class="icon-button" id="app-menu-button" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="app-menu" title="More actions" data-i18n-title="menu-more" aria-label="More actions" data-i18n-aria-label="menu-more">⋯</button>
-            <div class="menu menu-right" id="app-menu" role="menu" hidden>
+            <div class="menu menu-right" id="app-menu" hidden>
               <div class="menu-section">
                 <span class="menu-heading" data-i18n="menu-presets">Presets</span>
                 <select id="preset-select" aria-label="Saved launcher presets" data-i18n-aria-label="menu-presets-select"><option value="" data-i18n="button-presets">Presets</option></select>
@@ -32,10 +32,10 @@
                   <button class="button button-quiet" id="restore-presets-button" type="button" data-i18n-title="button-restore-presets" aria-label="Restore built-in presets" data-i18n-aria-label="button-restore-presets" data-i18n="menu-preset-restore">Restore built-ins</button>
                 </div>
               </div>
-              <div class="menu-separator" role="separator"></div>
-              <button class="menu-item" id="refresh-button" type="button" role="menuitem"><span data-i18n="button-refresh">Refresh</span></button>
-              <button class="menu-item" id="preflight-toggle" type="button" role="menuitem" aria-pressed="false" data-i18n="button-preflight-short">Preflight</button>
-              <button class="menu-item" id="update-check-button" type="button" role="menuitem" data-i18n="button-check-updates">Check updates</button>
+              <hr class="menu-separator" />
+              <button class="menu-item" id="refresh-button" type="button"><span data-i18n="button-refresh">Refresh</span></button>
+              <button class="menu-item" id="preflight-toggle" type="button" aria-pressed="false" data-i18n="button-preflight-short">Preflight</button>
+              <button class="menu-item" id="update-check-button" type="button" data-i18n="button-check-updates">Check updates</button>
             </div>
           </div>
         </div>
@@ -53,16 +53,16 @@
             <button class="button button-quiet wide-toggle" id="wide-toggle" type="button" aria-pressed="false" title="Show model, effort, and cost" data-i18n-title="button-show-model-effort-cost" data-i18n="button-wide">Wide</button>
             <div class="menu-wrap">
               <button class="icon-button" id="tools-menu-button" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="tools-menu" title="Tools" data-i18n-title="menu-tools" aria-label="Tools" data-i18n-aria-label="menu-tools">⋯</button>
-              <div class="menu menu-right" id="tools-menu" role="menu" hidden>
-                <button class="menu-item" id="group-toggle" type="button" role="menuitem" aria-pressed="false" data-i18n-title="button-group-list">No grouping</button>
-                <div class="menu-separator" role="separator"></div>
-                <button class="menu-item" id="projects-toggle" type="button" role="menuitem" data-i18n-title="button-projects-open" data-i18n="button-projects-short">Projects</button>
-                <button class="menu-item" id="prompts-toggle" type="button" role="menuitem" data-i18n-title="button-prompts-open" data-i18n="button-prompts-short">Prompts</button>
-                <button class="menu-item" id="broadcast-toggle" type="button" role="menuitem" data-i18n-title="button-broadcast-open" data-i18n="button-broadcast-short">Broadcast</button>
-                <button class="menu-item" id="history-toggle" type="button" role="menuitem" data-i18n-title="session-history-title" data-i18n="button-history-short">History</button>
-                <button class="menu-item" id="settings-toggle" type="button" role="menuitem" data-i18n-title="settings-title" data-i18n="button-settings-short">Limits</button>
-                <div class="menu-separator" role="separator"></div>
-                <button class="menu-item" id="explainer-toggle" type="button" role="menuitem" data-i18n-aria-label="button-explainer-title" data-i18n="menu-explainer">How this screen works</button>
+              <div class="menu menu-right" id="tools-menu" hidden>
+                <button class="menu-item" id="group-toggle" type="button" aria-pressed="false" data-i18n-title="button-group-list">No grouping</button>
+                <hr class="menu-separator" />
+                <button class="menu-item" id="projects-toggle" type="button" data-i18n-title="button-projects-open" data-i18n="button-projects-short">Projects</button>
+                <button class="menu-item" id="prompts-toggle" type="button" data-i18n-title="button-prompts-open" data-i18n="button-prompts-short">Prompts</button>
+                <button class="menu-item" id="broadcast-toggle" type="button" data-i18n-title="button-broadcast-open" data-i18n="button-broadcast-short">Broadcast</button>
+                <button class="menu-item" id="history-toggle" type="button" data-i18n-title="session-history-title" data-i18n="button-history-short">History</button>
+                <button class="menu-item" id="settings-toggle" type="button" data-i18n-title="settings-title" data-i18n="button-settings-short">Limits</button>
+                <hr class="menu-separator" />
+                <button class="menu-item" id="explainer-toggle" type="button" data-i18n-aria-label="button-explainer-title" data-i18n="menu-explainer">How this screen works</button>
               </div>
             </div>
           </div>

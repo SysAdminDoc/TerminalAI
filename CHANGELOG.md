@@ -17,6 +17,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- The two overflow panels no longer claim ARIA menu semantics they do not implement. They were
+  `role="menu"` with `role="menuitem"` children, but the app panel holds a `<select>` and a heading
+  — invalid children of a menu, which makes a screen reader announce the wrong item count — and
+  nothing implemented the arrow-key movement the menu pattern requires once the role is taken. What
+  is actually implemented (a trigger with `aria-expanded`/`aria-controls`, Tab through the contents,
+  Escape and outside-click to close) is exactly a disclosure, so the roles went rather than the
+  behaviour.
 - The HTTP hook reader's request deadline now bounds the body as well as the headers. `read_exact`
   armed the socket timeout once and looped internally, so every individual read got the full
   two-second timeout and each successful byte re-armed it — a local client declaring a megabyte and
