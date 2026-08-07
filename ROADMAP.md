@@ -108,13 +108,6 @@ additions; where they touch, the note says so.
   Acceptance: `cargo mutants --in-diff` runs on core modules as a periodic check with PTY and process-spawning modules excluded; surviving mutants are either killed with a test or recorded as intentional. A full-tree run is explicitly not the goal.
   Complexity: S
 
-- [ ] P3 — Make the sidecar and app binaries reproducible
-  Why: reproducibility is the only claim that lets someone else confirm a released unsigned binary came from this source, and most of the work is configuration rather than code.
-  Evidence: sources of non-determinism and their fixes are documented at https://reproducible-builds.org/docs/rust/ — `--locked`, `SOURCE_DATE_EPOCH` for anything reading the clock, and `trim-paths` (RFC 3127, default `object` in release) for absolute paths in debuginfo. The installers are out of scope and should be stated so: Tauri's WiX template generates `ProductCode Id="*"` per build and NSIS output is LZMA-solid-compressed, so the MSI cannot be byte-reproducible as templated.
-  Touches: `Cargo.toml` profiles, the release build script, `README.md`
-  Acceptance: two clean builds of `terminalai-daemon.exe` and `terminalai-probe.exe` from the same commit produce identical hashes on this machine, and the README states that the exes are reproducible while the installers are not.
-  Complexity: M
-
 ## Research-Driven Additions — 2026-08-06
 
 Third external research pass (see `RESEARCH.md`), against `652f33d` / v0.9.0 with a green baseline

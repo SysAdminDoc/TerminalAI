@@ -24,6 +24,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - The README states the provenance level as SLSA Build L1 and says why it is not higher: these are
   locally built artifacts, and L2 requires a hosted build platform.
 
+- `terminalai-daemon.exe` and `terminalai-probe.exe` are now reproducible: two clean builds from the
+  same commit produce byte-identical files, so a released unsigned binary can be confirmed by
+  rebuilding it rather than by checking a signature that does not exist.
+  `scripts/verify-reproducible.ps1` is the check. It cleans the whole target directory between
+  builds — a second build that reuses the first's artifacts confirms the cache is consistent, not
+  that the build is deterministic — and keeps both copies outside `target/` so a failure can be
+  diagnosed against artifacts a clean has not eaten.
+
+  It found the tree was *not* reproducible: exactly 20 bytes differed in a 3.6 MB executable, being
+  the debug directory GUID and the PE `TimeDateStamp` the MSVC linker writes from the clock. Nothing
+  in the compiled code differed. `.cargo/config.toml` now passes `/Brepro`, which derives both from
+  the content. The README states that the installers are not reproducible and cannot be as
+  templated: WiX generates a fresh `ProductCode` per build and NSIS output is LZMA solid-compressed.
+
 ### Fixed
 
 - The browser chrome audit now measures the fleet — the main view of the application, which it had

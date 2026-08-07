@@ -1,0 +1,17 @@
+# Deterministic linking, so a released unsigned binary can be confirmed.
+#
+# There is no signature on anything this project ships, so the only way for
+# someone else to check that a download came from this source is to build it
+# and get the same bytes. Two clean builds of `terminalai-daemon.exe` differed
+# in exactly 20 bytes across five places: a 16-byte run that is the debug
+# directory's GUID, and four singles that are the PE `TimeDateStamp` and the
+# bytes derived from it. Nothing in the compiled code differed at all.
+#
+# `/Brepro` tells the MSVC linker to derive those from a hash of the content
+# instead of reading the clock, which is what removes the last source of
+# non-determinism here. Verified by `scripts/verify-reproducible.ps1`.
+#
+# Scoped to the MSVC environment because it is a `link.exe` flag; a GNU or
+# non-Windows target must not be handed it.
+[target.'cfg(target_env = "msvc")']
+rustflags = ["-Clink-arg=/Brepro"]

@@ -299,6 +299,29 @@ covers its dependencies.
 [SLSA](https://slsa.dev/spec/v1.2/) Build **L1**. L2 requires a hosted build platform, and no
 claim beyond L1 is made.
 
+### Reproducible executables
+
+`terminalai-daemon.exe` and `terminalai-probe.exe` build byte-for-byte identically from the same
+commit — which is what lets you confirm a released unsigned binary came from this source without a
+signature to check. Build it yourself and compare the hash:
+
+```powershell
+pwsh -NoProfile -File scripts/verify-reproducible.ps1
+```
+
+That builds twice, cleaning the whole target directory in between so the second build cannot reuse
+the first's artifacts, and compares SHA-256. It keeps both copies outside `target/` on failure, so a
+difference can be diagnosed rather than merely reported.
+
+Determinism needed one flag. The MSVC linker stamps the PE header with the clock and gives the debug
+directory a fresh GUID each link, which is 20 differing bytes in a 3.6 MB executable and nothing at
+all in the compiled code; `.cargo/config.toml` passes `/Brepro`, which derives both from the
+content instead.
+
+**The installers are not reproducible, and cannot be made so as templated.** Tauri's WiX template
+generates a fresh `ProductCode` per build, and the NSIS output is LZMA solid-compressed. Verify the
+executables, not the setup file.
+
 ## Reporting a security problem
 
 Please report vulnerabilities privately, through
