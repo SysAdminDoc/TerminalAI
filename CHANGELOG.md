@@ -16,6 +16,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- The app registers for restart after a crash, a hang or a Windows update. The daemon is designed to
+  outlive its window and reattaching to it is already built and tested, but nothing told Windows
+  that — so a forced restart dropped the operator into an empty desktop with a fleet still running
+  behind it. The sessions survived; the only thing that did not was the way to see them. Registration
+  happens at startup, which is the point: shutdown is exactly the moment a crashed process does not
+  get. A failure is logged and never fatal.
 - The app declares per-monitor-v2 DPI awareness explicitly, before any window exists, and then reads
   back what the process actually has. Awareness is a process property decided by whoever declares it
   first, and nothing here declared it — so the value was inherited rather than chosen. The failure it

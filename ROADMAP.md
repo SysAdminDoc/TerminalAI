@@ -91,13 +91,6 @@ item above; where the two touch, the note says so.
   Acceptance: either a second locale plus OS-preference negotiation with a documented fallback chain, or a recorded decision that the project ships English only — in which case say so in `README.md` and stop paying for the abstraction.
   Complexity: M
 
-- [ ] P3 — Restart cleanly after a crash or a Windows update
-  Why: the daemon is designed to outlive its window, but nothing tells Windows how to bring the app back, so a forced restart drops the operator into an empty desktop with live sessions still running.
-  Evidence: no `RegisterApplicationRestart` call exists in `crates/`. The daemon already reattaches live rows and replays bounded scrollback on reconnect (`README.md`), so the reattach path this would trigger is built and tested — learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-registerapplicationrestart
-  Touches: `crates/terminalai-app/src/main.rs`
-  Acceptance: after a forced restart the app relaunches and reattaches to the running daemon's sessions, and the restart command line is covered by the installer gate.
-  Complexity: S
-
 - [ ] P3 — Show agent-reported progress on the taskbar
   Why: the overlay-icon half of the taskbar integration already ships; the progress half is missing its input, and an addon that decodes it exists.
   Evidence: `update_taskbar_waiting_count` (`crates/terminalai-app/src/main.rs:1682`) sets an overlay icon only. `@xterm/addon-progress` 0.2.0 parses ConEmu's `OSC 9;4` progress sequence, new in the xterm 6.0 cycle (https://github.com/xtermjs/xterm.js/releases); `ITaskbarList3::SetProgressValue` is the sink.

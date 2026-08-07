@@ -49,6 +49,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_JobObjects",
     "Win32_System_LibraryLoader",
     "Win32_System_ProcessStatus",
+    "Win32_System_Recovery",
     "Win32_System_Registry",
     "Win32_System_StationsAndDesktops",
     "Win32_System_Threading",

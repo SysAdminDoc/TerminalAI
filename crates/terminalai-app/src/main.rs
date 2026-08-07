@@ -3,6 +3,7 @@
 mod dpi;
 mod preset;
 mod projects;
+mod restart;
 mod toast;
 mod work;
 mod workingset;
@@ -2482,6 +2483,12 @@ fn main() {
     if is_hook_invocation(&args) {
         std::process::exit(run_hook_cli(&args[1..]));
     }
+    // After the hook branch, so a hook invocation never registers: it is a
+    // short-lived adapter, and restarting one would relaunch it with no stdin.
+    if restart::was_restarted(&args) {
+        tracing::info!("relaunched by Windows after a crash, hang or update");
+    }
+    restart::register();
     if let Err(error) = run_app() {
         eprintln!("TerminalAI: {error}");
         std::process::exit(1);
