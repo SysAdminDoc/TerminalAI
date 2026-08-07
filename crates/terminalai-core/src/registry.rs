@@ -4992,8 +4992,16 @@ mod tests {
                 },
             )
             .expect("launch with slow setup hook");
+        // Derived from the hook, not picked: `ping -n 5` sleeps about four
+        // seconds, so returning inside three proves `launch` did not wait for
+        // it. The bound used to be one second, which proves the same thing on an
+        // idle machine and nothing at all on a busy one — it failed three times
+        // during release bumps, where the suite runs while cargo is still
+        // compiling. The load-independent proof is the phase assertion below:
+        // had `launch` waited, setup would have finished and the row would not
+        // still read `Preparing`.
         assert!(
-            started.elapsed() < Duration::from_secs(1),
+            started.elapsed() < Duration::from_secs(3),
             "launch waited for the setup worker"
         );
         assert_eq!(
