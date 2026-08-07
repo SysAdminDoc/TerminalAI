@@ -2,6 +2,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -29,9 +30,20 @@ pub(crate) fn install_panic_hook() {
     }));
 }
 
+/// Why the fleet's state is not reaching disk, when it is not.
+///
+/// `None` means the last write succeeded. A failure here is silent by nature —
+/// the daemon keeps running, every row keeps updating, and nothing on screen
+/// changes — so the operator only finds out by restarting into a fleet that
+/// reverted to whenever the last write worked. That is exactly the class of
+/// failure the store-quarantine banner exists to prevent, so it is reported the
+/// same way.
+pub(crate) type StoreHealth = Arc<Mutex<Option<String>>>;
+
 pub(crate) struct StoreWriter {
     sender: Option<SyncSender<()>>,
     path: PathBuf,
+    health: StoreHealth,
     worker: Option<thread::JoinHandle<()>>,
 }
 
@@ -40,6 +52,7 @@ impl Clone for StoreWriter {
         Self {
             sender: self.sender.as_ref().cloned(),
             path: self.path.clone(),
+            health: Arc::clone(&self.health),
             // Only the owner joins the worker. Event bridges receive a
             // sender-only clone so they can be stopped independently.
             worker: None,
@@ -51,15 +64,23 @@ impl StoreWriter {
     pub(crate) fn spawn(path: PathBuf, registry: SessionRegistry) -> Self {
         let (sender, receiver) = mpsc::sync_channel(1);
         let worker_path = path.clone();
+        let health: StoreHealth = Arc::new(Mutex::new(None));
+        let worker_health = Arc::clone(&health);
         let worker = thread::Builder::new()
             .name("terminalai-session-store".into())
-            .spawn(move || run_writer(&worker_path, registry, receiver))
+            .spawn(move || run_writer(&worker_path, registry, receiver, &worker_health))
             .ok();
         Self {
             sender: Some(sender),
             path,
+            health,
             worker,
         }
+    }
+
+    /// The last write failure, or `None` when state is reaching disk.
+    pub(crate) fn health(&self) -> StoreHealth {
+        Arc::clone(&self.health)
     }
 
     pub(crate) fn update(&self) {
@@ -205,7 +226,12 @@ fn file_safe_utc_timestamp(now: SystemTime) -> String {
     format!("{year:04}-{month:02}-{day:02}T{hour:02}-{minute:02}-{second:02}Z")
 }
 
-fn run_writer(path: &Path, registry: SessionRegistry, receiver: mpsc::Receiver<()>) {
+fn run_writer(
+    path: &Path,
+    registry: SessionRegistry,
+    receiver: mpsc::Receiver<()>,
+    health: &StoreHealth,
+) {
     while receiver.recv().is_ok() {
         let max_deadline = Instant::now() + STORE_MAX_INTERVAL;
         let mut quiet_deadline = Instant::now() + STORE_DEBOUNCE;
@@ -223,9 +249,17 @@ fn run_writer(path: &Path, registry: SessionRegistry, receiver: mpsc::Receiver<(
             }
         };
         let snapshot = registry.store_snapshot();
-        if let Err(error) = snapshot.write(path) {
-            eprintln!("terminalai-daemon: could not persist session store: {error}");
-        }
+        let outcome = match snapshot.write(path) {
+            Ok(()) => None,
+            Err(error) => {
+                eprintln!("terminalai-daemon: could not persist session store: {error}");
+                Some(error.to_string())
+            }
+        };
+        // Written every pass, not only on failure: a write that recovers has to
+        // clear the banner, or the operator is told their state is being lost
+        // long after it stopped being true.
+        *health.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = outcome;
         if disconnected {
             return;
         }
@@ -252,6 +286,58 @@ mod tests {
         ));
         fs::create_dir_all(&dir).expect("test dir");
         dir
+    }
+
+    #[test]
+    fn a_store_that_cannot_be_written_is_recorded_and_cleared_on_recovery() {
+        // The failure is otherwise silent: the daemon keeps running, every row
+        // keeps updating, and the operator only finds out by restarting into a
+        // fleet that reverted to the last successful write.
+        //
+        // A file where the parent directory should be makes `create_dir_all`
+        // fail deterministically on every platform, without needing permissions
+        // the test runner may or may not have.
+        let dir = test_dir();
+        let blocker = dir.join("blocker");
+        fs::write(&blocker, b"not a directory").expect("blocker");
+        let path = blocker.join("sessions.json");
+
+        let writer = StoreWriter::spawn(path, SessionRegistry::new());
+        let health = writer.health();
+        writer.update();
+        let failure = wait_for(&health, |value| value.is_some());
+        assert!(
+            failure.is_some(),
+            "a failed write must be reported, not only printed"
+        );
+
+        // Recovery clears it. A banner that outlives the problem teaches the
+        // operator to ignore banners.
+        fs::remove_file(&blocker).expect("unblock");
+        writer.update();
+        assert!(
+            wait_for(&health, |value| value.is_none()).is_none(),
+            "a write that recovered must clear the report"
+        );
+    }
+
+    /// Poll the health cell until it satisfies `settled`, or give up. The writer
+    /// debounces, so the answer is never immediate.
+    fn wait_for(
+        health: &StoreHealth,
+        settled: impl Fn(&Option<String>) -> bool,
+    ) -> Option<String> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let value = health
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            if settled(&value) || Instant::now() >= deadline {
+                return value;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
     }
 
     fn fixture(name: &str) -> &'static str {

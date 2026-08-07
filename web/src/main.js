@@ -180,6 +180,7 @@ const state = {
   appVersion: null,
   storeQuarantine: null,
   storeQuarantineDismissed: false,
+  storeWriteError: null,
   terminal: null,
   outputChannel: null,
   fitAddon: null,
@@ -282,6 +283,21 @@ function showToast(message, tone = "error") {
     toast.classList.remove("toast-visible");
     setTimeout(() => toast.remove(), 240);
   }, 4200);
+}
+
+/// The fleet's state is not reaching disk.
+///
+/// Deliberately not dismissable, unlike the quarantine banner beside it. A
+/// quarantine is a past event the operator acknowledges once; this is an
+/// ongoing condition that clears itself the moment a write succeeds, so
+/// dismissing it would hide a live problem rather than an old one.
+function renderStoreWriteError() {
+  const banner = $("store-write-banner");
+  const error = state.storeWriteError;
+  banner.classList.toggle("view-hidden", !error);
+  $("store-write-message").textContent = error
+    ? t("store-write-failed-detail", { error })
+    : "";
 }
 
 function renderStoreQuarantine() {
@@ -1761,6 +1777,7 @@ async function loadSnapshotNow() {
     const storeQuarantine = snapshot.store_quarantine ?? null;
     if (storeQuarantine !== state.storeQuarantine) state.storeQuarantineDismissed = false;
     state.storeQuarantine = storeQuarantine;
+    state.storeWriteError = snapshot.store_write_error ?? null;
     for (const event of pendingEvents) {
       if (event.kind === "session-updated") applySessionUpdate(event.session, false);
       if (event.kind === "session-removed") applySessionRemoval(event.id);
@@ -1770,6 +1787,7 @@ async function loadSnapshotNow() {
     state.snapshotLoading = false;
     renderSnapshotLoading();
     renderStoreQuarantine();
+    renderStoreWriteError();
     renderRows();
     updateTerminalHeader();
     if (state.focused) {

@@ -410,6 +410,12 @@ pub enum Response {
         admission: AdmissionSnapshot,
         #[serde(default)]
         store_quarantine: Option<String>,
+        /// Why the fleet's state is not reaching disk, when it is not. `None`
+        /// is the normal case. Reported on every snapshot rather than pushed
+        /// once, so a failure that starts mid-session is still seen and one
+        /// that recovers clears itself.
+        #[serde(default)]
+        store_write_error: Option<String>,
     },
     Land {
         outcome: terminalai_core::land::LandOutcome,
@@ -674,6 +680,7 @@ impl DaemonServer {
                 };
                 let registry = self.registry.clone();
                 let store_quarantine = self.store_quarantine.clone();
+                let store_health = self.store_writer.as_ref().map(StoreWriter::health);
                 let log_hub = self.log_hub.clone();
                 let shutdown = shutdown.clone();
                 let hook_endpoint = hook_endpoint.clone();
@@ -688,6 +695,7 @@ impl DaemonServer {
                                 connection,
                                 registry,
                                 store_quarantine,
+                                store_health,
                                 log_hub,
                                 shutdown,
                                 hook_endpoint,
@@ -743,6 +751,7 @@ impl DaemonServer {
             stream,
             self.registry.clone(),
             self.store_quarantine.clone(),
+            self.store_writer.as_ref().map(StoreWriter::health),
             self.log_hub.clone(),
             self.shutdown.clone(),
             self.hook_endpoint(),
@@ -896,6 +905,7 @@ fn handle_connection(
     stream: LocalSocketStream,
     registry: SessionRegistry,
     store_quarantine: Option<String>,
+    store_health: Option<persistence::StoreHealth>,
     log_hub: Option<LogHub>,
     shutdown: Arc<AtomicBool>,
     hook_endpoint: HookEndpoint,
@@ -1052,6 +1062,7 @@ fn handle_connection(
                         &registry,
                         store_quarantine.as_deref(),
                         Some(&hook_endpoint),
+                        store_health.as_ref(),
                     );
                     send_response(&outgoing_tx, id, response)?;
                 }
@@ -1279,7 +1290,7 @@ fn owns_source(
 
 #[cfg(test)]
 fn dispatch(request: Request, registry: &SessionRegistry) -> Response {
-    dispatch_with_endpoint(request, registry, None, None)
+    dispatch_with_endpoint(request, registry, None, None, None)
 }
 
 #[cfg(test)]
@@ -1288,7 +1299,7 @@ fn dispatch_with_quarantine(
     registry: &SessionRegistry,
     store_quarantine: Option<&str>,
 ) -> Response {
-    dispatch_with_endpoint(request, registry, store_quarantine, None)
+    dispatch_with_endpoint(request, registry, store_quarantine, None, None)
 }
 
 fn dispatch_with_endpoint(
@@ -1296,6 +1307,7 @@ fn dispatch_with_endpoint(
     registry: &SessionRegistry,
     store_quarantine: Option<&str>,
     hook_endpoint: Option<&HookEndpoint>,
+    store_health: Option<&persistence::StoreHealth>,
 ) -> Response {
     if registry.is_poisoned() && request_requires_registry(&request) {
         return Response::Error {
@@ -1317,6 +1329,12 @@ fn dispatch_with_endpoint(
             focused: registry.focused(),
             admission: registry.admission_snapshot(),
             store_quarantine: store_quarantine.map(str::to_owned),
+            store_write_error: store_health.and_then(|health| {
+                health
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .clone()
+            }),
         },
         Request::ReviewSnapshot => Response::ReviewSnapshot {
             entries: registry.review_snapshot(),
@@ -2340,6 +2358,47 @@ mod tests {
                 store_quarantine: Some(path),
                 ..
             } if path == r"C:\Users\me\sessions.corrupt-2026-08-02T12-34-56Z.json"
+        ));
+    }
+
+    #[test]
+    fn snapshot_reports_a_store_that_is_not_reaching_disk() {
+        // A write failure is silent by nature: the daemon keeps running and
+        // every row keeps updating, so without this the operator only finds out
+        // by restarting into a fleet that reverted.
+        let health: persistence::StoreHealth =
+            std::sync::Arc::new(std::sync::Mutex::new(Some("access is denied".into())));
+        let response = dispatch_with_endpoint(
+            Request::Snapshot,
+            &SessionRegistry::new(),
+            None,
+            None,
+            Some(&health),
+        );
+        assert!(matches!(
+            response,
+            Response::Snapshot {
+                store_write_error: Some(ref error),
+                ..
+            } if error == "access is denied"
+        ));
+
+        // Clearing is as important as reporting: a recovered write must take the
+        // banner away rather than leaving the operator told their state is being
+        // lost long after it stopped being true.
+        *health.lock().expect("health") = None;
+        assert!(matches!(
+            dispatch_with_endpoint(
+                Request::Snapshot,
+                &SessionRegistry::new(),
+                None,
+                None,
+                Some(&health),
+            ),
+            Response::Snapshot {
+                store_write_error: None,
+                ..
+            }
         ));
     }
 

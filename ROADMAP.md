@@ -10,16 +10,6 @@ widths. No pre-existing test, lint or build failure exists. Verification: every 
 below was traced to a real caller; the theming finding was observed live (Vite + headless Chromium,
 both `prefers-color-scheme` values) rather than inferred from source.
 
-- [ ] P2 — A session-store write failure is invisible to the operator
-  Category: reliability
-  Where: `crates/terminalai-daemon/src/persistence.rs:208` (`run_writer`), write site at `snapshot.write(path)`
-  Problem: when the debounced store write fails (disk full, path unwritable, AV lock), the only trace is `eprintln!` on the daemon's stderr — which nobody is watching once the daemon is a background process. Every subsequent row change is silently unpersisted; a daemon restart then reverts the fleet to the last successful write with no warning that anything was lost. The UI already has the exact precedent for surfacing this class of failure: the store-quarantine banner (`#store-quarantine-banner`, `role="alert"`).
-  Evidence: traced `run_writer` — the `Err` arm is `eprintln!` only. Grepped daemon lib.rs, app main.rs and web/main.js for any consumer of a store-write failure: none exists; no `RegistryEvent`, no `Response` field, no log-hub entry reaches the UI from this path.
-  Fix: on write failure, record the failure (path + error + timestamp) on shared daemon state and surface it the same way store quarantine is surfaced: a field on the snapshot/hello payload (or a `RegistryEvent::Notification`) the web layer renders as a persistent banner ("fleet state is not being saved: <error>"), cleared on the next successful write. Keep the eprintln.
-  Acceptance: pointing the store at an unwritable path and changing a row shows the banner within the debounce interval; restoring writability clears it on the next successful write. A daemon test asserts the failure state is set on a failed write and cleared on a successful one.
-  Confidence: Verified
-  Effort: M
-
 - [ ] P3 — The HTTP hook body read can outlive the request deadline, before authentication
   Category: reliability
   Where: `crates/terminalai-daemon/src/http_hooks.rs:377-390` (`read_request`, body `read_exact`)

@@ -521,6 +521,8 @@ history-load-error = Could not load older output: { $error }
 unknown-time = unknown time
 
 store-quarantined = Session store quarantined
+store-write-failed = Fleet state is not being saved
+store-write-failed-detail = The session store could not be written: { $error }. Rows are still live, but a restart would lose changes made since the last successful save.
 store-quarantined-detail = The unreadable session store was moved to { $path }. New sessions start empty.
 diagnostics-unavailable = Unavailable
 session-created = Session created

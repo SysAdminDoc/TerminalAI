@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Added
+
+- The fleet says so when its state stops reaching disk. A failed session-store write was an
+  `eprintln!` on the daemon's stderr, which nobody is watching once the daemon is a background
+  process — so every subsequent row change was silently unpersisted and the operator only found out
+  by restarting into a fleet that had reverted. The failure now rides the snapshot to a banner
+  beside the store-quarantine one, and clears itself on the next successful write. It is
+  deliberately not dismissable: a quarantine is a past event to acknowledge once, this is an ongoing
+  condition, and dismissing it would hide a live problem.
+
 ### Fixed
 
 - The memory budget stopped counting a session the moment a provider rate-limited it. Releasing the
