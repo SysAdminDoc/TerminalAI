@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-08-07
+
 ### Added
 
 - The spend tooltip states how old the embedded price table is, and marks the figures past 90 days.
