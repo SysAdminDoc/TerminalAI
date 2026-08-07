@@ -16,26 +16,13 @@ use crate::agent::Agent;
 use crate::diagnostics::{StatusDiagnostic, StatusReason, StatusSource, MAX_STATUS_HISTORY};
 use crate::launch::{Effort, LaunchSpec};
 
-/// Maximum number of automatic restart attempts for one session. A session
-/// that keeps failing after this limit stays failed until the operator revives
-/// it explicitly.
-pub const MAX_RESTARTS: u32 = 5;
-pub const RESTART_BACKOFF_BASE: Duration = Duration::from_millis(250);
-pub const RESTART_BACKOFF_MAX: Duration = Duration::from_secs(30);
-
-/// How long a process must run before its predecessors' restarts stop counting
-/// against it.
-///
-/// Every mature supervisor scopes the budget to a window rather than to the
-/// lifetime of the thing it supervises: OTP pairs `intensity` with `period`,
-/// systemd pairs `StartLimitBurst` with `StartLimitIntervalSec`, and Kubernetes
-/// resets the CrashLoopBackOff counter after ten minutes of successful running.
-/// Ten minutes is Kubernetes' number, chosen for the same reason: it is long
-/// enough that a genuine crash loop cannot hide inside it, and short enough that
-/// a session which crashes once a day recovers every day. Without it, five
-/// restarts spread over a week permanently kill a session that ran healthily in
-/// between.
-pub const RESTART_WINDOW: Duration = Duration::from_secs(10 * 60);
+/// The restart policy itself lives in [`crate::restart`], which decides over
+/// one measured exit rather than over a live session. Re-exported here because
+/// every caller reaches it through a `Session`.
+pub use crate::restart::{
+    classify_exit, ExitClass, RestartDecision, MAX_RESTARTS, RESTART_BACKOFF_BASE,
+    RESTART_BACKOFF_MAX, RESTART_WINDOW, STATUS_CONTROL_C_EXIT,
+};
 
 /// How long a session may sit in one working state before the fleet calls it
 /// stalled rather than busy.
@@ -67,38 +54,6 @@ pub const PROGRESS_DEADLINE: Duration = Duration::from_secs(5 * 60);
 /// how a supervisor turns a busy machine into a restart storm. Three misses is
 /// fifteen minutes of complete silence from a process that should be talking.
 pub const PROGRESS_FAILURE_THRESHOLD: u32 = 3;
-
-/// `STATUS_CONTROL_C_EXIT` — what a Windows console process reports after the
-/// operator pressed Ctrl-C in its pane. It is a deliberate stop by a person,
-/// not a fault, so the supervisor treats it as one.
-pub const STATUS_CONTROL_C_EXIT: u32 = 0xC000_013A;
-
-/// Whether an exit is something to recover from.
-///
-/// Every mature supervisor draws this line: OTP calls it the `transient`
-/// restart type and systemd calls it `Restart=on-abnormal`, and both restart a
-/// child only when it ended abnormally. Restarting an agent that finished its
-/// work re-runs work nobody asked for and bills quota for it, up to
-/// [`MAX_RESTARTS`] times.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExitClass {
-    /// The agent ended on purpose. There is nothing to recover.
-    Finished,
-    /// The agent died, or died in a way we could not read. Bring it back.
-    Abnormal,
-}
-
-/// Classify one process exit.
-///
-/// An unreadable exit code is abnormal: the supervisor cannot prove the agent
-/// meant to stop, and the cost of a spurious restart is lower than the cost of
-/// silently abandoning a crashed session.
-pub fn classify_exit(exit_code: Option<u32>) -> ExitClass {
-    match exit_code {
-        Some(0) | Some(STATUS_CONTROL_C_EXIT) => ExitClass::Finished,
-        _ => ExitClass::Abnormal,
-    }
-}
 
 #[derive(
     Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
@@ -283,15 +238,6 @@ impl RateLimit {
     pub fn is_expired(&self, now: SystemTime) -> bool {
         self.resets_at.is_some_and(|resets| now >= resets)
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RestartDecision {
-    Backoff(Duration),
-    Failed,
-    /// The agent exited cleanly. No restart is scheduled and none ever will be
-    /// without an explicit operator action.
-    Finished,
 }
 
 /// One row of the fleet list.
@@ -770,42 +716,30 @@ impl Session {
         if exit_code.is_some() {
             self.last_exit_code = exit_code;
         }
-        // Classify before counting. An agent that finished its work is not
-        // spending a restart from the budget, and it is not coming back on its
-        // own — it is done, and the row says so.
-        // A process that ran for a full window earned a clean slate. Scoping the
-        // budget this way is what stops five restarts spread over a week from
-        // permanently killing a session that ran healthily in between.
-        if self
-            .process_started_at
-            .and_then(|started| now.duration_since(started).ok())
-            .is_some_and(|ran_for| ran_for >= RESTART_WINDOW)
-        {
-            self.restarts = 0;
-        }
+        // The policy is `crate::restart`'s; this method only measures the exit
+        // and applies the answer to the row. `duration_since` failing means the
+        // clock moved backwards, which is not evidence of a long healthy run and
+        // is passed on as "unknown" rather than as zero.
+        let outcome = crate::restart::decide(&crate::restart::Exit {
+            exit_code,
+            restarts_spent: self.restarts,
+            ran_for: self
+                .process_started_at
+                .and_then(|started| now.duration_since(started).ok()),
+        });
         self.process_started_at = None;
-        if classify_exit(exit_code) == ExitClass::Finished {
-            self.backoff_until = None;
-            self.set_status_at(SessionStatus::Exited, now, source, true);
-            self.phase = SessionPhase::Finished;
-            self.health = SessionHealth::Finished;
-            return RestartDecision::Finished;
-        }
-        if self.restarts >= MAX_RESTARTS {
-            self.backoff_until = None;
-            self.set_status_at(SessionStatus::Exited, now, source, true);
-            self.phase = SessionPhase::Failed;
-            self.health = SessionHealth::Failed;
-            return RestartDecision::Failed;
-        }
-
-        self.restarts += 1;
-        let delay = restart_backoff(self.restarts);
-        self.backoff_until = Some(now + delay);
+        self.restarts = outcome.restarts_spent;
+        self.backoff_until = match outcome.decision {
+            RestartDecision::Backoff(delay) => Some(now + delay),
+            RestartDecision::Failed | RestartDecision::Finished => None,
+        };
         self.set_status_at(SessionStatus::Exited, now, source, true);
-        self.phase = SessionPhase::Backoff;
-        self.health = SessionHealth::Degraded;
-        RestartDecision::Backoff(delay)
+        (self.phase, self.health) = match outcome.decision {
+            RestartDecision::Finished => (SessionPhase::Finished, SessionHealth::Finished),
+            RestartDecision::Failed => (SessionPhase::Failed, SessionHealth::Failed),
+            RestartDecision::Backoff(_) => (SessionPhase::Backoff, SessionHealth::Degraded),
+        };
+        outcome.decision
     }
 
     /// Whether the session has held a working status past [`STALL_THRESHOLD`].
@@ -888,45 +822,6 @@ pub(crate) fn fresh_native_session_id() -> Option<String> {
         bytes[14],
         bytes[15]
     ))
-}
-
-/// Full jitter: `random(0, min(cap, base·2^n))`.
-///
-/// Failures here are correlated by construction — one provider rate limit or one
-/// network drop takes every session in the fleet at the same instant — so a
-/// deterministic delay guarantees all of them retry together against the service
-/// that just refused them. AWS measured full jitter beating un-jittered backoff
-/// by over 50% on contending calls, and it is the variant that spreads a
-/// synchronised fleet fastest.
-fn restart_backoff(attempt: u32) -> Duration {
-    Duration::from_millis(jitter(restart_backoff_ceiling(attempt).as_millis() as u64))
-}
-
-/// The un-jittered ceiling the delay is drawn from. Separate so a test can pin
-/// the exponential growth without depending on the random draw.
-fn restart_backoff_ceiling(attempt: u32) -> Duration {
-    let exponent = attempt.saturating_sub(1).min(63);
-    let multiplier = 1u128 << exponent;
-    let millis = RESTART_BACKOFF_BASE.as_millis().saturating_mul(multiplier);
-    let capped = millis.min(RESTART_BACKOFF_MAX.as_millis());
-    Duration::from_millis(capped as u64)
-}
-
-/// Uniform draw from `0..=ceiling`.
-///
-/// `getrandom` is already a workspace dependency, so this costs no new crate. A
-/// random source that fails returns the ceiling rather than zero: an immediate
-/// unjittered retry into a provider that just refused the whole fleet is the one
-/// outcome worth avoiding.
-fn jitter(ceiling_millis: u64) -> u64 {
-    if ceiling_millis == 0 {
-        return 0;
-    }
-    let mut bytes = [0u8; 8];
-    if getrandom::fill(&mut bytes).is_err() {
-        return ceiling_millis;
-    }
-    u64::from_le_bytes(bytes) % (ceiling_millis + 1)
 }
 
 /// Sort key for the fleet list: attention first, then longest-waiting.

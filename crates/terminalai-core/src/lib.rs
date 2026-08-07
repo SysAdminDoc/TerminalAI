@@ -34,6 +34,7 @@ pub mod project;
 pub mod pty;
 pub mod queue;
 pub mod registry;
+pub mod restart;
 pub mod review;
 pub mod roadmap;
 pub mod scrollback;
