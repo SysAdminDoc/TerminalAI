@@ -94,10 +94,3 @@ additions; where they touch, the note says so.
   Acceptance: the uncovered request arms and error branches in the daemon's control plane are either covered or individually recorded as unreachable with a reason. The number itself is not the goal and must not become one.
   Complexity: M
 
-- [ ] P3 — Attribute the quota window to the sessions that consumed it
-  Why: the header already reports that a provider is rate limiting and when the window reopens, but not which of the running sessions spent it — and subscription-window exhaustion is the single loudest operational complaint about the agents this tool supervises.
-  Evidence: anthropics/claude-code#16157 "[BUG] Instantly hitting usage limits with Max subscription" (723👍) and #38335 "[BUG] Claude Max plan session limits exhausted abnormally fast" (539👍); a Sculptor HN commenter states plainly that "Claude Code runs into limits below the $200 tier" (https://news.ycombinator.com/item?id=45427697). The ledger already exists — `crates/terminalai-core/src/spend.rs` keeps a rolling window persisted with the session store — and the rollup already breaks spend down by agent, folder and session, so the data is present and the window view is not.
-  Touches: `crates/terminalai-core/src/spend.rs`, `web/src/rollup.js`, `web/src/rateLimit.js`, `web/src/main.js`
-  Acceptance: when a provider reports rate limiting, the fleet can show which sessions consumed the current window and in what proportion, sourced from the same transcript arithmetic the rollup already uses, with unpriced sessions counted apart rather than as zero. It never presents an estimate as the provider's own accounting — the price-table tooltip's existing wording is the model.
-  Complexity: M
-

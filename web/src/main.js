@@ -35,6 +35,7 @@ import { systemTimeMs } from "./time.js";
 import "./styles.css";
 import { createRowRenderer } from "./rowMarkup.js";
 import { createTerminalPane } from "./terminalPane.js";
+import { renderWindowShares } from "./quotaWindow.js";
 
 const WDIO_BUILD = import.meta.env.VITE_TERMINALAI_WDIO === "1";
 
@@ -1912,6 +1913,15 @@ function renderRollup() {
     groupTable("rollup-by-agent", rollupBy(sessions, (session) => session.agent)),
     groupTable("rollup-by-folder", rollupBy(sessions, folderOf)),
     groupTable("rollup-by-session", bySession, (row) => row.label),
+    // The window breakdown sits with the rollup because it is the same
+    // arithmetic asked a different question: not what a session has cost, but
+    // what it spent inside the window a provider is currently refusing.
+    renderWindowShares(state.admission, sessions, {
+      escape: escapeHtml,
+      translate: t,
+      cost: (usd) => formatCost(usd),
+      hours: Number(state.admission?.spend_window_hours) || 24,
+    }),
     `<section class="rollup-section rollup-total"><h3>${escapeHtml(t("rollup-total"))}</h3><p><b>${escapeHtml(
       formatCost(totals.priced ? totals.cost_usd : null),
     )}</b> · ${escapeHtml(String(totals.requests))} ${escapeHtml(t("rollup-requests"))}</p></section>`,

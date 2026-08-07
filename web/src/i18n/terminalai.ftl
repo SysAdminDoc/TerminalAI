@@ -615,6 +615,11 @@ rate-limit-in-minutes = reopens in { $minutes } min
 fleet-quota = { $percent }% quota
 fleet-quota-unreported = quota —
 quota-used = { $percent }% of the tightest quota window used
+quota-window-title = Who spent the last { $hours }h
+quota-window-session = Session
+quota-window-share = Share
+quota-window-estimate = Estimated from this tool's own transcript arithmetic, not the provider's accounting.
+quota-window-unattributed = Not attributed to a session
 quota-reset-unreported = reset time not reported
 quota-unreported = No agent has reported a quota window. Codex publishes one continuously; Claude Code reports only once a limit is hit.
 

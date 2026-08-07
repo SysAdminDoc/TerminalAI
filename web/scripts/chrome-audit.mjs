@@ -69,7 +69,11 @@ const SURFACES = [
   { name: "working sets", kind: "dialog", selector: "#working-sets-dialog" },
   { name: "prompt library", kind: "dialog", selector: "#prompt-dialog" },
   { name: "broadcast", kind: "dialog", selector: "#broadcast-dialog" },
-  { name: "rollup", kind: "dialog", selector: "#rollup-dialog" },
+  // Opened through its own control, not by `showModal`. The rollup's body is
+  // rendered by the click handler, so opening the element directly audits an
+  // empty dialog -- a surface that measures nothing reads exactly like a clean
+  // one, which is this script's recurring failure mode.
+  { name: "rollup", kind: "dialog", selector: "#rollup-dialog", opener: "#fleet-spend" },
 ];
 
 /// The surfaces that only exist once there is a fleet.
@@ -231,6 +235,13 @@ function installBackendStub(statuses) {
       pricing_version: "audit-fixture",
       pricing_committed: "2026-08-01",
       sessions_reporting_cost: sessions.length,
+      spend_window_usd: 42.5,
+      spend_window_hours: 5,
+      spend_window_by_session: [
+        { id: sessions[0]?.id ?? "s0001", usd: 25 },
+        { id: sessions[1]?.id ?? "s0002", usd: 12.5 },
+      ],
+      spend_window_unattributed_usd: 5,
     },
     store_quarantine: null,
     store_write_error: null,
@@ -364,8 +375,14 @@ async function auditSurface(page, surface) {
 
       // Reveal it the way the operator would, without needing the backend.
       if (surface.kind === "dialog") {
-        if (typeof root.showModal === "function") root.showModal();
-        else root.setAttribute("open", "");
+        // Prefer the control the operator would use: a dialog whose contents
+        // are built by its open handler is empty when opened any other way.
+        const opener = surface.opener ? document.querySelector(surface.opener) : null;
+        if (opener) opener.click();
+        if (!root.open) {
+          if (typeof root.showModal === "function") root.showModal();
+          else root.setAttribute("open", "");
+        }
       } else if (surface.kind === "view") {
         root.classList.remove("view-hidden");
       } else if (surface.kind === "visible") {

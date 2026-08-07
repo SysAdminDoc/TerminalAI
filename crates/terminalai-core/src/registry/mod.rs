@@ -560,6 +560,15 @@ impl SessionRegistry {
                 .window_total_at(SystemTime::now(), state.admission.spend_window),
             spend_ceiling_usd: state.admission.spend_ceiling_usd,
             spend_window_hours: state.admission.spend_window.as_secs_f64() / 3600.0,
+            spend_window_by_session: state
+                .spend
+                .window_by_session_at(SystemTime::now(), state.admission.spend_window)
+                .into_iter()
+                .map(|(id, usd)| crate::admission::SessionSpend { id, usd })
+                .collect(),
+            spend_window_unattributed_usd: state
+                .spend
+                .window_unattributed_at(SystemTime::now(), state.admission.spend_window),
             admission_block: admission_block(&state),
             memory_budget_bytes: state.admission.memory_budget_bytes,
             projected_memory_bytes: projected_memory_bytes(&state),
@@ -621,7 +630,7 @@ impl SessionRegistry {
         SessionStoreSnapshot {
             magic: crate::store::SESSION_STORE_MAGIC.to_owned(),
             schema_version: crate::store::SESSION_STORE_SCHEMA_VERSION,
-            spend: state.spend.buckets().copied().collect(),
+            spend: state.spend.buckets().cloned().collect(),
             sessions: state
                 .entries
                 .values()

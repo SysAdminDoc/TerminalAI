@@ -128,7 +128,7 @@ impl SessionRegistry {
         };
 
         let mut updated = Vec::new();
-        let mut spend_deltas: Vec<f64> = Vec::new();
+        let mut spend_deltas: Vec<(String, f64)> = Vec::new();
         {
             let mut state = lock_state(&self.inner);
             for (id, update) in updates {
@@ -168,7 +168,7 @@ impl SessionRegistry {
                         // the increase, so the fleet window counts the money
                         // once and counts it when it was spent.
                         let previous = entry.session.cost_usd.unwrap_or(0.0);
-                        spend_deltas.push(update.cost_usd - previous);
+                        spend_deltas.push((entry.session.id.0.clone(), update.cost_usd - previous));
                         entry.session.cost_usd = Some(update.cost_usd);
                         changed = true;
                     }
@@ -199,8 +199,8 @@ impl SessionRegistry {
             }
             if !spend_deltas.is_empty() {
                 let now = SystemTime::now();
-                for delta in spend_deltas.drain(..) {
-                    state.spend.record_at(now, delta);
+                for (session, delta) in spend_deltas.drain(..) {
+                    state.spend.record_session_at(now, Some(&session), delta);
                 }
                 let window = state.admission.spend_window;
                 state.spend.prune_at(now, window);

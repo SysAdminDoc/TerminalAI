@@ -325,6 +325,13 @@ pub fn block(config: &AdmissionConfig, demand: &FleetDemand) -> Option<Admission
     None
 }
 
+/// One session's share of the current spend window.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SessionSpend {
+    pub id: String,
+    pub usd: f64,
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AdmissionSnapshot {
     pub max_live_sessions: usize,
@@ -360,6 +367,21 @@ pub struct AdmissionSnapshot {
     /// Width of the rolling window, in hours.
     #[serde(default)]
     pub spend_window_hours: f64,
+    /// Which sessions consumed the current window, largest first.
+    ///
+    /// Answers the question a rate-limited fleet has, which a session's running
+    /// total cannot: that total includes everything spent before the window
+    /// opened. These are this tool's own transcript arithmetic and are never
+    /// the provider's accounting.
+    #[serde(default)]
+    pub spend_window_by_session: Vec<SessionSpend>,
+    /// Window spend belonging to no session this ledger can name.
+    ///
+    /// Reported so the breakdown cannot read as a complete account when it is
+    /// not — a store written before the ledger had a session dimension has
+    /// money and no owners.
+    #[serde(default)]
+    pub spend_window_unattributed_usd: f64,
     /// Why nothing new is starting, when something is stopping it.
     #[serde(default)]
     pub admission_block: Option<AdmissionBlock>,
