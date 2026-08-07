@@ -1,6 +1,6 @@
 # TerminalAI
 
-[![version](https://img.shields.io/badge/version-0.19.0-blue.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.20.0-blue.svg)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#requirements)
 [![rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
@@ -45,7 +45,7 @@ when waiting on the handle.
 
 ## Status
 
-**v0.19.0 — core and desktop shell built, installed, and verified end to end.**
+**v0.20.0 — core and desktop shell built, installed, and verified end to end.**
 
 Working today (`terminalai-probe`, headless):
 
@@ -109,7 +109,7 @@ Working today (`terminalai-probe`, headless):
 - Shows how full each session's context window is when that is measurable, and an em dash when it
   is not — the window is reported by the agent, never inferred. Compaction appears in the status
   history instead of looking like a stall
-- 670 default Rust tests over agent identification and resolution against an injected filesystem,
+- 695 default Rust tests over agent identification and resolution against an injected filesystem,
   the flag mapping, real-pty boundary and blocking exit wait, supervision state machine, registry,
   diagnostics, review aggregation and reviewed-mark expiry, the land gate against real
   repositories, environment leases, transcript tailing, the MCP boundary, cost model and vendored
@@ -127,9 +127,11 @@ Working today (`terminalai-probe`, headless):
   the running total, the escape-stripping search over retained output, the wait primitive one agent
   blocks on to reach another, origin mode against the conformance corpus, the working-directory
   change that invalidates a row's folder and branch, and the DPI and restart declarations made
-  against the real Windows APIs; 673 with the opt-in
-  app-server transport enabled, plus 363 frontend tests (`npm --prefix web test`) and a real
-  browser pass over every dialog, menu and disclosure (`npm --prefix web run test:chrome`)
+  against the real Windows APIs, the admission limits read from the operator's configuration, and
+  the quota window attributed to the sessions that consumed it; 698 with the opt-in app-server
+  transport enabled, plus 373 frontend tests (`npm --prefix web test`) and a real browser pass over
+  every dialog, menu and disclosure across a populated fleet in both row densities
+  (`npm --prefix web run test:chrome`)
 
 `Roadmap_Blocked.md` records what is waiting on something external. The experimental
 Codex app-server adapter is available only when the daemon is built with the explicit

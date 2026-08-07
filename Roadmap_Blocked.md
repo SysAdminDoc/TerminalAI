@@ -231,3 +231,30 @@ confirming that the session signs in independently, that `--resume` inside it li
 directory's sessions, and that MCP servers configured in the default directory are absent rather
 than silently inherited. If they are inherited, the README's "two directories are two accounts"
 needs qualifying to name exactly what is and is not separated.
+
+## Corroborating cost from OpenTelemetry — 2026-08-07
+
+The premise holds and is worth restating: Anthropic documents the transcript entry format as
+internal and version-changing, so the entire cost path in this tool rests on a contract that is
+explicitly not promised, while a sanctioned metrics surface (`claude_code.cost.usage`,
+`claude_code.token.usage`, with `query_source` attribution) exists.
+
+What cannot be settled here is the part the acceptance turns on. Claude Code exposes no CLI flag for
+this at all — `claude --help` on 2.1.170 mentions neither OpenTelemetry nor telemetry — so it is
+configured by environment and by an exporter endpoint the operator owns. Two things follow that this
+machine cannot supply:
+
+1. **Whether export is permitted on a subscription plan**, which is an account question rather than
+   a code one. Building a preference for a channel that turns out to be unavailable would leave the
+   fleet with a fallback path it always takes and a tooltip claiming a source it never has.
+2. **An OTel collector to export to.** The acceptance requires the fleet to prefer the endpoint when
+   one is configured and to log a disagreement beyond a threshold — neither of which can be
+   exercised, let alone verified, without a running receiver.
+
+What closes it: confirmation that telemetry export is allowed on the operator's plan, plus an
+endpoint to point at. Then the work is real and bounded — read the two metrics, prefer them when
+present, keep transcript arithmetic as the fallback, and log rather than silently resolve a
+disagreement. Note for whoever picks it up: both sources are client-side estimates, so neither is
+the provider's accounting and the wording must not imply otherwise — the same rule the quota-window
+breakdown shipped under in v0.20.0.
+

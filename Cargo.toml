@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.19.0"
+version = "0.20.0"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
@@ -16,8 +16,8 @@ repository = "https://github.com/SysAdminDoc/TerminalAI"
 authors = ["SysAdminDoc <matt_parker@outlook.com>"]
 
 [workspace.dependencies]
-terminalai-core = { path = "crates/terminalai-core", version = "0.19.0" }
-terminalai-daemon = { path = "crates/terminalai-daemon", version = "0.19.0" }
+terminalai-core = { path = "crates/terminalai-core", version = "0.20.0" }
+terminalai-daemon = { path = "crates/terminalai-daemon", version = "0.20.0" }
 portable-pty = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -51,13 +51,6 @@ item above; where the two touch, the note says so.
 
 ### P2
 
-- [ ] P3 — Corroborate cost from OpenTelemetry rather than only from an unsupported transcript format
-  Why: Anthropic documents the transcript entry format as internal and version-changing, so the entire cost path rests on a contract that is explicitly not promised, while a sanctioned metrics surface exists.
-  Evidence: code.claude.com/docs/en/sessions states the entry format "is internal to Claude Code and changes between versions". code.claude.com/docs/en/monitoring-usage defines `claude_code.cost.usage` and `claude_code.token.usage` with `query_source` (`main|subagent|auxiliary`) attribution; Codex exposes `[otel]` in config. Note both are client-side estimates, not bills.
-  Touches: `crates/terminalai-core/src/transcript.rs`, `crates/terminalai-daemon/src/lib.rs`, `crates/terminalai-core/src/hook_config.rs`
-  Acceptance: when an OTel endpoint is configured the fleet prefers it and says so in the price-table tooltip, falling back to transcript arithmetic otherwise; a disagreement between the two beyond a threshold is logged rather than silently resolved. Gated on the open question in `RESEARCH.md` about enabling OpenTelemetry export on a subscription plan.
-  Complexity: L
-
 - [ ] P3 — Show agent-reported progress on the taskbar
   Why: the overlay-icon half of the taskbar integration already ships; the progress half is missing its input, and an addon that decodes it exists.
   Evidence: `update_taskbar_waiting_count` (`crates/terminalai-app/src/main.rs:1682`) sets an overlay icon only. `@xterm/addon-progress` 0.2.0 parses ConEmu's `OSC 9;4` progress sequence, new in the xterm 6.0 cycle (https://github.com/xtermjs/xterm.js/releases); `ITaskbarList3::SetProgressValue` is the sink.
