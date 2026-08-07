@@ -18,6 +18,11 @@ struct Fake {
     writes: RefCell<Vec<(String, String)>>,
     kills: RefCell<Vec<String>>,
     fail_reads: bool,
+    /// The status `s0001` reports. `None` is the ordinary "working".
+    status: Option<String>,
+    /// When true the fleet holds no sessions at all, so a wait can be asked
+    /// about an id that does not exist.
+    empty: bool,
 }
 
 impl FleetAccess for Fake {
@@ -25,12 +30,15 @@ impl FleetAccess for Fake {
         if self.fail_reads {
             return Err("daemon is unavailable".to_owned());
         }
+        if self.empty {
+            return Ok(Vec::new());
+        }
         Ok(vec![json!({
             "id": "s0001",
             "name": "shop",
             "agent": "claude",
             "cwd": "C:/repos/shop",
-            "status": "working",
+            "status": self.status.as_deref().unwrap_or("working"),
             "phase": "working",
             "health": "healthy",
             "model": "opus",
@@ -538,4 +546,170 @@ fn tool_metadata_cannot_vary_with_what_the_fleet_contains() {
     for session_data in ["C:/repos/shop", "secret operator prompt text", "abc-123", "opus"] {
         assert!(!text.contains(session_data), "{session_data} leaked into tool metadata");
     }
+}
+
+/// A server whose one session reports `status`.
+fn fleet_in(status: &str) -> McpServer<Fake> {
+    McpServer::new(
+        Fake {
+            status: Some(status.to_owned()),
+            ..Fake::default()
+        },
+        WriteGate::default(),
+    )
+}
+
+#[test]
+fn waiting_is_a_read_and_needs_no_write_token() {
+    // The coordinating agent is usually not the one holding the operator's
+    // write token, so a wait that required one would be unusable by exactly the
+    // caller it exists for. It is also listed by a read-only server, which is
+    // the observable half of the same claim.
+    let mut server = read_only();
+    let listing = call(&mut server, "tools/list", json!({}))["result"]["tools"].clone();
+    let names: Vec<&str> = listing
+        .as_array()
+        .expect("tools")
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    assert!(names.contains(&"await_session"), "not offered read-only: {names:?}");
+    assert!(!names.contains(&"send_to_session"), "the write tools are still hidden");
+
+    let result = call_tool(&mut server, "await_session", json!({ "session": "s0001" }));
+    assert!(!is_error(&result), "refused without a token: {result}");
+}
+
+#[test]
+fn a_wait_never_types_into_a_session_or_stops_one() {
+    // A wait observes. If it could do anything else it would be a mutating tool
+    // wearing a read's clothes, and the read-only server would be serving it.
+    let mut server = fleet_in("needs-approval");
+    call_tool(&mut server, "await_session", json!({ "session": "s0001" }));
+    let fleet = server.into_fleet();
+    assert!(fleet.writes.borrow().is_empty(), "a wait wrote to a session");
+    assert!(fleet.kills.borrow().is_empty(), "a wait stopped a session");
+    assert!(
+        fleet.mutations.borrow().is_empty(),
+        "a wait was recorded as a mutation"
+    );
+}
+
+#[test]
+fn a_session_already_waiting_on_a_person_satisfies_the_default_wait() {
+    for status in ["needs-approval", "needs-you", "awaiting-input"] {
+        let mut server = fleet_in(status);
+        let result = call_tool(&mut server, "await_session", json!({ "session": "s0001" }));
+        let structured = &result["structuredContent"];
+        assert_eq!(structured["outcome"], "reached", "{status}: {result}");
+        assert_eq!(structured["status"], status);
+    }
+}
+
+#[test]
+fn an_unsatisfied_wait_returns_at_once_rather_than_holding_the_server() {
+    // The server reads stdio one line at a time on one thread. Sleeping here
+    // would make one agent's wait stall every other agent's read on the same
+    // process — the opposite of a fleet primitive.
+    let mut server = fleet_in("working");
+    let started = std::time::Instant::now();
+    let result = call_tool(
+        &mut server,
+        "await_session",
+        json!({ "session": "s0001", "timeout_ms": 600_000 }),
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "the call blocked for {:?}",
+        started.elapsed()
+    );
+    let structured = &result["structuredContent"];
+    assert_eq!(structured["outcome"], "pending");
+    assert_eq!(structured["status"], "working");
+    assert!(structured["retry_after_ms"].as_u64().expect("a retry hint") > 0);
+    assert_eq!(structured["remaining_ms"], 600_000);
+}
+
+#[test]
+fn a_retry_continues_the_wait_rather_than_restarting_it() {
+    // Without this, every retry resets the clock and the caller's timeout is
+    // never reached — a bounded wait that silently becomes unbounded.
+    let mut server = fleet_in("working");
+    let result = call_tool(
+        &mut server,
+        "await_session",
+        json!({ "session": "s0001", "timeout_ms": 600_000, "remaining_ms": 900 }),
+    );
+    let structured = &result["structuredContent"];
+    assert_eq!(structured["outcome"], "pending");
+    assert_eq!(
+        structured["remaining_ms"], 900,
+        "the continuation must win over the original timeout"
+    );
+    // The hint never overshoots what is left.
+    assert!(structured["retry_after_ms"].as_u64().expect("hint") <= 900);
+}
+
+#[test]
+fn an_exhausted_wait_times_out_as_a_result_not_an_error() {
+    // The caller asked to wait a bounded time and that is what happened. An
+    // error would make a working bound look like a failure.
+    let mut server = fleet_in("working");
+    let result = call_tool(
+        &mut server,
+        "await_session",
+        json!({ "session": "s0001", "remaining_ms": 0 }),
+    );
+    assert!(!is_error(&result), "a timeout is not a tool error: {result}");
+    assert_eq!(result["structuredContent"]["outcome"], "timed_out");
+}
+
+#[test]
+fn a_wait_on_a_session_that_does_not_exist_says_so_immediately() {
+    // The failure that makes a wait primitive untrustworthy: waiting the full
+    // timeout on a mistyped id and then reporting a timeout, so the caller
+    // cannot tell a slow condition from an impossible one.
+    let mut server = McpServer::new(
+        Fake {
+            empty: true,
+            ..Fake::default()
+        },
+        WriteGate::default(),
+    );
+    let result = call_tool(
+        &mut server,
+        "await_session",
+        json!({ "session": "s9999", "timeout_ms": 600_000 }),
+    );
+    assert_eq!(result["structuredContent"]["outcome"], "unknown_session");
+}
+
+#[test]
+fn a_named_state_replaces_the_default_rather_than_adding_to_it() {
+    let mut server = fleet_in("needs-approval");
+    let result = call_tool(
+        &mut server,
+        "await_session",
+        json!({ "session": "s0001", "states": ["idle"] }),
+    );
+    assert_eq!(
+        result["structuredContent"]["outcome"], "pending",
+        "an attention state must not satisfy a wait that named something else"
+    );
+}
+
+#[test]
+fn a_wait_asked_for_longer_than_the_ceiling_is_clamped_not_refused() {
+    // An unbounded wait is a hang that looks like a working call.
+    let mut server = fleet_in("working");
+    let result = call_tool(
+        &mut server,
+        "await_session",
+        json!({ "session": "s0001", "timeout_ms": 86_400_000 }),
+    );
+    assert!(!is_error(&result));
+    assert_eq!(
+        result["structuredContent"]["remaining_ms"],
+        terminalai_core::waiting::MAX_WAIT.as_millis() as u64
+    );
 }

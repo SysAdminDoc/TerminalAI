@@ -219,13 +219,6 @@ the historical `R-NN` scheme and the entries below follow the current convention
   Acceptance: RESEARCH.md open question 3 is answered by one live run — whether those events match the installed-hook set and whether the flags work outside `--print` mode — and the answer is recorded in `CLAUDE.md` either way. If they match, stdout becomes the preferred channel and managed hooks become the fallback for agents that lack it, with the policy preflight kept for that fallback. If they do not, record what is missing so this is not re-investigated.
   Complexity: L
 
-- [ ] P2 — Let one agent wait on another through the fleet surface
-  Why: the fleet already knows which sessions are blocked, and the single primitive that turned the leader's API into an ecosystem is the ability for an agent to block until another one genuinely needs input; without it, an agent coordinating work polls or guesses.
-  Evidence: herdr exposes `agent.wait`, `events.subscribe` and `events.wait` over newline-delimited JSON on a local socket, and describes the CLI and socket API as "the same surface agents drive: spawn panes, prompt each other, wait until another agent is genuinely blocked" (https://herdr.dev/docs/socket-api/). This project's MCP server (`crates/terminalai-core/src/mcp.rs`) is request/response only, with no event stream and no wait. Note that herdr's socket has **no authentication** — this project's pipe DACL and MCP write-token model must not be relaxed to match it.
-  Touches: `crates/terminalai-core/src/mcp.rs`, `crates/terminalai-daemon/src/lib.rs`, `crates/terminalai-core/tests/mcp_server.rs`
-  Acceptance: a client can subscribe to fleet status transitions and can block until a named session reaches a given state or a timeout expires, under the existing read-only-by-default rule — waiting is a read, so it needs no write token, and a wait never wakes a session or answers a prompt. The protocol prerequisite has landed: the server speaks 2026-07-28, whose Multi Round-Trip Requests pattern (`resultType: "input_required"` plus `inputRequests`, answered on a retry of the original request) is the mechanism this needs, and the era plumbing to emit it per request already exists in `mcp.rs`. Build the wait on MRTR rather than on server-initiated requests, which that revision removed.
-  Complexity: L
-
 ### P3
 
 - [ ] P3 — Decide whether the launcher should still force Claude off plan mode

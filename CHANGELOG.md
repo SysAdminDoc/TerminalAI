@@ -7,6 +7,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- `await_session` over MCP: block until a named session reaches a given state, or until a timeout
+  expires. The primitive an agent needs to coordinate with another instead of polling and guessing.
+  Waiting is a read — no write token, and a wait never types into a session, wakes one or answers a
+  prompt — so the read-only server serves it, which matters because the coordinating agent is
+  usually not the one holding the operator's write token. An unsatisfied wait returns at once with
+  what is left of the caller's budget and a retry hint, rather than sleeping: the server reads stdio
+  one line at a time on one thread, so a tool that blocked would stall every other agent's read on
+  the same process. The retry carries `remaining_ms`, so the total wait is a real bound instead of a
+  clock that restarts on every attempt. A wait on a session that does not exist says so immediately
+  rather than timing out, because a caller has to be able to tell a slow condition from an
+  impossible one.
 - An approvals inbox: every session waiting on a decision, longest wait first, with what it is
   asking. `NeedsApproval` said a session was blocked; nothing said on what, because the hook parser
   dropped the tool name entirely and the Codex app-server event's `kind`, `method` and `params` were

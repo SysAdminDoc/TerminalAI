@@ -77,6 +77,11 @@ Working today (`terminalai-probe`, headless):
   config, a docker compose project prefix and a Postgres database cloned per session
 - Exposes the fleet to an MCP client over stdio, read-only unless a write token and opted-in
   sessions are supplied
+- Lets one agent wait until another genuinely needs input, instead of polling and guessing.
+  `await_session` is a read — no write token, and it never types into a session, wakes one or
+  answers a prompt. It returns immediately when the condition is not met yet, saying how long is
+  left and how soon to ask again, because the server reads stdio on one thread and a tool that
+  slept would stall every other agent's read on it
 - Keeps a bounded in-memory ring per session over a rotating on-disk log, so history outlives the
   ring and survives a daemon restart
 - Gives a session its own Git worktree and branch on request, cleaned up with the row and never at

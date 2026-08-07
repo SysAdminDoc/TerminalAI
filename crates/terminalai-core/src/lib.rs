@@ -46,6 +46,7 @@ pub mod tail;
 pub mod store;
 pub mod template;
 pub mod transcript;
+pub mod waiting;
 pub mod work_queue;
 pub mod worktree;
 

@@ -26,8 +26,11 @@
 //! surface is testable without a daemon.
 
 use std::collections::BTreeSet;
+use std::time::Duration;
 
 use serde_json::{json, Value};
+
+use crate::waiting;
 
 /// The MCP revision this server prefers: the current one, which carries the
 /// version on every request instead of negotiating it once.
@@ -251,6 +254,32 @@ fn last_output_arguments() -> Value {
     })
 }
 
+fn await_arguments() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "session": { "type": "string", "description": "Session id, e.g. s0001" },
+            "states": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Statuses that satisfy the wait. Omit to wait until the session                                 is waiting on a person (needs-approval, needs-you, awaiting-input)."
+            },
+            "timeout_ms": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Total time to wait across retries. Clamped to 30 minutes."
+            },
+            "remaining_ms": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Returned by a pending result; pass it back on the retry so the                                 total wait is honoured rather than restarting."
+            }
+        },
+        "required": ["session"],
+        "additionalProperties": false
+    })
+}
+
 fn write_arguments() -> Value {
     json!({
         "type": "object",
@@ -316,6 +345,12 @@ const TOOLS: &[ToolSpec] = &[
                       which price table produced the figure. Read-only.",
         mutating: false,
         schema: no_arguments,
+    },
+    ToolSpec {
+        name: "await_session",
+        description: "Wait until a session reaches one of the given statuses, or until the                       timeout expires. Waiting is a read: it needs no write token, and it never                       types into a session, wakes one or answers a prompt. Returns immediately                       when the condition is not met yet, saying how long is left and how soon to                       ask again -- retry with the returned remaining_ms. Read-only.",
+        mutating: false,
+        schema: await_arguments,
     },
     ToolSpec {
         name: "send_to_session",
@@ -558,6 +593,7 @@ impl<F: FleetAccess> McpServer<F> {
                     }))
                 })
             }
+            "await_session" => self.await_session(&arguments),
             "fleet_cost" => self.read(|fleet| {
                 let admission = fleet.admission()?;
                 let reporting = admission
@@ -601,6 +637,89 @@ impl<F: FleetAccess> McpServer<F> {
             // the call was well-formed and the client can retry.
             Err(error) => Ok(tool_error(&error)),
         }
+    }
+
+    /// Wait for a session to reach a state, without ever blocking this loop.
+    ///
+    /// The server reads stdio one line at a time on one thread. A tool that
+    /// slept until its condition came true would hold that thread, so one
+    /// agent's wait would stall every other agent's read on the same server --
+    /// the exact opposite of a fleet primitive. An unsatisfied wait therefore
+    /// returns at once, saying how much of the caller's own budget is left and
+    /// how soon to ask again, and the caller retries carrying `remaining_ms`.
+    /// That retry is what the 2026-07-28 Multi Round-Trip Requests pattern is
+    /// for, and it is why this is built on MRTR rather than on the
+    /// server-initiated requests that revision removed.
+    fn await_session(&self, arguments: &Value) -> Result<Value, RpcError> {
+        let session = require_session(arguments)?;
+        let states: Vec<String> = arguments
+            .get("states")
+            .and_then(Value::as_array)
+            .map(|states| {
+                states
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+        // `remaining_ms` continues an earlier call; `timeout_ms` starts one.
+        // Preferring the continuation is what makes the total wait a real bound
+        // instead of restarting the clock on every retry.
+        let budget = arguments
+            .get("remaining_ms")
+            .and_then(Value::as_u64)
+            .map(Duration::from_millis)
+            .map(|remaining| remaining.min(waiting::MAX_WAIT))
+            .unwrap_or_else(|| {
+                waiting::bounded_wait(
+                    arguments
+                        .get("timeout_ms")
+                        .and_then(Value::as_u64)
+                        .map(Duration::from_millis),
+                )
+            });
+        let request = waiting::WaitRequest {
+            session: session.clone(),
+            states,
+            remaining: budget,
+        };
+        self.read(move |fleet| {
+            let sessions = fleet.sessions()?;
+            let current = sessions
+                .iter()
+                .find(|entry| entry.get("id").and_then(Value::as_str) == Some(&request.session))
+                .and_then(|entry| entry.get("status").and_then(Value::as_str))
+                .map(str::to_owned);
+            Ok(match waiting::evaluate(current.as_deref(), &request) {
+                waiting::WaitOutcome::Reached { status } => json!({
+                    "session": request.session,
+                    "outcome": "reached",
+                    "status": status,
+                }),
+                waiting::WaitOutcome::Pending { remaining } => {
+                    let retry = waiting::retry_after(remaining);
+                    json!({
+                        "session": request.session,
+                        "outcome": "pending",
+                        "status": current,
+                        "remaining_ms": remaining.as_millis() as u64,
+                        "retry_after_ms": retry.as_millis() as u64,
+                    })
+                }
+                waiting::WaitOutcome::TimedOut => json!({
+                    "session": request.session,
+                    "outcome": "timed_out",
+                    "status": current,
+                }),
+                // Never reported as a timeout: a caller must be able to tell a
+                // slow condition from one that can never become true.
+                waiting::WaitOutcome::Unknown => json!({
+                    "session": request.session,
+                    "outcome": "unknown_session",
+                }),
+            })
+        })
     }
 
     fn mutate(
