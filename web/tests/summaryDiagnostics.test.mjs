@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { appSource } from "./appSource.mjs";
 
-const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+const main = appSource();
 
 const summary = main.slice(main.indexOf("function renderSummary"), main.indexOf("\n/// How often pinned panes"));
 const diagnostics = main.slice(main.indexOf("function renderDiagnostics"), main.indexOf("\nfunction formatReason"));

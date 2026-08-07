@@ -4,6 +4,7 @@ import test from "node:test";
 import { renderFixtureRow } from "./rowFixture.mjs";
 
 import { JSDOM } from "jsdom";
+import { appSource } from "./appSource.mjs";
 
 /**
  * The 28px row is the product's central claim: it is the reason the README says
@@ -20,7 +21,7 @@ const COMPACT_ROW_HEIGHT = 28;
 
 const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+const main = appSource();
 const readme = readFileSync(new URL("../../README.md", import.meta.url), "utf8");
 
 test("the compact fleet row declares the documented height", () => {

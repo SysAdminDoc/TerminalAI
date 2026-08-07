@@ -3,10 +3,11 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { JSDOM } from "jsdom";
+import { appSource } from "./appSource.mjs";
 
 const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+const main = appSource();
 const catalog = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 
 test("small UI text does not use decorative contrast tokens", () => {

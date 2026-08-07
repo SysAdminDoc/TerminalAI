@@ -44,7 +44,7 @@ export function renderRestoreOutcomes(outcomes, { escape, translate }) {
         ? `<small class="restore-pin">${escape(outcome.pin_refused)}</small>`
         : "";
       return (
-        `<li class="${tone}"><span class="restore-name">${escape(outcome.name)}</span>` +
+        `<li class="${escape(tone)}"><span class="restore-name">${escape(outcome.name)}</span>` +
         `<span class="restore-detail">${detail}</span>${pin}</li>`
       );
     })

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { appSource, shellSource } from "./appSource.mjs";
 
-const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+const main = appSource();
 const helpers = readFileSync(new URL("../src/rateLimit.js", import.meta.url), "utf8");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 
@@ -37,7 +38,10 @@ test("the limited row and header labels come from one place", () => {
   // only grepped. Both now resolve through the extracted module.
   assert.match(main, /import \{[^}]*rateLimitTitle, rateLimitedLabel \} from "\.\/rateLimit\.js";/);
   assert.match(main, /return rateLimitedLabel\(session, t\);/);
-  assert.doesNotMatch(main, /function resetMillis/);
+  // The shell alone, not the whole renderer: `rateLimit.js` is where
+  // `resetMillis` is supposed to live, so asserting its absence across every
+  // module would assert the module does not exist.
+  assert.doesNotMatch(shellSource(), /function resetMillis/);
 });
 
 test("every rate-limit string used by the renderer exists in the catalog", () => {

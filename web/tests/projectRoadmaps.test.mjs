@@ -10,8 +10,9 @@ import {
   stalenessLabel,
   summarize,
 } from "../src/projects.js";
+import { appSource } from "./appSource.mjs";
 
-const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+const main = appSource();
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 

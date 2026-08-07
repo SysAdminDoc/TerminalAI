@@ -3,8 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { optionalSystemTimeMs, systemTimeMs } from "../src/time.js";
+import { appSource } from "./appSource.mjs";
 
-const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+const main = appSource();
 const app = readFileSync(new URL("../../crates/terminalai-app/src/main.rs", import.meta.url), "utf8");
 
 test("terminal output uses the dedicated channel and agent events stay off the webview", () => {

@@ -3,8 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { isRemovable, renderWorktrees, stateLabel } from "../src/worktrees.js";
+import { appSource } from "./appSource.mjs";
 
-const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+const main = appSource();
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const worktree = readFileSync(
   new URL("../../crates/terminalai-core/src/worktree.rs", import.meta.url),

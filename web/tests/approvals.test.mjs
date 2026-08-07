@@ -5,8 +5,9 @@ import test from "node:test";
 import { JSDOM } from "jsdom";
 
 import { pendingApprovals, renderApprovals, requestLine, waitingSince } from "../src/approvals.js";
+import { appSource } from "./appSource.mjs";
 
-const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+const main = appSource();
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const catalog = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 

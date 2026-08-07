@@ -25,7 +25,7 @@ export function renderWorktrees(worktrees, { escape, translate }) {
         ? ` <small>${escape(translate("worktrees-missing-directory"))}</small>`
         : "";
       const action = isRemovable(item)
-        ? `<button type="button" class="button button-quiet" data-reap="${index}">${escape(
+        ? `<button type="button" class="button button-quiet" data-reap="${escape(index)}">${escape(
             translate("worktrees-remove"),
           )}</button>`
         : "";

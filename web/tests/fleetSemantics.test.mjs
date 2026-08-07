@@ -4,13 +4,14 @@ import test from "node:test";
 import { renderFixtureRow } from "./rowFixture.mjs";
 
 import { JSDOM } from "jsdom";
+import { appSource } from "./appSource.mjs";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 // The fleet row markup lives in `rowMarkup.js` since it was extracted out of
 // this file. These assertions are about what the app renders, not about which
 // module holds the template, so they read both.
 const main =
-  readFileSync(new URL("../src/main.js", import.meta.url), "utf8") +
+  appSource() +
   readFileSync(new URL("../src/rowMarkup.js", import.meta.url), "utf8");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 

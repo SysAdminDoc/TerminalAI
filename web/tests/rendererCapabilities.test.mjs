@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { appSource } from "./appSource.mjs";
+import { createTerminalPane } from "../src/terminalPane.js";
 
-const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+const main = appSource();
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 test("the WebGL renderer is loaded rather than left on the DOM fallback", () => {
@@ -13,19 +15,87 @@ test("the WebGL renderer is loaded rather than left on the DOM fallback", () => 
   assert.match(main, /state\.webglAddon = useWebglRenderer\(state\.terminal\)/);
 });
 
-test("WebGL failure falls back to the DOM renderer instead of blanking the pane", () => {
-  // Three distinct failure points: constructing the addon, creating the context
-  // inside loadAddon, and losing the context later to a driver reset.
-  assert.match(main, /function useWebglRenderer\(terminal\) \{/);
-  const body = main.slice(main.indexOf("function useWebglRenderer"));
-  const fn = body.slice(0, body.indexOf("\nfunction setupTerminal"));
-  assert.equal((fn.match(/catch \(error\)/g) ?? []).length, 2, "both throw sites are guarded");
-  assert.match(fn, /addon\.onContextLoss\(\(\) => \{/);
-  assert.match(fn, /addon\.dispose\(\);/);
-  assert.ok(
-    fn.includes("return null"),
-    "a failed renderer must leave state.webglAddon null, not a dead addon",
+// Drive the real function rather than grepping it.
+//
+// This was a source-grep — count the `catch (error)` blocks, look for
+// `dispose`, look for `return null` — and it broke the moment the pane moved
+// into its own module, because the slice it took ended at a function that is
+// now indented inside a factory. The failure was correct: it was a proxy for
+// behaviour, and the extraction is what made the behaviour reachable. All three
+// failure points are now exercised for real.
+function pane(WebglAddon) {
+  const state = { terminal: null, webglAddon: null };
+  const { useWebglRenderer } = createTerminalPane({
+    $: () => null,
+    state,
+    invoke: async () => null,
+    showToast: () => {},
+    t: (key) => key,
+    scheduleFit: () => {},
+    renderFindCount: () => {},
+    Terminal: class {},
+    FitAddon: class {},
+    SearchAddon: class {},
+    Unicode11Addon: class {},
+    WebglAddon,
+    DEFAULT_COLS: 120,
+    DEFAULT_ROWS: 40,
+  });
+  return { state, useWebglRenderer };
+}
+
+test("a WebGL addon that cannot be constructed leaves the DOM renderer in place", () => {
+  const { useWebglRenderer } = pane(
+    class {
+      constructor() {
+        throw new Error("no GPU path");
+      }
+    },
   );
+  assert.equal(useWebglRenderer({ loadAddon: () => {} }), null);
+});
+
+test("a WebGL context that cannot be created disposes the addon rather than keeping a dead one", () => {
+  let disposed = false;
+  const { useWebglRenderer } = pane(
+    class {
+      onContextLoss() {}
+      dispose() {
+        disposed = true;
+      }
+    },
+  );
+  const terminal = {
+    loadAddon() {
+      // loadAddon is where context creation actually happens.
+      throw new Error("context creation failed");
+    },
+  };
+  assert.equal(useWebglRenderer(terminal), null);
+  assert.ok(disposed, "a failed addon must be disposed, not left attached");
+});
+
+test("losing the context later returns the pane to the DOM renderer", () => {
+  let lose = null;
+  let disposed = false;
+  const { state, useWebglRenderer } = pane(
+    class {
+      onContextLoss(handler) {
+        lose = handler;
+      }
+      dispose() {
+        disposed = true;
+      }
+    },
+  );
+  const addon = useWebglRenderer({ loadAddon: () => {} });
+  assert.ok(addon, "a working renderer is returned");
+  state.webglAddon = addon;
+  assert.ok(lose, "the loss handler is registered");
+  // A driver reset or a GPU process crash, after everything already worked.
+  lose();
+  assert.ok(disposed, "the addon is disposed on context loss");
+  assert.equal(state.webglAddon, null, "state must not keep a dead addon");
 });
 
 test("the renderer is attached before a WebGL context is requested", () => {

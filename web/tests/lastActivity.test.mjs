@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { appSource } from "./appSource.mjs";
 
-const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+const main = appSource();
 
 test("the row prefers the transcript message over the raw pty tail", () => {
   // `last_line` is the tail of a rendered TUI, so a redraw leaves box-drawing

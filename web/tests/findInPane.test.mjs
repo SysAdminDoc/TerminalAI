@@ -5,6 +5,7 @@ import test from "node:test";
 import { JSDOM } from "jsdom";
 
 import { renderSearchResults, searchSummary } from "../src/fleetSearch.js";
+import { appSource } from "./appSource.mjs";
 
 /// The same escaper `main.js` binds.
 const escapeHtml = (value) =>
@@ -14,7 +15,7 @@ const escapeHtml = (value) =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 
-const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+const main = appSource();
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 const catalog = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");

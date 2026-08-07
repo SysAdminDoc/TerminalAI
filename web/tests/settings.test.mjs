@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { registrySource } from "./registrySource.mjs";
 import test from "node:test";
+import { appSource } from "./appSource.mjs";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+const main = appSource();
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 const app = readFileSync(new URL("../../crates/terminalai-app/src/main.rs", import.meta.url), "utf8");
 const daemon = readFileSync(

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { appSource } from "./appSource.mjs";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+const main = appSource();
 const app = readFileSync(new URL("../../crates/terminalai-app/src/main.rs", import.meta.url), "utf8");
 
 test("the daemon log panel is present and receives bounded WebView batches", () => {

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { appSource } from "./appSource.mjs";
 
-const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+const main = appSource();
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const config = JSON.parse(
   readFileSync(new URL("../../crates/terminalai-app/tauri.conf.json", import.meta.url), "utf8"),
@@ -74,7 +75,13 @@ function interpolations(source) {
 test("every interpolation into a markup attribute is escaped", () => {
   // One unescaped attribute is enough to break out of it. Agent-derived values
   // reach these strings, so the rule is uniform rather than case-by-case: if it
-  // lands inside quotes, it goes through escapeHtml.
+  // lands inside quotes, it goes through the escaper.
+  //
+  // The escaper is matched by name rather than by identity, because the modules
+  // split out of `main.js` take it as a dependency called `escape` while the
+  // shell calls its own `escapeHtml`. Until this read the whole renderer none of
+  // those modules was covered at all — the guard was checking one file and
+  // reporting on the application.
   const attributes =
     main.match(/\b(?:title|aria-label|aria-keyshortcuts|class|href|src|data-[a-z-]+)="[^"]*"/g) ?? [];
   const unescaped = attributes
@@ -82,7 +89,7 @@ test("every interpolation into a markup attribute is escaped", () => {
     .filter((attribute) =>
       interpolations(attribute).some(
         (hole) =>
-          !hole.includes("escapeHtml") &&
+          !/\bescape(Html)?\s*\(/.test(hole) &&
           // A ternary between two string literals introduces no external data.
           !/^\$\{[^{}]*\?\s*"[^"]*"\s*:\s*"[^"]*"\}$/.test(hole),
       ),
