@@ -18,6 +18,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use which::sys::{Sys, SysMetadata};
 
+use crate::manifest::{self, AgentManifest};
+
 /// How long a `--version` identification probe may take before the candidate is
 /// treated as unidentifiable. Both CLIs answer in well under a second.
 const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -35,51 +37,44 @@ pub enum Agent {
 }
 
 impl Agent {
+    /// Everything about this family that is data: names, banners, npm layout
+    /// and the flag spellings the launcher emits.
+    pub fn manifest(self) -> &'static AgentManifest {
+        manifest::for_agent(self)
+    }
+
     /// Name shown in the UI.
     pub fn label(self) -> &'static str {
-        match self {
-            Agent::Claude => "Claude Code",
-            Agent::Codex => "Codex",
-        }
+        &self.manifest().label
     }
 
     /// The command name a user would type.
     pub fn command_name(self) -> &'static str {
-        match self {
-            Agent::Claude => "claude",
-            Agent::Codex => "codex",
-        }
+        &self.manifest().command_name
     }
 
     /// The file stem a native executable for this agent must carry. A configured
     /// path whose stem differs is refused before anything is executed.
     pub fn expected_exe_stem(self) -> &'static str {
-        self.command_name()
+        &self.manifest().exe_stem
     }
 
     /// A substring that must appear, case-insensitively, in the candidate's
     /// `--version` output. Verified 2026-08-03 against Claude Code 2.1.170
     /// (`2.1.170 (Claude Code)`) and codex-cli 0.146.0 (`codex-cli 0.146.0`).
     pub fn version_marker(self) -> &'static str {
-        match self {
-            Agent::Claude => "claude code",
-            Agent::Codex => "codex",
-        }
+        &self.manifest().version_marker
+    }
+
+    /// The environment variable naming this agent's own configuration and
+    /// signed-in session directory.
+    pub fn home_env(self) -> &'static str {
+        &self.manifest().home_env
     }
 
     /// True when `banner` positively identifies this agent.
     pub fn identifies(self, banner: &str) -> bool {
-        let banner = banner.to_ascii_lowercase();
-        if !banner.contains(self.version_marker()) {
-            return false;
-        }
-        // "codex" appears in Claude's own output only as a model alias, never in
-        // its version banner — but keep the sibling exclusion explicit so a future
-        // banner change cannot make both agents match the same string.
-        match self {
-            Agent::Claude => true,
-            Agent::Codex => !banner.contains("claude code"),
-        }
+        self.manifest().identifies(banner)
     }
 }
 
@@ -431,53 +426,10 @@ fn npm_prefix<S: ResolveSys>(sys: &S) -> Option<PathBuf> {
 }
 
 fn in_npm_prefix<S: ResolveSys>(sys: &S, agent: Agent, prefix: &Path) -> Option<PathBuf> {
-    let modules = prefix.join("node_modules");
-    let candidate = match agent {
-        Agent::Claude => modules
-            .join("@anthropic-ai")
-            .join("claude-code")
-            .join("bin")
-            .join(format!("claude{}", sys.exe_suffix())),
-        Agent::Codex => {
-            // The launcher package depends on a per-platform package that ships
-            // the real binary under `vendor/<target-triple>/bin/`.
-            let vendor = modules
-                .join("@openai")
-                .join("codex")
-                .join("node_modules")
-                .join("@openai")
-                .join(codex_platform_package()?)
-                .join("vendor")
-                .join(codex_target_triple()?)
-                .join("bin");
-            vendor.join(format!("codex{}", sys.exe_suffix()))
-        }
-    };
+    let manifest = agent.manifest();
+    let directory = manifest.npm_directory(prefix)?;
+    let candidate = directory.join(format!("{}{}", manifest.exe_stem, sys.exe_suffix()));
     sys.path_is_file(&candidate).then_some(candidate)
-}
-
-fn codex_platform_package() -> Option<&'static str> {
-    Some(match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("windows", "x86_64") => "codex-win32-x64",
-        ("windows", "aarch64") => "codex-win32-arm64",
-        ("macos", "x86_64") => "codex-darwin-x64",
-        ("macos", "aarch64") => "codex-darwin-arm64",
-        ("linux", "x86_64") => "codex-linux-x64",
-        ("linux", "aarch64") => "codex-linux-arm64",
-        _ => return None,
-    })
-}
-
-fn codex_target_triple() -> Option<&'static str> {
-    Some(match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("windows", "x86_64") => "x86_64-pc-windows-msvc",
-        ("windows", "aarch64") => "aarch64-pc-windows-msvc",
-        ("macos", "x86_64") => "x86_64-apple-darwin",
-        ("macos", "aarch64") => "aarch64-apple-darwin",
-        ("linux", "x86_64") => "x86_64-unknown-linux-musl",
-        ("linux", "aarch64") => "aarch64-unknown-linux-musl",
-        _ => return None,
-    })
 }
 
 /// Reject the npm `.cmd` / `.ps1` shims — `CreateProcess` cannot run them.
@@ -882,12 +834,16 @@ mod tests {
     }
 
     #[test]
-    fn platform_tables_agree() {
-        // Both tables must resolve, or neither — a half-populated match arm
-        // would silently fall through to the PATH branch.
-        assert_eq!(
-            codex_platform_package().is_some(),
-            codex_target_triple().is_some()
-        );
+    fn the_npm_route_is_driven_by_the_manifest() {
+        // The path used to be a match arm per agent. If the manifest's segments
+        // stop resolving, the npm route must be skipped rather than guessed at —
+        // a half-substituted path would silently fall through to PATH.
+        for agent in [Agent::Claude, Agent::Codex] {
+            let directory = agent
+                .manifest()
+                .npm_directory(Path::new("prefix"))
+                .expect("this platform is covered by the manifest tables");
+            assert!(!directory.to_string_lossy().contains('{'));
+        }
     }
 }

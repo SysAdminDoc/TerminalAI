@@ -25,6 +25,7 @@ pub mod i18n;
 pub mod land;
 pub mod launch;
 pub mod lease;
+pub mod manifest;
 pub mod mcp;
 pub mod notification;
 pub(crate) mod process_tree;
@@ -78,6 +79,7 @@ pub use hooks::{
     parse_hook, parse_hook_in, HookEvent, HookNotification, HookParseError, HookSignal,
 };
 pub use launch::{Effort, LaunchError, LaunchSpec, Permission, ResolvedCommand, Resume, Sandbox};
+pub use manifest::{AgentManifest, ManifestError, ProbeKind, Slot};
 pub use notification::{
     AttentionNotification, NotificationCenter, NotificationChange, NotificationEvent,
     SuppressionReason, AGENT_AUTO_RESOLVE_DEADLINE, LONG_TOOL_GRACE_PERIOD, QUESTION_GRACE_PERIOD,

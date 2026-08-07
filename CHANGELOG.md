@@ -3,6 +3,28 @@
 All notable changes to TerminalAI are recorded here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Agent identity and flag mapping are data, not code. Everything that differs between the two
+  supervised families — label, command name, executable stem, version banner, npm package layout,
+  the environment variable naming the agent's own config directory, and which launcher choice
+  becomes which token in which position — now lives in `crates/terminalai-core/agents/builtin.toml`
+  and is emitted by one manifest-driven builder. Two hand-written per-family argv functions are
+  gone. The argument vectors are unchanged byte for byte, proven by the existing golden fixtures.
+  What stayed in code is what is not spelling: the refusals, the resume-id shape check and the
+  capability-probe protocols, which a manifest names rather than describes.
+
+### Added
+
+- An operator can override the built-in manifests from `agents.toml` in their TerminalAI data
+  directory. Manifests are trusted local configuration; a repository may not supply one, because a
+  repo-declared agent definition is arbitrary argv arriving with a clone. A manifest listing a slot
+  its flag table does not spell — or spelling a flag its order never emits — is refused at load with
+  the field named, and an unusable file stops the daemon rather than silently reverting to the
+  built-ins.
+
 ## [0.10.0] — 2026-08-06
 
 ### Added

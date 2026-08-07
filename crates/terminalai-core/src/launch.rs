@@ -13,6 +13,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::agent::{Agent, AgentBinary};
 use crate::environment::{EnvironmentError, EnvironmentSpec};
+use crate::manifest::{AgentManifest, Emit, PermissionMode, PermissionTable, Slot};
 
 /// Reasoning effort. Known values remain convenient constants, while a runtime
 /// can add a new string before this binary is updated.
@@ -291,7 +292,7 @@ pub enum LaunchError {
         flag: &'static str,
         agent: &'static str,
     },
-    #[error("{0} cannot resume a specific session id from the command line; use Last or New")]
+    #[error("{0} cannot resume a session from the command line; use New")]
     ResumeUnsupported(&'static str),
     #[error("resume session id has an invalid command-line shape")]
     InvalidResumeId,
@@ -344,10 +345,7 @@ impl LaunchSpec {
         // Validated here so a bad passthrough name refuses the launch rather
         // than surfacing later as an agent that cannot authenticate.
         self.agent_environment()?;
-        let args = match self.agent {
-            Agent::Claude => self.claude_args()?,
-            Agent::Codex => self.codex_args()?,
-        };
+        let args = self.args_from(self.agent.manifest())?;
         Ok(ResolvedCommand {
             program: binary.path.clone(),
             args,
@@ -367,11 +365,10 @@ impl LaunchSpec {
             if !home.is_dir() {
                 return Err(LaunchError::MissingAgentHome(home.clone()));
             }
-            let key = match self.agent {
-                Agent::Claude => "CLAUDE_CONFIG_DIR",
-                Agent::Codex => "CODEX_HOME",
-            };
-            pairs.push((key.to_owned(), home.to_string_lossy().into_owned()));
+            pairs.push((
+                self.agent.home_env().to_owned(),
+                home.to_string_lossy().into_owned(),
+            ));
         }
         for name in &self.env_passthrough {
             if name.is_empty()
@@ -396,179 +393,195 @@ impl LaunchSpec {
         Ok(pairs)
     }
 
-    fn claude_args(&self) -> Result<Vec<String>, LaunchError> {
-        if self.sandbox.is_some() {
-            return Err(LaunchError::Unsupported {
-                flag: "--sandbox",
-                agent: "Claude Code",
-            });
-        }
-        if self.profile.is_some() {
-            return Err(LaunchError::Unsupported {
-                flag: "--profile",
-                agent: "Claude Code",
-            });
-        }
-        if self.web_search {
-            return Err(LaunchError::Unsupported {
-                flag: "--search",
-                agent: "Claude Code",
-            });
-        }
-
-        let mut a = Vec::new();
-        // Claude inherits its working directory from the process, so `cwd` is
-        // applied at spawn time rather than as a flag.
-        if let Some(m) = &self.model {
-            a.push("--model".into());
-            a.push(m.clone());
-        }
-        if let Some(e) = self.effort.as_ref() {
-            a.push("--effort".into());
-            a.push(e.as_str().into());
-        }
-        if let Some(p) = self.permission.as_ref() {
-            a.push("--permission-mode".into());
-            a.push(
-                match p {
-                    Permission::Ask => "default",
-                    Permission::Plan => "plan",
-                    Permission::AcceptEdits => "acceptEdits",
-                    Permission::Bypass => "bypassPermissions",
-                    // Claude's own spelling, unmodelled here — `auto`,
-                    // `dontAsk` and `manual` are the current examples.
-                    Permission::Custom(value) => value,
+    /// Build the argument vector from a manifest.
+    ///
+    /// The *shape* is data — `order` decides which slots appear and where, and
+    /// `flags` decides how each is spelled. What stays here is the logic that is
+    /// not spelling: which fields refuse rather than drop, that a new session id
+    /// is only passed on a new session, and that the prompt is positional and
+    /// last behind a `--` separator so a dash-leading prompt can never be parsed
+    /// as an option.
+    fn args_from(&self, manifest: &AgentManifest) -> Result<Vec<String>, LaunchError> {
+        self.refuse_unexpressed(manifest)?;
+        let flags = &manifest.flags;
+        // Resolved before the loop because a permission mode can imply a
+        // sandbox, and the two slots need not be adjacent in `order`.
+        let sandbox = self.effective_sandbox(manifest);
+        let mut a: Vec<String> = Vec::new();
+        for slot in &manifest.order {
+            match slot {
+                Slot::Model => emit_optional(&mut a, &flags.model, self.model.as_deref()),
+                Slot::Effort => emit_optional(
+                    &mut a,
+                    &flags.effort,
+                    self.effort.as_ref().map(Effort::as_str),
+                ),
+                Slot::Permission => self.emit_permission(&mut a, manifest)?,
+                Slot::Sandbox => emit_optional(&mut a, &flags.sandbox, sandbox.map(Sandbox::as_str)),
+                Slot::Profile => emit_optional(&mut a, &flags.profile, self.profile.as_deref()),
+                Slot::Name => emit_optional(&mut a, &flags.name, self.name.as_deref()),
+                Slot::SessionId => {
+                    // A resume already names the session; repeating the id as a
+                    // new-session id would ask the agent for two identities.
+                    if matches!(self.resume, Resume::New) {
+                        emit_optional(&mut a, &flags.session_id, self.session_id.as_deref());
+                    }
                 }
-                .into(),
-            );
-        }
-        if let Some(n) = &self.name {
-            a.push("--name".into());
-            a.push(n.clone());
-        }
-        if matches!(self.resume, Resume::New) {
-            if let Some(id) = &self.session_id {
-                a.push("--session-id".into());
-                a.push(id.clone());
-            }
-        }
-        for d in &self.add_dirs {
-            a.push("--add-dir".into());
-            a.push(d.to_string_lossy().into_owned());
-        }
-        if let Some(b) = self.max_budget_usd {
-            a.push("--max-budget-usd".into());
-            a.push(format_usd(b));
-        }
-        match &self.resume {
-            Resume::New => {}
-            Resume::Last => a.push("--continue".into()),
-            Resume::Session(id) => {
-                a.push("--resume".into());
-                a.push(id.clone());
-            }
-            Resume::Fork(id) => {
-                a.push("--resume".into());
-                a.push(id.clone());
-                a.push("--fork-session".into());
+                Slot::Cwd => {
+                    emit_optional(&mut a, &flags.cwd, Some(&self.cwd.to_string_lossy()));
+                }
+                Slot::AddDirs => {
+                    if let Some(emit) = &flags.add_dirs {
+                        for directory in &self.add_dirs {
+                            emit.push(&mut a, &directory.to_string_lossy());
+                        }
+                    }
+                }
+                Slot::MaxBudgetUsd => emit_optional(
+                    &mut a,
+                    &flags.max_budget_usd,
+                    self.max_budget_usd.map(format_usd).as_deref(),
+                ),
+                Slot::WebSearch => {
+                    if self.web_search {
+                        if let Some(emit) = &flags.web_search {
+                            emit.push_switch(&mut a);
+                        }
+                    }
+                }
+                Slot::Resume => self.emit_resume(&mut a, manifest)?,
             }
         }
         a.extend(self.extra_args.iter().cloned());
-        if let Some(p) = &self.initial_prompt {
+        if let Some(prompt) = &self.initial_prompt {
             a.push("--".into());
-            a.push(p.clone());
+            a.push(prompt.clone());
         }
         Ok(a)
     }
 
-    fn codex_args(&self) -> Result<Vec<String>, LaunchError> {
-        if self.max_budget_usd.is_some() {
-            return Err(LaunchError::Unsupported {
-                flag: "--max-budget-usd",
-                agent: "Codex",
+    /// Refuse a choice the chosen agent cannot express.
+    ///
+    /// Only the slots that carry a deliberate operator decision are here. `name`,
+    /// `session-id` and `cwd` are supervisor-side conveniences an agent may
+    /// legitimately not need — Codex names its rows here rather than in the CLI,
+    /// and Claude inherits its working directory from the process — so their
+    /// absence from a manifest is a fact about the agent, not a dropped choice.
+    fn refuse_unexpressed(&self, manifest: &AgentManifest) -> Result<(), LaunchError> {
+        let set = [
+            (Slot::Model, self.model.is_some()),
+            (Slot::Effort, self.effort.is_some()),
+            (Slot::Permission, self.permission.is_some()),
+            (Slot::Sandbox, self.sandbox.is_some()),
+            (Slot::Profile, self.profile.is_some()),
+            (Slot::AddDirs, !self.add_dirs.is_empty()),
+            (Slot::MaxBudgetUsd, self.max_budget_usd.is_some()),
+            (Slot::WebSearch, self.web_search),
+        ];
+        for (slot, chosen) in set {
+            if chosen && !manifest.expresses(slot) {
+                return Err(LaunchError::Unsupported {
+                    flag: slot.option_name(),
+                    agent: self.agent.label(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// The sandbox this launch actually runs under.
+    ///
+    /// A permission mode may imply one: Codex expresses auto-editing as
+    /// `on-request` *paired with* workspace-write, and its default sandbox is
+    /// not guaranteed to permit writes, so accept-edits without a sandbox would
+    /// ask the agent to accept edits it cannot make. The contradictory
+    /// combination — accept-edits with an explicit read-only sandbox — is
+    /// refused in [`LaunchSpec::resolve`], so an implied value is always one
+    /// that can write.
+    fn effective_sandbox(&self, manifest: &AgentManifest) -> Option<Sandbox> {
+        if self.sandbox.is_some() {
+            return self.sandbox;
+        }
+        let table = manifest.flags.permission.as_ref()?;
+        let mode = permission_mode(table, self.permission.as_ref()?)?;
+        mode.implies_sandbox
+    }
+
+    fn emit_permission(
+        &self,
+        args: &mut Vec<String>,
+        manifest: &AgentManifest,
+    ) -> Result<(), LaunchError> {
+        let Some(permission) = self.permission.as_ref() else {
+            return Ok(());
+        };
+        let Some(table) = manifest.flags.permission.as_ref() else {
+            return Ok(());
+        };
+        match permission_mode(table, permission) {
+            Some(mode) => {
+                let emit = mode.emit.as_ref().unwrap_or(&table.emit);
+                emit.push(args, &mode.value);
+            }
+            // A mode this build models but this agent does not spell is a
+            // refusal, not a silent downgrade to whatever the agent defaults to.
+            None if !permission.is_custom() => {
+                return Err(LaunchError::Unsupported {
+                    flag: Slot::Permission.option_name(),
+                    agent: self.agent.label(),
+                });
+            }
+            // The agent's own spelling for a mode this build does not model —
+            // Claude's `auto`/`dontAsk`/`manual`, Codex's granular
+            // `approval_policy` values. Passed through verbatim.
+            None => table.emit.push(args, permission.as_str()),
+        }
+        Ok(())
+    }
+
+    fn emit_resume(
+        &self,
+        args: &mut Vec<String>,
+        manifest: &AgentManifest,
+    ) -> Result<(), LaunchError> {
+        let (id, tokens) = match (&self.resume, manifest.flags.resume.as_ref()) {
+            (Resume::New, _) | (_, None) => return Ok(()),
+            (Resume::Last, Some(table)) => (None, &table.last),
+            (Resume::Session(id), Some(table)) => (Some(id), &table.session),
+            (Resume::Fork(id), Some(table)) => (Some(id), &table.fork),
+        };
+        let Some(tokens) = tokens else {
+            return Err(LaunchError::ResumeUnsupported(self.agent.label()));
+        };
+        for token in tokens {
+            args.push(match id {
+                Some(id) => token.replace("{id}", id),
+                None => token.clone(),
             });
         }
-        let mut a = Vec::new();
-        // Subcommands come first for the resume family.
-        match &self.resume {
-            Resume::New => {}
-            Resume::Last => {
-                a.push("resume".into());
-                a.push("--last".into());
-            }
-            Resume::Session(id) => {
-                a.push("resume".into());
-                a.push(id.clone());
-            }
-            Resume::Fork(id) => {
-                a.push("fork".into());
-                a.push(id.clone());
-            }
-        }
-        if let Some(m) = &self.model {
-            a.push("--model".into());
-            a.push(m.clone());
-        }
-        if let Some(e) = self.effort.as_ref() {
-            // Not a flag — a config override, parsed as TOML.
-            a.push("--config".into());
-            a.push(format!("model_reasoning_effort=\"{}\"", e.as_str()));
-        }
-        if self.permission == Some(Permission::Plan) {
-            // Codex exposes its collaboration mode as a TOML config override.
-            a.push("--config".into());
-            a.push("collaboration_mode.mode=\"Plan\"".into());
-        } else if let Some(p) = self.permission.as_ref() {
-            a.push("--ask-for-approval".into());
-            a.push(
-                match p {
-                    // `untrusted` is Codex's *most* prompting policy — it runs
-                    // only known-safe reads without asking — so it is not the
-                    // analogue of "accept edits", it is the opposite of one.
-                    // Codex expresses auto-editing as `on-request` paired with
-                    // the workspace-write sandbox, which is its own auto preset.
-                    Permission::Ask | Permission::AcceptEdits => "on-request",
-                    Permission::Bypass => "never",
-                    // Codex's own spelling, unmodelled here — its granular
-                    // `approval_policy` values are the current example.
-                    Permission::Custom(value) => value,
-                    Permission::Plan => unreachable!("rejected above"),
-                }
-                .into(),
-            );
-        }
-        // The other half of that pair. Codex's default sandbox is not
-        // guaranteed to permit writes, so accept-edits without a sandbox would
-        // ask the agent to accept edits it cannot make. The contradictory
-        // combination is refused in `resolve`, so an explicit choice here is
-        // always one that can write.
-        let sandbox = self.sandbox.or_else(|| {
-            (self.permission == Some(Permission::AcceptEdits)).then_some(Sandbox::WorkspaceWrite)
-        });
-        if let Some(s) = sandbox {
-            a.push("--sandbox".into());
-            a.push(s.as_str().into());
-        }
-        if let Some(p) = &self.profile {
-            a.push("--profile".into());
-            a.push(p.clone());
-        }
-        // Codex does not inherit cwd for its workspace root; it must be told.
-        a.push("--cd".into());
-        a.push(self.cwd.to_string_lossy().into_owned());
-        for d in &self.add_dirs {
-            a.push("--add-dir".into());
-            a.push(d.to_string_lossy().into_owned());
-        }
-        if self.web_search {
-            a.push("--search".into());
-        }
-        a.extend(self.extra_args.iter().cloned());
-        if let Some(p) = &self.initial_prompt {
-            a.push("--".into());
-            a.push(p.clone());
-        }
-        Ok(a)
+        Ok(())
+    }
+}
+
+/// Emit `value` through `emit` when both are present.
+fn emit_optional(args: &mut Vec<String>, emit: &Option<Emit>, value: Option<&str>) {
+    if let (Some(emit), Some(value)) = (emit, value) {
+        emit.push(args, value);
+    }
+}
+
+/// The manifest entry for a modelled permission mode. `None` for a custom mode,
+/// and for a modelled mode this agent does not spell.
+fn permission_mode<'a>(
+    table: &'a PermissionTable,
+    permission: &Permission,
+) -> Option<&'a PermissionMode> {
+    match permission {
+        Permission::Ask => table.ask.as_ref(),
+        Permission::Plan => table.plan.as_ref(),
+        Permission::AcceptEdits => table.accept_edits.as_ref(),
+        Permission::Bypass => table.bypass.as_ref(),
+        Permission::Custom(_) => None,
     }
 }
 
@@ -829,6 +842,151 @@ mod tests {
                 Err(LaunchError::InvalidBudget)
             ));
         }
+    }
+
+    /// Parse one family out of manifest text, so a test can state the mapping
+    /// it is asserting on rather than depending on the built-in.
+    fn manifest_from(text: &str) -> AgentManifest {
+        crate::manifest::parse(text)
+            .expect("test manifest parses")
+            .pop()
+            .expect("test manifest declares a family")
+    }
+
+    #[test]
+    fn the_manifest_decides_the_shape_of_the_argument_vector() {
+        // Same spec, a different manifest: the order list moves the model to the
+        // end and the flag table renames it. Nothing in Rust changed.
+        let manifest = manifest_from(
+            r#"
+            [[agent]]
+            family = "claude"
+            label = "Claude Code"
+            command-name = "claude"
+            exe-stem = "claude"
+            version-marker = "claude code"
+            home-env = "CLAUDE_CONFIG_DIR"
+            probe = "claude-print-json"
+            order = ["name", "model"]
+            [agent.flags]
+            name = { flag = "--name" }
+            model = { flag = "--config", config-key = "model" }
+            "#,
+        );
+        let spec = LaunchSpec {
+            model: Some("opus".into()),
+            name: Some("row".into()),
+            ..spec(Agent::Claude)
+        };
+        assert_eq!(
+            spec.args_from(&manifest).unwrap(),
+            ["--name", "row", "--config", "model=\"opus\""]
+        );
+    }
+
+    #[test]
+    fn a_choice_the_manifest_does_not_express_is_refused_not_dropped() {
+        let manifest = manifest_from(
+            r#"
+            [[agent]]
+            family = "codex"
+            label = "Codex"
+            command-name = "codex"
+            exe-stem = "codex"
+            version-marker = "codex"
+            home-env = "CODEX_HOME"
+            probe = "codex-app-server"
+            order = ["model"]
+            [agent.flags]
+            model = { flag = "--model" }
+            "#,
+        );
+        let spec = LaunchSpec {
+            profile: Some("work".into()),
+            ..spec(Agent::Codex)
+        };
+        assert!(matches!(
+            spec.args_from(&manifest),
+            Err(LaunchError::Unsupported {
+                flag: "--profile",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_permission_mode_the_manifest_omits_is_refused_rather_than_downgraded() {
+        // The dangerous silent failure this replaces: an agent that cannot
+        // express "plan" starting in whatever mode it defaults to.
+        let manifest = manifest_from(
+            r#"
+            [[agent]]
+            family = "codex"
+            label = "Codex"
+            command-name = "codex"
+            exe-stem = "codex"
+            version-marker = "codex"
+            home-env = "CODEX_HOME"
+            probe = "codex-app-server"
+            order = ["permission"]
+            [agent.flags.permission]
+            emit = { flag = "--ask-for-approval" }
+            ask = { value = "on-request" }
+            "#,
+        );
+        let planning = LaunchSpec {
+            permission: Some(Permission::Plan),
+            ..spec(Agent::Codex)
+        };
+        assert!(matches!(
+            planning.args_from(&manifest),
+            Err(LaunchError::Unsupported {
+                flag: "--permission-mode",
+                ..
+            })
+        ));
+        // A mode this build does not model still passes through: the manifest
+        // says nothing about it either way, and the agent is the authority.
+        let unmodelled = LaunchSpec {
+            permission: Some(Permission::Custom("untrusted".into())),
+            ..spec(Agent::Codex)
+        };
+        assert_eq!(
+            unmodelled.args_from(&manifest).unwrap(),
+            ["--ask-for-approval", "untrusted"]
+        );
+    }
+
+    #[test]
+    fn a_manifest_with_no_resume_tokens_refuses_a_resume_rather_than_starting_fresh() {
+        let manifest = manifest_from(
+            r#"
+            [[agent]]
+            family = "claude"
+            label = "Claude Code"
+            command-name = "claude"
+            exe-stem = "claude"
+            version-marker = "claude code"
+            home-env = "CLAUDE_CONFIG_DIR"
+            probe = "claude-print-json"
+            order = ["resume"]
+            [agent.flags.resume]
+            last = ["--continue"]
+            "#,
+        );
+        let forking = LaunchSpec {
+            resume: Resume::Fork("abc-123".into()),
+            ..spec(Agent::Claude)
+        };
+        assert!(matches!(
+            forking.args_from(&manifest),
+            Err(LaunchError::ResumeUnsupported(_))
+        ));
+        let continuing = LaunchSpec {
+            resume: Resume::Last,
+            ..spec(Agent::Claude)
+        };
+        assert_eq!(continuing.args_from(&manifest).unwrap(), ["--continue"]);
     }
 
     #[test]

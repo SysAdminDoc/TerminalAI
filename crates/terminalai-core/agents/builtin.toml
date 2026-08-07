@@ -1,0 +1,123 @@
+# Built-in agent manifests.
+#
+# Everything about a supervised agent family that is *data* rather than control
+# flow lives here: how the binary is named and identified, where npm puts it,
+# which environment variable points at its own configuration, and — the part
+# that used to be a hand-written match arm per family — exactly which tokens
+# each launcher choice becomes and in which order.
+#
+# The order lists are load-bearing. They are the argument vector's shape, and
+# `crates/terminalai-core/tests/launch_golden.rs` pins the result byte for byte
+# against a recorded run of each CLI. A slot named in `order` must have a table
+# entry and a table entry must be named in `order`, or the manifest is refused
+# at load with the field named.
+#
+# Manifests are trusted local configuration. An operator may override this file
+# from their own data directory; a repository may not — a repo-declared agent
+# definition would be arbitrary argv arriving with a clone.
+
+[[agent]]
+family = "claude"
+label = "Claude Code"
+command-name = "claude"
+exe-stem = "claude"
+# Verified 2026-08-03 against Claude Code 2.1.170: `2.1.170 (Claude Code)`.
+version-marker = "claude code"
+home-env = "CLAUDE_CONFIG_DIR"
+npm-path = ["@anthropic-ai", "claude-code", "bin"]
+probe = "claude-print-json"
+# Claude inherits the working directory from the process, so there is no `cwd`
+# slot: it is applied at spawn time rather than as a flag.
+order = [
+    "model",
+    "effort",
+    "permission",
+    "name",
+    "session-id",
+    "add-dirs",
+    "max-budget-usd",
+    "resume",
+]
+
+[agent.flags]
+model = { flag = "--model" }
+effort = { flag = "--effort" }
+name = { flag = "--name" }
+session-id = { flag = "--session-id" }
+add-dirs = { flag = "--add-dir" }
+max-budget-usd = { flag = "--max-budget-usd" }
+
+[agent.flags.permission]
+emit = { flag = "--permission-mode" }
+ask = { value = "default" }
+plan = { value = "plan" }
+accept-edits = { value = "acceptEdits" }
+bypass = { value = "bypassPermissions" }
+
+[agent.flags.resume]
+last = ["--continue"]
+session = ["--resume", "{id}"]
+fork = ["--resume", "{id}", "--fork-session"]
+
+[[agent]]
+family = "codex"
+label = "Codex"
+command-name = "codex"
+exe-stem = "codex"
+# Verified 2026-08-03 against codex-cli 0.146.0: `codex-cli 0.146.0`. "codex"
+# appears in Claude's output only as a model alias, never in its version
+# banner — but the exclusion stays explicit so a future banner change cannot
+# make both families match the same string.
+version-marker = "codex"
+excluded-markers = ["claude code"]
+home-env = "CODEX_HOME"
+# The launcher package depends on a per-platform package that ships the real
+# binary under `vendor/<target-triple>/bin/`.
+npm-path = [
+    "@openai",
+    "codex",
+    "node_modules",
+    "@openai",
+    "codex-{node_platform}-{node_arch}",
+    "vendor",
+    "{target_triple}",
+    "bin",
+]
+probe = "codex-app-server"
+order = [
+    "resume",
+    "model",
+    "effort",
+    "permission",
+    "sandbox",
+    "profile",
+    "cwd",
+    "add-dirs",
+    "web-search",
+]
+
+[agent.flags]
+model = { flag = "--model" }
+# Not a flag — a config override, parsed as TOML.
+effort = { flag = "--config", config-key = "model_reasoning_effort" }
+sandbox = { flag = "--sandbox" }
+profile = { flag = "--profile" }
+cwd = { flag = "--cd" }
+add-dirs = { flag = "--add-dir" }
+web-search = { flag = "--search", switch = true }
+
+[agent.flags.permission]
+emit = { flag = "--ask-for-approval" }
+# `untrusted` is Codex's *most* prompting policy — it runs only known-safe
+# reads without asking — so it is not the analogue of "accept edits", it is the
+# opposite of one. Codex expresses auto-editing as `on-request` paired with the
+# workspace-write sandbox, which is its own auto preset.
+ask = { value = "on-request" }
+plan = { value = "Plan", emit = { flag = "--config", config-key = "collaboration_mode.mode" } }
+accept-edits = { value = "on-request", implies-sandbox = "workspace-write" }
+bypass = { value = "never" }
+
+[agent.flags.resume]
+last = ["resume", "--last"]
+session = ["resume", "{id}"]
+fork = ["fork", "{id}"]

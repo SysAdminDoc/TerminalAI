@@ -18,6 +18,7 @@ use serde_json::{json, Value};
 
 use crate::agent::{self, Agent, AgentBinary, ResolveError};
 use crate::launch::{Effort, Permission};
+use crate::manifest::ProbeKind;
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 const MAX_PROBE_LINE_BYTES: usize = 4 * 1024 * 1024;
@@ -146,9 +147,12 @@ pub fn probe(
         }
     }
 
-    let (mut capabilities, probe_warning) = match agent {
-        Agent::Claude => probe_claude(&binary),
-        Agent::Codex => probe_codex(&binary),
+    // Which protocol to speak is manifest data; how to speak it is not. A new
+    // family reuses one of these by naming it, and only a genuinely new
+    // handshake costs code here.
+    let (mut capabilities, probe_warning) = match agent.manifest().probe {
+        ProbeKind::ClaudePrintJson => probe_claude(&binary),
+        ProbeKind::CodexAppServer => probe_codex(&binary),
     };
     capabilities.agent = agent;
     capabilities.resolved_path = binary.path.clone();
