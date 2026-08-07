@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-08-07
+
 ### Changed
 
 - The supervisor's two policies are now modules of their own that decide over state passed in, with
