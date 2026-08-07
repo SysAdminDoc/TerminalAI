@@ -1,6 +1,6 @@
 # TerminalAI
 
-[![version](https://img.shields.io/badge/version-0.11.0-blue.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.12.0-blue.svg)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#requirements)
 [![rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
@@ -45,7 +45,7 @@ when waiting on the handle.
 
 ## Status
 
-**v0.11.0 — core and desktop shell built, installed, and verified end to end.**
+**v0.12.0 — core and desktop shell built, installed, and verified end to end.**
 
 Working today (`terminalai-probe`, headless):
 
@@ -92,7 +92,7 @@ Working today (`terminalai-probe`, headless):
   answering a permission prompt blind
 - Runs one stored prompt across many projects, flagging repositories with uncommitted changes
   instead of launching into them
-- 561 default Rust tests over agent identification and resolution against an injected filesystem,
+- 567 default Rust tests over agent identification and resolution against an injected filesystem,
   the flag mapping, real-pty boundary and blocking exit wait, supervision state machine, registry,
   diagnostics, review aggregation and reviewed-mark expiry, the land gate against real
   repositories, environment leases, transcript tailing, the MCP boundary, cost model and vendored
@@ -104,7 +104,8 @@ Working today (`terminalai-probe`, headless):
   machine and the work queue's dirty-tree refusal, the fleet spend ledger and its admission ceiling,
   memory-aware admission and job limits, agent authentication state, the bounded session
   archive and the leftover-checkout survey, the progress deadline that separates a silent
-  session from a busy one, and both MCP protocol eras; 564 with the opt-in
+  session from a busy one, both MCP protocol eras, and the landing record that tells a finished
+  session from an abandoned one; 570 with the opt-in
   app-server transport enabled, plus 305 frontend tests (`npm --prefix web test`) and a real
   browser pass over every dialog, menu and disclosure (`npm --prefix web run test:chrome`)
 

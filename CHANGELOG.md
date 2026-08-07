@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-08-06
+
 ### Added
 
 - A landing is now recorded on the session that produced it, and carried into that session's archive
