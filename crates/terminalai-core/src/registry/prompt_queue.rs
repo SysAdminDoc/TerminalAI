@@ -311,6 +311,7 @@ mod tests {
             cwd: Some(Path::new(".").to_path_buf()),
             signal: HookSignal::Stop,
             progress: None,
+            approval: None,
         });
         let writes = writes.lock().expect("writes").clone();
         assert!(writes.iter().any(|write| write.contains("after explicit send")), "{writes:?}");
@@ -335,6 +336,7 @@ mod tests {
             cwd: Some(Path::new(".").to_path_buf()),
             signal: HookSignal::UserPromptSubmit,
             progress: None,
+            approval: None,
         });
         assert_eq!(registry.snapshot()[0].queue_paused, None);
     }
@@ -398,6 +400,7 @@ mod tests {
             cwd: Some(Path::new(".").to_path_buf()),
             signal: HookSignal::Stop,
             progress: None,
+            approval: None,
         });
 
         let sent = writes.lock().expect("writes").clone();

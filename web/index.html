@@ -60,6 +60,7 @@
                 <button class="menu-item" id="projects-toggle" type="button" data-i18n-title="button-projects-open" data-i18n="button-projects-short">Projects</button>
                 <button class="menu-item" id="prompts-toggle" type="button" data-i18n-title="button-prompts-open" data-i18n="button-prompts-short">Prompts</button>
                 <button class="menu-item" id="broadcast-toggle" type="button" data-i18n-title="button-broadcast-open" data-i18n="button-broadcast-short">Broadcast</button>
+                <button class="menu-item" id="approvals-toggle" type="button" data-i18n-title="approvals-title" data-i18n="button-approvals-short">Approvals</button>
                 <button class="menu-item" id="fleet-search-toggle" type="button" data-i18n-title="fleet-search-title" data-i18n="button-search-short">Search</button>
                 <button class="menu-item" id="working-sets-toggle" type="button" data-i18n-title="working-sets-title" data-i18n="button-working-sets-short">Layouts</button>
                 <button class="menu-item" id="history-toggle" type="button" data-i18n-title="session-history-title" data-i18n="button-history-short">History</button>
@@ -165,6 +166,15 @@
         <div id="worktrees-body" class="rollup-body"></div>
       </div>
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-history-button" data-i18n="button-close">Close</button></div></div>
+    </dialog>
+
+    <dialog id="approvals-dialog" class="launcher-dialog rollup-dialog" aria-label="Approvals" data-i18n-aria-label="approvals-title">
+      <div class="dialog-head"><h2 data-i18n="approvals-title">Approvals</h2><span id="approvals-count" class="rollup-coverage" role="status" aria-live="polite"></span></div>
+      <div class="broadcast-body">
+        <p class="settings-note" data-i18n="approvals-note">Every session waiting on you, the one that has been waiting longest first. Nothing here approves anything on your behalf: there is no approve-all and no bypass mode, and what you type is sent to that session's prompt exactly as if you had typed it there. A session whose request cannot be described is still listed — that is the one to go and look at.</p>
+        <div id="approvals-body" class="rollup-body"></div>
+      </div>
+      <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-approvals-button" data-i18n="button-close">Close</button></div></div>
     </dialog>
 
     <dialog id="working-sets-dialog" class="launcher-dialog rollup-dialog" aria-label="Working sets" data-i18n-aria-label="working-sets-title">

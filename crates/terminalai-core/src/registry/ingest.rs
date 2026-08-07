@@ -179,6 +179,26 @@ impl SessionRegistry {
             if let Some(progress) = event.progress {
                 entry.session.tool_progress = Some(progress);
             }
+            // Recorded before the status match so the detail is on the row by
+            // the time the status that makes it visible is set.
+            //
+            // `since` is preserved across repeats: agents re-emit the prompt
+            // while it is still on screen, and restamping it each time would
+            // make the session that has been waiting longest sort as the
+            // newest arrival — the exact opposite of what the inbox is for.
+            if let Some(request) = event.approval.clone() {
+                let since = entry
+                    .session
+                    .pending_approval
+                    .as_ref()
+                    .map(|pending| pending.since)
+                    .unwrap_or(now);
+                entry.session.pending_approval = Some(crate::session::PendingApproval {
+                    tool: request.tool,
+                    summary: request.summary,
+                    since,
+                });
+            }
             match event.signal {
                 HookSignal::SessionStart => {
                     // A new run starts with no plan; the previous one is stale.
@@ -186,19 +206,32 @@ impl SessionRegistry {
                         entry.session.tool_progress = None;
                     }
                 }
+                // Every arm below this comment is evidence the prompt is gone:
+                // the agent moved on, so whatever it was asking was answered by
+                // somebody or withdrawn. Cleared on evidence and never on a
+                // timer — a prompt that disappears from the inbox while it is
+                // still on the session's screen is worse than one that lingers,
+                // because the operator stops looking for it.
                 HookSignal::SessionEnd | HookSignal::Stop | HookSignal::StopFailure => {
+                    entry.session.pending_approval = None;
                     entry.session.set_status_from_at(SessionStatus::Idle, now, source)
                 }
                 HookSignal::UserPromptSubmit
                 | HookSignal::PreToolUse
-                | HookSignal::SubagentStart => entry
-                    .session
-                    .set_status_from_at(SessionStatus::Working, now, source),
+                | HookSignal::SubagentStart => {
+                    entry.session.pending_approval = None;
+                    entry
+                        .session
+                        .set_status_from_at(SessionStatus::Working, now, source)
+                }
                 HookSignal::PostToolUse
                 | HookSignal::PostToolUseFailure
-                | HookSignal::SubagentStop => entry
-                    .session
-                    .set_status_from_at(SessionStatus::Thinking, now, source),
+                | HookSignal::SubagentStop => {
+                    entry.session.pending_approval = None;
+                    entry
+                        .session
+                        .set_status_from_at(SessionStatus::Thinking, now, source)
+                }
                 HookSignal::PermissionRequest | HookSignal::PermissionDenied => entry
                     .session
                     .set_status_from_at(SessionStatus::NeedsApproval, now, source),
@@ -386,6 +419,7 @@ impl SessionRegistry {
                 session_id: Some(thread_id.to_owned()),
                 cwd: None,
                 signal,
+                approval: approval_detail(&event),
                 // The app-server transport carries plan updates on its own
                 // channel; nothing countable rides this event.
                 progress: None,
@@ -436,6 +470,30 @@ fn app_server_thread_id(event: &AppServerEvent) -> Option<&str> {
         | AppServerEvent::ApprovalRequested { thread_id, .. } => Some(thread_id),
         AppServerEvent::Unknown { .. } => None,
     }
+}
+
+/// What a Codex approval request is asking for.
+///
+/// The app-server event has carried `kind`, `method` and the full `params`
+/// since the transport was added, and all three were dropped on the way to the
+/// row — so a Codex session could be blocked on a command execution and the
+/// fleet could only say that it was blocked.
+fn approval_detail(event: &AppServerEvent) -> Option<crate::hooks::HookApprovalRequest> {
+    let AppServerEvent::ApprovalRequested { kind, params, .. } = event else {
+        return None;
+    };
+    let tool = Some(match kind {
+        crate::app_server::AppServerApprovalKind::CommandExecution => "command execution".into(),
+        crate::app_server::AppServerApprovalKind::FileChange => "file change".into(),
+        crate::app_server::AppServerApprovalKind::Permissions => "permissions".into(),
+        crate::app_server::AppServerApprovalKind::UserInput => "user input".into(),
+        crate::app_server::AppServerApprovalKind::McpElicitation => "MCP elicitation".into(),
+        crate::app_server::AppServerApprovalKind::Other(method) => method.clone(),
+    });
+    Some(crate::hooks::HookApprovalRequest {
+        tool,
+        summary: crate::hooks::approval_summary_of(params),
+    })
 }
 
 fn app_server_signal(event: &AppServerEvent) -> Option<HookSignal> {
@@ -538,6 +596,7 @@ mod tests {
             cwd: Some(cwd.clone()),
             signal: HookSignal::SessionStart,
             progress: None,
+            approval: None,
         }));
         assert_eq!(
             registry.snapshot()[0].resume_id,
@@ -551,6 +610,7 @@ mod tests {
             cwd: Some(cwd.clone()),
             signal: HookSignal::SessionStart,
             progress: None,
+            approval: None,
         }));
         assert!(apply_test_hook(&registry, HookEvent {
             agent: Agent::Claude,
@@ -560,6 +620,7 @@ mod tests {
                 notification: HookNotification::PermissionPrompt,
             },
             progress: None,
+            approval: None,
         }));
         let session = registry.snapshot().pop().expect("session");
         assert_eq!(session.resume_id.as_deref(), Some("native-1"));
@@ -572,6 +633,7 @@ mod tests {
             cwd: Some(cwd),
             signal: HookSignal::Stop,
             progress: None,
+            approval: None,
         }));
         assert_eq!(registry.snapshot()[0].status, SessionStatus::Idle);
     }
@@ -615,6 +677,7 @@ mod tests {
                 notification: HookNotification::PermissionPrompt,
             },
             progress: None,
+            approval: None,
         };
 
         assert!(apply_test_hook(&registry, attention.clone()));
@@ -637,6 +700,7 @@ mod tests {
             cwd: Some(cwd),
             signal: HookSignal::PreToolUse,
             progress: None,
+            approval: None,
         }));
         assert!(events.try_iter().any(|event| matches!(
             event,
@@ -670,6 +734,7 @@ mod tests {
                 cwd: Some(cwd.clone()),
                 signal: HookSignal::SessionStart,
                 progress: None,
+            approval: None,
             },
             Some(&first_token),
         ));
@@ -680,6 +745,7 @@ mod tests {
                 cwd: Some(cwd),
                 signal: HookSignal::SessionStart,
                 progress: None,
+            approval: None,
             },
             Some(&first_token),
         ));
@@ -710,6 +776,7 @@ mod tests {
             cwd: Some(PathBuf::from(".")),
             signal: HookSignal::Stop,
             progress: None,
+            approval: None,
         }));
     }
 
@@ -846,6 +913,131 @@ mod tests {
         assert_eq!(after.status_history.len(), history);
     }
 
+    /// A permission prompt from Claude, optionally naming a tool.
+    fn approval_event(tool: Option<&str>) -> HookEvent {
+        HookEvent {
+            agent: Agent::Claude,
+            session_id: None,
+            cwd: Some(PathBuf::from(".")),
+            signal: HookSignal::Notification {
+                notification: HookNotification::PermissionPrompt,
+            },
+            progress: None,
+            approval: tool.map(|tool| crate::hooks::HookApprovalRequest {
+                tool: Some(tool.into()),
+                summary: Some("rm -rf build".into()),
+            }),
+        }
+    }
+
+    #[test]
+    fn a_blocked_row_says_what_it_is_blocked_on() {
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        insert_session(&registry, &id, SessionStatus::Working);
+        assert!(apply_test_hook(&registry, approval_event(Some("Bash"))));
+
+        let session = &registry.snapshot()[0];
+        assert_eq!(session.status, SessionStatus::NeedsApproval);
+        let pending = session.pending_approval.as_ref().expect("a pending request");
+        assert_eq!(pending.tool.as_deref(), Some("Bash"));
+        assert_eq!(pending.summary.as_deref(), Some("rm -rf build"));
+    }
+
+    #[test]
+    fn a_repeated_prompt_keeps_the_time_it_first_arrived() {
+        // Agents re-emit the prompt while it is still on screen. Restamping it
+        // would make the session that has been waiting longest sort as the
+        // newest arrival — the exact opposite of what an inbox is for.
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        insert_session(&registry, &id, SessionStatus::Working);
+        let first = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let later = first + Duration::from_secs(300);
+        apply_test_hook_at(&registry, approval_event(Some("Bash")), first);
+        apply_test_hook_at(&registry, approval_event(Some("Bash")), later);
+
+        let pending = registry.snapshot()[0]
+            .pending_approval
+            .clone()
+            .expect("a pending request");
+        assert_eq!(pending.since, first);
+    }
+
+    #[test]
+    fn the_request_is_cleared_by_evidence_the_prompt_is_gone() {
+        // Every signal below means the agent moved on, so whatever it asked was
+        // answered or withdrawn. Cleared on evidence and never on a timer: a
+        // prompt that vanishes from the inbox while still on the session's
+        // screen is worse than one that lingers.
+        for resolution in [
+            HookSignal::PostToolUse,
+            HookSignal::PreToolUse,
+            HookSignal::Stop,
+            HookSignal::SessionEnd,
+            HookSignal::UserPromptSubmit,
+        ] {
+            let registry = SessionRegistry::new();
+            let id = SessionId::new(1);
+            insert_session(&registry, &id, SessionStatus::Working);
+            apply_test_hook(&registry, approval_event(Some("Bash")));
+            assert!(
+                registry.snapshot()[0].pending_approval.is_some(),
+                "not recorded before {resolution:?}"
+            );
+            apply_test_hook(&registry, HookEvent {
+                agent: Agent::Claude,
+                session_id: None,
+                cwd: Some(PathBuf::from(".")),
+                signal: resolution.clone(),
+                progress: None,
+                approval: None,
+            });
+            assert_eq!(
+                registry.snapshot()[0].pending_approval, None,
+                "{resolution:?} left a stale request on the row"
+            );
+        }
+    }
+
+    #[test]
+    fn a_prompt_that_names_nothing_still_blocks_the_row() {
+        // The absence is the answer. A row with no detail is still a row the
+        // operator has to go and look at, and it must not be dropped from the
+        // inbox for failing to describe itself.
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        insert_session(&registry, &id, SessionStatus::Working);
+        assert!(apply_test_hook(&registry, approval_event(None)));
+        let session = &registry.snapshot()[0];
+        assert_eq!(session.status, SessionStatus::NeedsApproval);
+        assert_eq!(session.pending_approval, None, "nothing to say, nothing said");
+    }
+
+    #[test]
+    fn a_codex_approval_carries_what_it_is_asking_for() {
+        // The app-server event has carried `kind`, `method` and `params` since
+        // the transport was added, and all three were dropped on the way to the
+        // row.
+        let registry = SessionRegistry::new();
+        codex_row(&registry, "thread-1");
+        assert!(registry.apply_agent_event(AgentEvent::AppServer(
+            AppServerEvent::ApprovalRequested {
+                request_id: serde_json::Value::from(9),
+                thread_id: "thread-1".into(),
+                turn_id: Some("turn-1".into()),
+                kind: crate::app_server::AppServerApprovalKind::CommandExecution,
+                method: "item/commandExecution/requestApproval".into(),
+                params: serde_json::json!({ "command": "cargo build --release" }),
+            },
+        )));
+        let session = &registry.snapshot()[0];
+        assert_eq!(session.status, SessionStatus::NeedsApproval);
+        let pending = session.pending_approval.as_ref().expect("a pending request");
+        assert_eq!(pending.tool.as_deref(), Some("command execution"));
+        assert_eq!(pending.summary.as_deref(), Some("cargo build --release"));
+    }
+
     #[test]
     fn compaction_is_recorded_even_though_the_status_never_changes() {
         // The whole point. An agent compacting mid-turn is Thinking on both
@@ -860,6 +1052,7 @@ mod tests {
             cwd: Some(PathBuf::from(".")),
             signal,
             progress: None,
+            approval: None,
         };
         assert!(apply_test_hook(&registry, event(HookSignal::PreCompact)));
         assert!(apply_test_hook(&registry, event(HookSignal::PostCompact)));
@@ -900,6 +1093,7 @@ mod tests {
             cwd: Some(PathBuf::from(".")),
             signal: HookSignal::PostCompact,
             progress: None,
+            approval: None,
         }));
         let session = &registry.snapshot()[0];
         assert_eq!(session.context, None, "a stale window is worse than none");

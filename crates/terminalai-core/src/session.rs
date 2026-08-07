@@ -203,6 +203,27 @@ pub struct ToolProgress {
     pub total: u32,
 }
 
+/// What a session is asking permission to do, and since when.
+///
+/// The two content fields are independently optional. An agent can name a tool
+/// without describing its arguments, and a payload can carry arguments under a
+/// key this build does not recognise — a request with neither still means the
+/// session is blocked, and the inbox shows that as an absence rather than
+/// filling it in.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PendingApproval {
+    #[serde(default)]
+    pub tool: Option<String>,
+    /// One bounded line of the arguments. Never the whole request: a `Write`
+    /// tool's input is an entire file, and this rides on a row that is sent to
+    /// the window on every status change.
+    #[serde(default)]
+    pub summary: Option<String>,
+    /// When the prompt was first seen, so the inbox can put the session that
+    /// has been waiting longest at the top.
+    pub since: SystemTime,
+}
+
 /// A provider quota window that is currently refusing work.
 ///
 /// Every field is optional because the two agents report different subsets:
@@ -366,6 +387,18 @@ pub struct Session {
     /// has actually been read; zero would claim a session did no work.
     #[serde(default)]
     pub tokens: Option<crate::transcript::UsageTotals>,
+    /// What this session is blocked on, while it is asking permission.
+    ///
+    /// `NeedsApproval` says a session is waiting; this says what for. Without
+    /// it the fleet could count blocked sessions but an operator had to focus
+    /// each one in turn to find out what it was being asked — which is the
+    /// whole cost of permission prompts across a fleet.
+    ///
+    /// Cleared by evidence the prompt is gone, never on a timer: a prompt that
+    /// vanished from the row while still on the screen is worse than one that
+    /// lingers, because the operator stops looking for it.
+    #[serde(default)]
+    pub pending_approval: Option<PendingApproval>,
     /// How full the model's context window is, when that is measurable.
     ///
     /// Deliberately not derived from `tokens` above, which is a running sum over
@@ -454,6 +487,7 @@ impl Session {
             memory_bytes: None,
             memory_limited: false,
             tokens: None,
+            pending_approval: None,
             context: None,
             compactions: 0,
             last_message: None,

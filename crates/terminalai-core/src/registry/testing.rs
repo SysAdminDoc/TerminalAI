@@ -216,6 +216,7 @@ pub(super) fn rate_limit_event(resets_in_seconds: u64) -> HookEvent {
             },
         },
         progress: None,
+            approval: None,
     }
 }
 

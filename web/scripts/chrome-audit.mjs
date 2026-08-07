@@ -58,6 +58,7 @@ const SURFACES = [
   { name: "queue", kind: "dialog", selector: "#queue-dialog" },
   { name: "projects", kind: "dialog", selector: "#projects-dialog" },
   { name: "history", kind: "dialog", selector: "#history-dialog" },
+  { name: "approvals", kind: "dialog", selector: "#approvals-dialog" },
   { name: "fleet search", kind: "dialog", selector: "#search-dialog" },
   { name: "working sets", kind: "dialog", selector: "#working-sets-dialog" },
   { name: "prompt library", kind: "dialog", selector: "#prompt-dialog" },

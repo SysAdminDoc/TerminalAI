@@ -441,6 +441,20 @@ reason-unknown = No reason recorded
 context-explained = { $used } of { $window } tokens in the context window ({ $percent }% full)
 context-no-window = { $used } tokens in the context window; this agent does not report its window size, so there is no percentage to show
 context-unmeasured = No context reading yet for this session
+button-approvals-short = Approvals
+approvals-title = Approvals
+approvals-note = Every session waiting on you, the one that has been waiting longest first. Nothing here approves anything on your behalf: there is no approve-all and no bypass mode, and what you type is sent to that session's prompt exactly as if you had typed it there. A session whose request cannot be described is still listed — that is the one to go and look at.
+approvals-empty = No session is waiting on a decision.
+approvals-unknown-request = This session is waiting, but did not say what for. Focus it to read the prompt.
+approvals-answer-placeholder = Answer this session's prompt
+approvals-answer-for = Answer the prompt in { $name }
+approvals-send = Send
+approvals-sent = Answer sent to the session
+approvals-count = { $count ->
+    [one] 1 waiting
+   *[other] { $count } waiting
+}
+
 button-search-short = Search
 button-working-sets-short = Layouts
 working-sets-title = Working sets

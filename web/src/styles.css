@@ -747,6 +747,30 @@ button {
   color: var(--subtext0);
 }
 
+.approval {
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(88, 91, 112, .28);
+}
+
+.approval-request {
+  display: block;
+  margin: 6px 0;
+  font-size: 12px;
+  color: var(--subtext1);
+  overflow-wrap: anywhere;
+}
+
+.approval-answer {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.approval-answer input {
+  flex: 1;
+  min-width: 0;
+}
+
 .working-set {
   padding: 10px 0;
   border-bottom: 1px solid rgba(88, 91, 112, .28);

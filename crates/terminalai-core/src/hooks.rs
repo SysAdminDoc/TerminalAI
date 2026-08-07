@@ -23,6 +23,17 @@ pub struct HookEvent {
     /// inventing a number, and renders an em dash if it never had one.
     #[serde(default)]
     pub progress: Option<ToolProgress>,
+    /// What the agent is asking permission to do, when this event is a
+    /// permission prompt carrying enough to say.
+    ///
+    /// Alongside the signal rather than inside it, exactly as `progress` is:
+    /// the signal answers what happened, and both of these are details that
+    /// ride on whichever event happened to carry them. A permission prompt
+    /// reaches the fleet as `Notification { PermissionPrompt }` from several
+    /// different event names, and folding the detail into one of them would
+    /// leave the others blank.
+    #[serde(default)]
+    pub approval: Option<HookApprovalRequest>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -53,6 +64,107 @@ pub enum HookSignal {
     /// stops rather than only after.
     RateLimitCleared { limit: HookRateLimit },
     Unknown { event: String },
+}
+
+/// Longest tool name kept from a permission request. A name is a short
+/// identifier; anything longer is not one, and this is agent-supplied.
+pub const MAX_APPROVAL_TOOL_CHARS: usize = 64;
+/// Longest argument summary kept.
+///
+/// A `Write` tool's input is an entire file and an `Edit`'s is two of them.
+/// The summary exists to let an operator recognise what is being asked, not to
+/// reproduce it — the pane still has the full request, and an unbounded copy
+/// would ride on every fleet snapshot, which is sent on every status change.
+pub const MAX_APPROVAL_SUMMARY_CHARS: usize = 300;
+
+/// What an agent is asking permission to do.
+///
+/// Both fields are optional and independently so: an agent can name a tool
+/// without describing it, and a payload can carry arguments under a name this
+/// build does not recognise. An empty request still means the session is
+/// blocked — it just means the fleet cannot say on what, which is worth
+/// showing as an absence rather than filling in.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HookApprovalRequest {
+    #[serde(default)]
+    pub tool: Option<String>,
+    #[serde(default)]
+    pub summary: Option<String>,
+}
+
+/// Argument keys worth showing on their own, in the order they are preferred.
+///
+/// A `Bash` request is its `command` and nothing else; rendering the whole
+/// object around it buries the one line the operator is deciding about. Keys
+/// not listed fall back to compact JSON, which is still better than nothing.
+const APPROVAL_SUMMARY_KEYS: &[&str] = &[
+    "command",
+    "file_path",
+    "path",
+    "url",
+    "pattern",
+    "query",
+    "prompt",
+];
+
+/// Read the tool and a bounded summary of its arguments from a hook payload.
+fn parse_approval_request(raw: &RawHook) -> HookApprovalRequest {
+    let tool = raw
+        .tool_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(|name| truncate_chars(name, MAX_APPROVAL_TOOL_CHARS));
+    let summary = raw.tool_input.as_ref().and_then(approval_summary);
+    HookApprovalRequest { tool, summary }
+}
+
+/// Render an argument object as one readable line.
+///
+/// Public so the Codex app-server path can summarise its own approval params
+/// with the same rule: two renderings of "what is being asked" that disagreed
+/// would be two features wearing one name.
+pub fn approval_summary_of(input: &serde_json::Value) -> Option<String> {
+    approval_summary(input)
+}
+
+fn approval_summary(input: &serde_json::Value) -> Option<String> {
+    if let Some(object) = input.as_object() {
+        for key in APPROVAL_SUMMARY_KEYS {
+            if let Some(value) = object.get(*key) {
+                let text = match value {
+                    serde_json::Value::String(text) => text.clone(),
+                    other => other.to_string(),
+                };
+                let text = collapse_whitespace(&text);
+                if !text.is_empty() {
+                    return Some(truncate_chars(&text, MAX_APPROVAL_SUMMARY_CHARS));
+                }
+            }
+        }
+    }
+    let rendered = collapse_whitespace(&input.to_string());
+    // "null" and "{}" are the JSON encoder describing an absence. Showing them
+    // would put a value in a field that has none.
+    if rendered.is_empty() || rendered == "null" || rendered == "{}" {
+        return None;
+    }
+    Some(truncate_chars(&rendered, MAX_APPROVAL_SUMMARY_CHARS))
+}
+
+/// One line, no runs of blanks. A multi-line heredoc in a `command` would
+/// otherwise break the row it is rendered into.
+fn collapse_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn truncate_chars(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text.to_owned();
+    }
+    // Never a byte slice: this is agent-supplied text and slicing mid-codepoint
+    // panics.
+    text.chars().take(limit).collect()
 }
 
 /// The rate-limit facts an agent reported, before they are stamped with a
@@ -104,8 +216,13 @@ struct RawHook {
     notification_type: Option<String>,
     #[serde(default, rename = "type")]
     notification_kind: Option<String>,
+    /// Which tool the agent is using or asking to use. Dropped before
+    /// 2026-08-07, which is why a blocked row could not say what it was
+    /// blocked on.
+    #[serde(default, alias = "toolName", alias = "tool")]
+    tool_name: Option<String>,
     /// Claude's `tool_input`, Codex's `arguments`. Carries the plan for the
-    /// planning tools; ignored for everything else.
+    /// planning tools, and the request for a permission prompt.
     #[serde(default, alias = "arguments", alias = "tool_response")]
     tool_input: Option<serde_json::Value>,
     /// Some payloads put the plan at the top level rather than inside the input.
@@ -321,6 +438,8 @@ pub fn parse_hook_in(
 ) -> Result<HookEvent, HookParseError> {
     let raw: RawHook = serde_json::from_str(input)?;
     let progress = parse_tool_progress(&raw);
+    // Read before `raw` is partially moved below.
+    let requested = parse_approval_request(&raw);
     let rate_limit = parse_rate_limit(&raw);
     let event_name = raw.hook_event_name.or(raw.event).unwrap_or_default();
     let normalized = normalize(&event_name);
@@ -338,6 +457,18 @@ pub fn parse_hook_in(
         Some(limit) => HookSignal::RateLimitCleared { limit },
         None => parse_lifecycle_signal(&normalized, &event_name, notification_name.as_deref()),
     };
+    // Only for a prompt that is actually blocking. Attaching the tool to every
+    // PreToolUse would put a stale "asking to run X" on rows that are not
+    // asking for anything.
+    let approval = matches!(
+        signal,
+        HookSignal::PermissionRequest
+            | HookSignal::Notification {
+                notification: HookNotification::PermissionPrompt
+            }
+    )
+    .then_some(requested)
+    .filter(|request| request != &HookApprovalRequest::default());
     Ok(HookEvent {
         agent,
         session_id: raw
@@ -346,6 +477,7 @@ pub fn parse_hook_in(
         cwd: raw.cwd.or(fallback_cwd),
         signal,
         progress,
+        approval,
     })
 }
 
@@ -380,8 +512,20 @@ fn parse_lifecycle_signal(
         "postcompact" | "post_compact" => HookSignal::PostCompact,
         "subagentstart" | "subagent_start" => HookSignal::SubagentStart,
         "subagentstop" | "subagent_stop" => HookSignal::SubagentStop,
-        "notification" | "permissionrequest" | "permission_request" => HookSignal::Notification {
+        "notification" => HookSignal::Notification {
             notification: parse_notification(notification_name),
+        },
+        // The event name is itself the kind. Sharing the `notification` arm
+        // meant a payload that named the event `PermissionRequest` and carried
+        // no `notification_type` parsed as `Other` — which the registry ignores
+        // entirely, so a session blocked on a prompt went on reading as
+        // Working. An explicit `notification_type` still wins, because a
+        // payload that names a kind knows better than the event name does.
+        "permissionrequest" | "permission_request" => HookSignal::Notification {
+            notification: match parse_notification(notification_name) {
+                HookNotification::Other => HookNotification::PermissionPrompt,
+                named => named,
+            },
         },
         "" if notification_name.is_some() => HookSignal::Notification {
             notification: parse_notification(notification_name),
@@ -666,6 +810,152 @@ mod tests {
         for malformed in ["soon", "2026-13-40T99:99:99Z", "", "2026-08-03"] {
             assert_eq!(parse_unix_timestamp(malformed), None, "{malformed:?}");
         }
+    }
+
+    #[test]
+    fn a_permission_prompt_says_which_tool_and_with_what() {
+        // "This session needs approval" is not a decision anybody can make.
+        // Before this, the tool name was dropped by the parser entirely.
+        let event = parse_hook(
+            Agent::Claude,
+            r#"{"session_id":"cc-1","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm -rf build"}}"#,
+        )
+        .expect("parses");
+        let approval = event.approval.expect("a permission prompt carries its request");
+        assert_eq!(approval.tool.as_deref(), Some("Bash"));
+        assert_eq!(approval.summary.as_deref(), Some("rm -rf build"));
+    }
+
+    #[test]
+    fn an_event_named_permission_request_is_a_permission_prompt() {
+        // It shared an arm with the generic `Notification` event, so a payload
+        // that named the event and carried no `notification_type` parsed as
+        // `Other` — which the registry ignores, leaving a session blocked on a
+        // prompt reading as Working.
+        let event = parse_hook(
+            Agent::Claude,
+            r#"{"session_id":"cc-1","hook_event_name":"PermissionRequest","tool_name":"Bash"}"#,
+        )
+        .expect("parses");
+        assert_eq!(
+            event.signal,
+            HookSignal::Notification {
+                notification: HookNotification::PermissionPrompt
+            }
+        );
+    }
+
+    #[test]
+    fn a_named_notification_kind_still_beats_the_event_name() {
+        // A payload that names a kind knows better than the event name does.
+        let event = parse_hook(
+            Agent::Claude,
+            r#"{"session_id":"cc-1","hook_event_name":"PermissionRequest","notification_type":"idle_prompt"}"#,
+        )
+        .expect("parses");
+        assert_eq!(
+            event.signal,
+            HookSignal::Notification {
+                notification: HookNotification::IdlePrompt
+            }
+        );
+    }
+
+    #[test]
+    fn an_ordinary_tool_call_carries_no_pending_request() {
+        // Attaching the tool to every PreToolUse would leave a stale "asking to
+        // run X" on rows that are not asking for anything.
+        let event = parse_hook(
+            Agent::Claude,
+            r#"{"session_id":"cc-1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}"#,
+        )
+        .expect("parses");
+        assert_eq!(event.approval, None);
+    }
+
+    #[test]
+    fn a_prompt_that_names_no_tool_still_reports_as_blocked() {
+        // An agent can ask without saying what for. The absence is the answer;
+        // inventing a tool name would be worse than showing nothing.
+        let event = parse_hook(
+            Agent::Claude,
+            r#"{"session_id":"cc-1","hook_event_name":"Notification","notification_type":"permission_prompt"}"#,
+        )
+        .expect("parses");
+        assert!(
+            matches!(
+                event.signal,
+                HookSignal::Notification {
+                    notification: HookNotification::PermissionPrompt
+                }
+            ),
+            "still a permission prompt: {:?}",
+            event.signal
+        );
+        assert_eq!(event.approval, None, "nothing to say, so nothing is said");
+    }
+
+    #[test]
+    fn the_summary_is_the_argument_that_matters_not_the_object_around_it() {
+        // A Bash request is its command. Rendering the whole object buries the
+        // one line the operator is deciding about.
+        let summary = |input: &str| {
+            approval_summary(&serde_json::from_str::<serde_json::Value>(input).expect("json"))
+        };
+        assert_eq!(
+            summary(r#"{"command":"git push --force","description":"push","timeout":120}"#)
+                .as_deref(),
+            Some("git push --force")
+        );
+        assert_eq!(
+            summary(r#"{"file_path":"C:/repos/x/src/main.rs","content":"..."}"#).as_deref(),
+            Some("C:/repos/x/src/main.rs")
+        );
+        // Nothing recognised still beats nothing at all.
+        assert_eq!(
+            summary(r#"{"unfamiliar":"value"}"#).as_deref(),
+            Some(r#"{"unfamiliar":"value"}"#)
+        );
+        // An encoder describing an absence is not a value.
+        assert_eq!(summary("null"), None);
+        assert_eq!(summary("{}"), None);
+    }
+
+    #[test]
+    fn a_multiline_command_becomes_one_line() {
+        // A heredoc would otherwise break the row it is rendered into.
+        let event = parse_hook(
+            Agent::Claude,
+            "{\"session_id\":\"cc-1\",\"hook_event_name\":\"PermissionRequest\",\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"cat <<EOF\\n  one\\n\\n  two\\nEOF\"}}",
+        )
+        .expect("parses");
+        let summary = event.approval.expect("request").summary.expect("summary");
+        assert_eq!(summary, "cat <<EOF one two EOF");
+        assert!(!summary.contains('\n'));
+    }
+
+    #[test]
+    fn an_enormous_request_is_bounded_without_splitting_a_character() {
+        // A Write tool's input is an entire file, and this rides on a row sent
+        // to the window on every status change.
+        let body = "é".repeat(5_000);
+        let payload = serde_json::json!({
+            "session_id": "cc-1",
+            "hook_event_name": "PermissionRequest",
+            "tool_name": "W".repeat(500),
+            "tool_input": { "file_path": body },
+        })
+        .to_string();
+        let event = parse_hook(Agent::Claude, &payload).expect("parses");
+        let approval = event.approval.expect("request");
+        assert_eq!(
+            approval.tool.expect("tool").chars().count(),
+            MAX_APPROVAL_TOOL_CHARS
+        );
+        assert_eq!(
+            approval.summary.expect("summary").chars().count(),
+            MAX_APPROVAL_SUMMARY_CHARS
+        );
     }
 
     #[test]

@@ -8,6 +8,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { contextLabel, contextTitle, contextTone } from "./contextPressure.js";
 import { renderSearchResults, searchSummary } from "./fleetSearch.js";
+import { pendingApprovals, renderApprovals, requestLine, waitingSince } from "./approvals.js";
 import { renderRestoreOutcomes, renderWorkingSet, summarizeRestore } from "./workingSets.js";
 import { reconcileGroupChip, reconcileKeyedRows } from "./fleetRows.js";
 import { countMessage, localizeDom, relativeDwell, t } from "./i18n.js";
@@ -1475,6 +1476,7 @@ function applySessionUpdate(session, announce = true) {
   else state.sessions[index] = session;
   if (announce && previous) announceStatusChange(session, previous.status);
   renderRows();
+  renderApprovalInbox();
   updateTerminalHeader();
 }
 
@@ -2332,6 +2334,91 @@ async function startWorkRun() {
     showToast(String(error));
   }
   renderWorkRun();
+}
+
+/// Show every session waiting on a decision.
+///
+/// A view over the snapshot the window already holds — a blocked session
+/// carries its own pending request — so there is no separate poll and nothing
+/// here can disagree with the rows behind it.
+function openApprovals() {
+  const dialog = $("approvals-dialog");
+  if (!dialog.open) dialog.showModal();
+  renderApprovalInbox();
+}
+
+function renderApprovalInbox() {
+  const dialog = $("approvals-dialog");
+  if (!dialog.open) return;
+  const waiting = pendingApprovals(state.sessions);
+  $("approvals-count").textContent = t("approvals-count", { count: waiting.length });
+  const body = $("approvals-body");
+  // The inbox follows the fleet, so it re-renders whenever any session
+  // changes — and a session unrelated to this one changing must not wipe an
+  // answer being typed. Skipped entirely when nothing the inbox shows has
+  // moved, and typed text is carried across when it has.
+  const signature = waiting
+    .map((session) => `${session.id}:${requestLine(session, t)}`)
+    .join("|");
+  if (body.dataset.signature === signature) return;
+  const typed = new Map(
+    [...body.querySelectorAll("[data-approval-reply]")]
+      .filter((element) => element.value)
+      .map((element) => [element.dataset.approvalReply, element.value]),
+  );
+  body.dataset.signature = signature;
+  body.innerHTML = renderApprovals(waiting, {
+    escape: escapeHtml,
+    translate: t,
+    dwell: (session) => relativeDwell(waitingSince(session) ?? systemTimeMs(session.status_since)),
+  });
+  for (const [id, value] of typed) {
+    const input = [...body.querySelectorAll("[data-approval-reply]")].find(
+      (element) => element.dataset.approvalReply === id,
+    );
+    if (input) input.value = value;
+  }
+  for (const button of body.querySelectorAll("[data-approval-focus]")) {
+    button.addEventListener("click", () => {
+      dialog.close();
+      void focusSession(button.dataset.approvalFocus);
+    });
+  }
+  for (const button of body.querySelectorAll("[data-approval-send]")) {
+    button.addEventListener("click", () => void sendApproval(button.dataset.approvalSend));
+  }
+  for (const input of body.querySelectorAll("[data-approval-reply]")) {
+    input.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      void sendApproval(input.dataset.approvalReply);
+    });
+  }
+}
+
+/// Send the operator's answer to the session that asked.
+///
+/// The same bracketed-paste write the fleet row's reply box uses, because it is
+/// the same act: typing at that session's prompt. Nothing is auto-approved and
+/// no universal "yes" is invented — what the agent accepts is its own prompt's
+/// vocabulary, and guessing it would be answering on the operator's behalf.
+async function sendApproval(id) {
+  // Walked rather than selected: a session id in a selector string is the same
+  // shape of mistake as one in markup, even though the escaper would differ.
+  const input = [...$("approvals-body").querySelectorAll("[data-approval-reply]")].find(
+    (element) => element.dataset.approvalReply === id,
+  );
+  const answer = input?.value.trim();
+  if (!answer) return;
+  try {
+    await invoke("write_session", { id, data: `[200~${answer}[201~
+` });
+    await invoke("mark_read", { id });
+    input.value = "";
+    showToast(t("approvals-sent"), "success");
+  } catch (error) {
+    showToast(String(error));
+  }
 }
 
 /// Show the saved layouts.
@@ -3813,6 +3900,8 @@ function bindEvents() {
     $("fleet-search-input").select();
   });
   $("close-search-button").addEventListener("click", () => $("search-dialog").close());
+  $("approvals-toggle").addEventListener("click", () => openApprovals());
+  $("close-approvals-button").addEventListener("click", () => $("approvals-dialog").close());
   $("working-sets-toggle").addEventListener("click", () => void openWorkingSets());
   $("close-working-sets-button").addEventListener("click", () => $("working-sets-dialog").close());
   $("working-set-save").addEventListener("click", async () => {

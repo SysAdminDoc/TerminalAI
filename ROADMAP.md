@@ -61,14 +61,6 @@ item above; where the two touch, the note says so.
 
 ### P2
 
-- [ ] P2 — An approvals inbox across the fleet
-  Why: permission decisions are the fleet's blocking work and are currently answered one focused session at a time; the field has converged on a single queue, and Claude Code exposes the hook needed to answer programmatically.
-  Evidence: `SessionStatus::NeedsApproval` exists (`crates/terminalai-core/src/session.rs:73`) but no aggregate surface does. `PermissionRequest`/`PermissionDenied` are already managed in `hook_config.rs` and support `updatedInput` and `retry` (code.claude.com/docs/en/hooks). Requested at anthropics/claude-code#58247; shipped by wmux and octomux (https://github.com/ShreyPaharia/octomux).
-  Touches: `crates/terminalai-core/src/hooks.rs`, `crates/terminalai-core/src/registry.rs`, `crates/terminalai-daemon/src/lib.rs`, `web/index.html`, `web/src/main.js`
-  Acceptance: one dialog lists every pending permission request across sessions with its tool and arguments, and answering routes to the right session. It never auto-approves and never enables bypass mode on the operator's behalf — cmux was criticised for exactly that (https://github.com/manaflow-ai/cmux/issues/3547).
-  Complexity: L
-  Note (2026-08-06 research): hooks may not be the right mechanism. Claude Code documents `--permission-prompt-tool`, which designates an MCP tool to handle permission prompts, and this project already ships an MCP server (`crates/terminalai-core/src/mcp.rs`) — so the sanctioned route is to point the launched session at our own server rather than to intercept `PermissionRequest` in `hooks.rs`. Evaluate that first; it is fewer moving parts and it survives `disableAllHooks`. See https://code.claude.com/docs/en/cli-reference.
-
 - [ ] P3 — Let the operator set the compaction threshold the row now displays
   Why: the context reading landed 2026-08-07, so the fleet reports how full a window is but cannot influence when the agent acts on it — and both agents take the threshold as a launch-time input this launcher does not map.
   Evidence: Claude Code added `--autocompact <auto|tokens>` in v2.1.221 and the `CLAUDE_CODE_AUTO_COMPACT_WINDOW` variable (100000–1000000 tokens); Codex exposes `model_auto_compact_token_limit`. `LaunchSpec` (`crates/terminalai-core/src/launch.rs:203`) maps neither; `max_budget_usd` is the shape to mirror — an existing optional numeric that is Claude-only in the same way. `web/src/contextPressure.js` already has the cell that would show the threshold beside the usage.

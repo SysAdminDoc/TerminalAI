@@ -5,6 +5,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Added
+
+- An approvals inbox: every session waiting on a decision, longest wait first, with what it is
+  asking. `NeedsApproval` said a session was blocked; nothing said on what, because the hook parser
+  dropped the tool name entirely and the Codex app-server event's `kind`, `method` and `params` were
+  all discarded on the way to the row. Both now reach it, through one summariser so the two agents
+  cannot describe the same thing differently.
+- The inbox never answers on the operator's behalf. There is no approve-all and no bypass toggle,
+  and no universal "yes" is invented — what an agent accepts is its own prompt's vocabulary, so the
+  answer is typed and sent to that session's prompt exactly as if it had been typed there. A session
+  whose request cannot be described is still listed: that is the one to go and look at.
+
+### Fixed
+
+- A hook event named `PermissionRequest` that carried no `notification_type` parsed as a generic
+  notification, which the registry ignores — so a session blocked on a permission prompt went on
+  reading as `Working`. The event name is now taken as the kind it names; an explicit
+  `notification_type` still wins.
+- Frontend assertions that read Rust source no longer depend on line endings. Git checks this
+  repository out with CRLF on Windows, so a pattern spanning two lines matched or failed depending
+  on how the file reached the disk rather than on the contract being asserted.
+
 ## [0.17.0] — 2026-08-07
 
 ### Added

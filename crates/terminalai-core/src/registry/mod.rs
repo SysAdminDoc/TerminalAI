@@ -2745,6 +2745,7 @@ mod tests {
                 cwd: Some(Path::new(".").to_path_buf()),
                 signal,
                 progress: None,
+            approval: None,
             });
             assert_ne!(
                 registry.snapshot()[0].status,
@@ -2786,6 +2787,7 @@ mod tests {
                     cwd: Some(Path::new(".").to_path_buf()),
                     signal: HookSignal::PostToolUse,
                     progress: None,
+            approval: None,
                 },
                 at,
             );
@@ -2829,6 +2831,7 @@ mod tests {
                 },
             },
             progress: None,
+            approval: None,
         });
         assert_ne!(registry.snapshot()[0].status, SessionStatus::RateLimited);
         assert!(registry.snapshot()[0].rate_limit.is_none());
