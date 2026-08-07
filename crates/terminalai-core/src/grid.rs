@@ -87,6 +87,14 @@ struct Screen {
     auto_wrap: bool,
     scroll_top: usize,
     scroll_bottom: usize,
+    /// DECOM. When set, cursor addressing is relative to the top margin and the
+    /// cursor cannot leave the scrolling region.
+    ///
+    /// Parsed and silently dropped before 2026-08-07, which is the worst of the
+    /// three options: a program that sets it and then addresses the cursor
+    /// relative to the top margin draws in the wrong place, and nothing
+    /// anywhere says so. Refusing the sequence would at least have been honest.
+    origin_mode: bool,
     tabstops: Vec<bool>,
 }
 
@@ -102,6 +110,7 @@ impl Screen {
             auto_wrap: true,
             scroll_top: 0,
             scroll_bottom: rows,
+            origin_mode: false,
             tabstops: default_tabstops(cols),
         }
     }
@@ -165,8 +174,38 @@ impl Screen {
             self.scroll_bottom = self.rows;
         }
         self.wrap_pending = false;
-        self.cursor_row = 0;
+        self.cursor_row = self.home_row();
         self.cursor_col = 0;
+    }
+
+    /// Where a `CSI H` / `CSI d` row argument actually lands.
+    ///
+    /// The whole of DECOM in one function, so the two addressing paths cannot
+    /// disagree. Outside origin mode a row is absolute and clamped to the
+    /// screen. Inside it, the row is counted from the top margin and the cursor
+    /// is confined to the region — a program that sets a region and then asks
+    /// for row 1 means the first row *of the region*.
+    fn addressed_row(&self, line: i32) -> usize {
+        let requested = line.max(0) as usize;
+        if !self.origin_mode {
+            return requested.min(self.rows.saturating_sub(1));
+        }
+        // `scroll_bottom` is exclusive, so the last addressable row inside the
+        // region is one below it.
+        let last = self.scroll_bottom.saturating_sub(1).max(self.scroll_top);
+        self.scroll_top.saturating_add(requested).min(last)
+    }
+
+    /// Where the cursor goes when the screen is homed.
+    ///
+    /// DECSTBM homes the cursor, and under origin mode home is the top margin
+    /// rather than the top of the screen.
+    fn home_row(&self) -> usize {
+        if self.origin_mode {
+            self.scroll_top
+        } else {
+            0
+        }
     }
 
     fn cell_index(&self, row: usize, col: usize) -> usize {
@@ -548,21 +587,13 @@ impl Handler for GridState {
 
     fn goto(&mut self, line: i32, col: usize) {
         self.screen.wrap_pending = false;
-        self.screen.cursor_row = line.max(0) as usize;
-        self.screen.cursor_row = self
-            .screen
-            .cursor_row
-            .min(self.screen.rows.saturating_sub(1));
+        self.screen.cursor_row = self.screen.addressed_row(line);
         self.goto_col(col);
     }
 
     fn goto_line(&mut self, line: i32) {
         self.screen.wrap_pending = false;
-        self.screen.cursor_row = line.max(0) as usize;
-        self.screen.cursor_row = self
-            .screen
-            .cursor_row
-            .min(self.screen.rows.saturating_sub(1));
+        self.screen.cursor_row = self.screen.addressed_row(line);
     }
 
     fn goto_col(&mut self, col: usize) {
@@ -713,6 +744,10 @@ impl Handler for GridState {
     /// left stale text on the grid under a scrolling region that was never
     /// released, which is worse than not supporting it at all.
     fn decaln(&mut self) {
+        // Origin mode is released before the margins, so `set_scrolling_region`
+        // homes to the top of the screen rather than to a margin that is about
+        // to stop existing.
+        self.screen.origin_mode = false;
         self.screen.set_scrolling_region(1, None);
         self.screen.cells.fill(Cell {
             character: 'E',
@@ -760,6 +795,15 @@ impl Handler for GridState {
             PrivateMode::Named(NamedPrivateMode::LineWrap) => self.screen.auto_wrap = true,
             PrivateMode::Named(NamedPrivateMode::SwapScreenAndSetRestoreCursor)
             | PrivateMode::Unknown(47 | 1047 | 1049) => self.enter_alternate_screen(),
+            // Setting or resetting DECOM homes the cursor, per DEC STD 070.
+            // Leaving it where it was would put the cursor at a row whose
+            // meaning just changed underneath it.
+            PrivateMode::Named(NamedPrivateMode::Origin) => {
+                self.screen.origin_mode = true;
+                self.screen.cursor_row = self.screen.home_row();
+                self.screen.cursor_col = 0;
+                self.screen.wrap_pending = false;
+            }
             _ => {}
         }
     }
@@ -769,6 +813,12 @@ impl Handler for GridState {
             PrivateMode::Named(NamedPrivateMode::LineWrap) => self.screen.auto_wrap = false,
             PrivateMode::Named(NamedPrivateMode::SwapScreenAndSetRestoreCursor)
             | PrivateMode::Unknown(47 | 1047 | 1049) => self.leave_alternate_screen(),
+            PrivateMode::Named(NamedPrivateMode::Origin) => {
+                self.screen.origin_mode = false;
+                self.screen.cursor_row = self.screen.home_row();
+                self.screen.cursor_col = 0;
+                self.screen.wrap_pending = false;
+            }
             _ => {}
         }
     }

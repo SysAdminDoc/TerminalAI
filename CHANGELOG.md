@@ -7,6 +7,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Origin mode (DECOM). `CSI ?6h` was parsed and silently dropped, which is the worst of the three
+  options: a program that sets it and then addresses the cursor relative to the top margin draws in
+  the wrong place, and nothing anywhere said so. Cursor addressing is now relative to the top margin
+  and confined to the scrolling region, setting or resetting it homes the cursor, and DECALN
+  releases it along with the margins. Covered by conformance fixtures for both the set and reset
+  states, each baited separately — the offset alone would still let a program address its way out of
+  the region it had just declared.
 - `await_session` over MCP: block until a named session reaches a given state, or until a timeout
   expires. The primitive an agent needs to coordinate with another instead of polling and guessing.
   Waiting is a read — no write token, and a wait never types into a session, wakes one or answers a

@@ -1,0 +1,18 @@
+rows 5
+cols 4
+why DECOM makes cursor addressing relative to the top margin and confines the
+why cursor to the scrolling region. With a region of rows 2-4 and origin mode
+why set, CUP row 1 means the first row OF THE REGION, and a request for row 5
+why is clamped to the last row of the region rather than reaching the screen's
+why last row. Both halves matter: the offset alone would still let a program
+why address its way out of the region it just declared.
+stream \e[2;4r
+stream \e[?6h
+stream \e[1;1Hone
+stream \e[5;1Hout
+cursor 3 3
+line
+line one
+line
+line out
+line

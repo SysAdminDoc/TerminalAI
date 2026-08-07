@@ -1,0 +1,19 @@
+rows 5
+cols 4
+why Resetting DECOM returns addressing to the whole screen while leaving the
+why margins alone. The same CUP that landed inside the region while origin mode
+why was set must now land at the top of the SCREEN, and row 5 must reach the
+why last row rather than being clamped to the region. Resetting also homes the
+why cursor, so the write starts from row 1 without a further CUP.
+stream \e[2;4r
+stream \e[?6h
+stream \e[1;1Hin
+stream \e[?6l
+stream \e[1;1Htop
+stream \e[5;1Hend
+cursor 4 3
+line top
+line in
+line
+line
+line end

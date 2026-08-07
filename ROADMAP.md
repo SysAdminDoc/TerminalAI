@@ -148,13 +148,6 @@ additions; where they touch, the note says so.
 
 ### P3
 
-- [ ] P3 — Implement origin mode, or say the grid does not have it
-  Why: DECOM is parsed and silently dropped. A program that sets it and then addresses the cursor relative to the top margin draws in the wrong place, and nothing anywhere says so — which is worse than not accepting the sequence.
-  Evidence: `set_private_mode`/`unset_private_mode` in `crates/terminalai-core/src/grid.rs` match `LineWrap` and the alternate-screen modes and fall through on everything else, so `PrivateMode::Named(NamedPrivateMode::Origin)` (`CSI ?6h`) reaches the handler and is ignored. `vte` 0.15 does dispatch it. Found while building the conformance corpus, which covers every other sequence in its target list; the two cases it would need (`vttest_origin_mode_1/2`) are the ones it does not have.
-  Touches: `crates/terminalai-core/src/grid.rs`, `crates/terminalai-core/tests/fixtures/vt/`
-  Acceptance: either DECOM makes CUP row-relative to the top margin and confines the cursor to the scrolling region, covered by fixtures for both the set and reset states, or the decision not to support it is recorded in `grid.rs` next to the modes that are supported, with the reason. Silently ignoring it is not one of the options.
-  Complexity: S
-
 - [ ] P3 — Close the coverage gaps the first `llvm-cov` run named
   Why: coverage was run once on 2026-08-04 (72.15% regions, 71.28% lines workspace-wide) to find untested arms rather than to chase a number, and it named two modules whose low figures are not explained by being entry points.
   Evidence: `crates/terminalai-daemon/src/lib.rs` is at **58.07%** line coverage — the control plane, where every request arm and every framing error lives — and `crates/terminalai-daemon/src/logging.rs` at **31.29%**. `terminalai-daemon/src/main.rs` (0%) and `terminalai-probe/src/main.rs` (12%) are process entry points and a CLI harness, and are not the target. Re-run with `pwsh`-free `RUSTC=<managed>/bin/rustc.exe cargo-llvm-cov llvm-cov --workspace --summary-only`; note the suite only runs under coverage because `lease_command_uses_the_allowlist_without_putting_connection_in_argv` now ignores the profiling runtime's own `__LLVM_PROFILE*` variables.
