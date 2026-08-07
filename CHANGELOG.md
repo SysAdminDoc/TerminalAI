@@ -19,6 +19,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   the fixtures now declare `passthrough_args` and the check reports only what this tool is
   answerable for. The tool owns the argv it constructs, not the arguments a person passes through it.
 
+- `.cargo/mutants.toml` scopes `cargo mutants` to the pure policy modules — admission, restart,
+  context, waiting, search, help and spend — as a periodic check that they are *asserted on* rather
+  than merely executed. A large green suite says code ran; the arithmetic most likely to run without
+  being asserted on here is exactly what the supervisor turns on. The pty and process-spawning
+  modules are excluded by name and with a reason: a mutant there leaves an orphaned agent and a
+  pseudo-console behind rather than failing a test. A full-tree run is explicitly not the goal.
+
+- The terminal pane is its own module (`web/src/terminalPane.js`) — xterm construction, palette,
+  theme following, the WebGL renderer and its fallbacks, refit and hyperlink opening. `main.js`
+  drops from 4,060 to 3,930 lines.
+
+  The larger change is underneath: thirty-five test files read `main.js` as a string, so every seam
+  extracted broke them, and broke them in the direction that hides things — an assertion about the
+  terminal pane silently stops covering the terminal pane the moment the pane is a different file.
+  They now read the whole renderer through `appSource()`, so the assertions are about the renderer
+  rather than about one of its files, with `shellSource()` for the few that genuinely concern the
+  shell not duplicating a module. Reading everything immediately made the attribute-escaping guard
+  cover code it never had: it recognised only `escapeHtml`, while every extracted module takes the
+  escaper as a dependency named `escape`, so none of them had ever been checked.
+
 - `aarch64-pc-windows-msvc` is type-checked alongside the Linux target by
   `scripts/check-cross-targets.ps1`, and compiles clean. This project's differentiator is Windows
   while it ships x86_64 only, so every Snapdragon-class machine runs the entire fleet — daemon,

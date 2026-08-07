@@ -94,30 +94,6 @@ additions; where they touch, the note says so.
   Acceptance: the uncovered request arms and error branches in the daemon's control plane are either covered or individually recorded as unreachable with a reason. The number itself is not the goal and must not become one.
   Complexity: M
 
-- [ ] P3 — Mutation-test the core modules on changed lines
-  Why: a large green suite says code was executed, not that it was asserted on — and the arithmetic most likely to be executed without assertion here is backoff, cap comparisons and error-branch returns.
-  Evidence: `cargo-mutants` is Windows CI-tested and supports `--in-diff` to restrict mutants to changed lines — https://mutants.rs/ . The comparison-boundary risk is concrete: `read_frame` (`crates/terminalai-daemon/src/lib.rs:132-144`) turns on `read > MAX_FRAME_BYTES` against a `take(MAX + 1)`, and the restart cap on `>=`.
-  Touches: development workflow; optionally a `mutants.toml`
-  Acceptance: `cargo mutants --in-diff` runs on core modules as a periodic check with PTY and process-spawning modules excluded; surviving mutants are either killed with a test or recorded as intentional. A full-tree run is explicitly not the goal.
-  Complexity: S
-
-## Research-Driven Additions — 2026-08-06
-
-Third external research pass (see `RESEARCH.md`), against `652f33d` / v0.9.0 with a green baseline
-of 520 Rust and 300 frontend tests. It covers ground the first two did not: vendor value-set drift
-since v0.6.0, the child-environment contract, release hygiene, and a competitive field that changed
-shape when Anthropic shipped a parallel-agent desktop app and herdr passed 25k stars. Nothing here
-duplicates an item above; where the two touch, the note says so. No numeric IDs — this file dropped
-the historical `R-NN` scheme and the entries below follow the current convention.
-
-### P0
-
-### P1
-
-### P2
-
-### P3
-
 - [ ] P3 — Attribute the quota window to the sessions that consumed it
   Why: the header already reports that a provider is rate limiting and when the window reopens, but not which of the running sessions spent it — and subscription-window exhaustion is the single loudest operational complaint about the agents this tool supervises.
   Evidence: anthropics/claude-code#16157 "[BUG] Instantly hitting usage limits with Max subscription" (723👍) and #38335 "[BUG] Claude Max plan session limits exhausted abnormally fast" (539👍); a Sculptor HN commenter states plainly that "Claude Code runs into limits below the $200 tier" (https://news.ycombinator.com/item?id=45427697). The ledger already exists — `crates/terminalai-core/src/spend.rs` keeps a rolling window persisted with the session store — and the rollup already breaks spend down by agent, folder and session, so the data is present and the window view is not.

@@ -532,6 +532,27 @@ mod tests {
     }
 
     #[test]
+    fn the_real_environment_is_read_through_the_same_parser() {
+        // The one seam `from_lookup` cannot cover: that `from_environment`
+        // delegates rather than answering on its own. Replacing its body with
+        // `Ok(Default::default())` -- "the daemon ignores the operator's
+        // configuration entirely" -- was the last mutant to survive this
+        // module, and this is what kills it.
+        //
+        // Reads the environment, never writes it: the environment is shared
+        // with every test running beside this one, and a test that sets a
+        // variable to prove a point breaks whichever unrelated test observes it
+        // mid-flight.
+        let direct = AdmissionConfig::from_lookup(|name| std::env::var(name).ok())
+            .expect("this machine's environment parses");
+        let wrapped = AdmissionConfig::from_environment().expect("from_environment agrees");
+        assert_eq!(wrapped, direct);
+        // And the defaults are not `Default::default()`, which is what makes
+        // the comparison above discriminating rather than vacuous.
+        assert_ne!(direct, AdmissionConfig::default());
+    }
+
+    #[test]
     fn an_empty_environment_gives_the_documented_defaults() {
         let config = AdmissionConfig::from_lookup(env(&[])).expect("defaults are valid");
         assert_eq!(config.max_live_sessions, DEFAULT_MAX_LIVE_SESSIONS);
