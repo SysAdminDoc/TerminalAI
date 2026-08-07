@@ -20,16 +20,6 @@ both `prefers-color-scheme` values) rather than inferred from source.
   Confidence: Verified
   Effort: L
 
-- [ ] P3 — Unaudited surfaces from the 2026-08-07 pass
-  Category: docs
-  Where: repository-wide
-  Problem: this pass did not deep-audit: `scripts/verify-installer.ps1` (runs only at release, needs a `cargo tauri build` and a window), `crates/terminalai-app/src/preset.rs` and `src/work.rs` beyond their public seams, `crates/terminalai-core/src/external.rs` parsing of Claude's own session registry, the packaged-app E2E path (`run-e2e.mjs`, known-blocked on DevToolsActivePort), or populated-fleet theming — the chrome gate audits empty states, so rows with live tones, the rate-limit banner and the spend header have never been contrast-checked with real data in the light theme.
-  Evidence: coverage of this audit session; the chrome gate's SURFACES list contains no populated-fleet state.
-  Fix: next audit pass starts here. For populated-fleet theming specifically: extend `chrome-audit.mjs` with a fixture mode that injects a synthetic snapshot (the `renderFixtureRow` harness already builds row markup) before auditing, so row tones, the unread gradient and the header chips are contrast-checked in both themes.
-  Acceptance: a later audit either clears these areas or files findings from them.
-  Confidence: Verified
-  Effort: M
-
 ## Audit Findings — 2026-08-03
 
 Read-only audit pass. Baseline before any of this was found: `cargo test` **411 passed / 0 failed**,

@@ -5,6 +5,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Fixed
+
+- The browser chrome audit now measures the fleet — the main view of the application, which it had
+  never checked. With no backend answering, the preflight call rejects, the app enters preflight
+  mode, and `#fleet-list`, `#fleet-state-strip` and `#column-labels` are all `view-hidden`; every
+  element inside them failed the visibility test and was skipped. The script reported clean on
+  sixteen dialogs and menus while the screen the operator actually looks at went unmeasured. A
+  minimal backend stub, installed before the app's module runs, answers two commands so the real
+  render path reaches a populated fleet: one row per status, plus the unread, pinned, focused,
+  limited-memory, full-context and too-long-to-fit variants.
+
+- The audit checks both row densities. Wide is not the same row with more space — `.fleet-list-wide`
+  is what un-hides the branch, the allocated ports and the status label, and it adds the model,
+  effort, cost, memory and context cells. Auditing only the default left half of every row's text
+  behind `display: none`, which to this script is indistinguishable from clean. A deliberately
+  low-contrast branch cell is now caught; before this change it passed.
+
+- Deliberate elision is no longer reported as an overflow. `text-overflow: ellipsis` requires
+  `scrollWidth > clientWidth` to do anything at all, so the old rule called the 28px row's entire
+  design a defect 140 times over. Content cut off by `overflow: hidden` with no ellipsis and no
+  scrollbar is still reported, because that is the case where the operator is given no sign that
+  anything was lost.
+
+### Changed
+
+- Each fleet state chip names its status in `data-status`. The audit reads those to discover every
+  status the fleet models and builds its fixture from them, so a status added to the app is
+  contrast-checked without the gate being edited — and a gate whose coverage is a hand-written list
+  certifies whatever is missing from it. Every surface must also now measure at least one piece of
+  text, since a surface that measures nothing reports exactly like a surface that is clean.
+
 ## [0.19.0] — 2026-08-07
 
 ### Changed

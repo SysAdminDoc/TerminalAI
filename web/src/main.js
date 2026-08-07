@@ -905,7 +905,12 @@ function renderSummary() {
   }
   const stateMarkup = STATUS_KEYS.map((status) => {
     const meta = STATUS_META[status];
-    return '<span class="state-chip tone-' + escapeHtml(meta.tone) + '" role="listitem" title="' + escapeHtml(metaLabel(meta)) + ': ' + escapeHtml(counts[status]) + '" aria-label="' + escapeHtml(metaLabel(meta)) + ': ' + escapeHtml(counts[status]) + '"><span class="state-chip-glyph" aria-hidden="true">' + meta.glyph + '</span><b>' + counts[status] + '</b><span>' + escapeHtml(t(meta.short)) + "</span></span>";
+    // `data-status` names the key, not the label. The browser audit reads it to
+    // discover every status the fleet models and builds its fixture from that,
+    // so a status added here is contrast-checked without anyone updating the
+    // gate — a gate whose coverage is a hand-written list certifies whatever is
+    // missing from it.
+    return '<span class="state-chip tone-' + escapeHtml(meta.tone) + '" data-status="' + escapeHtml(status) + '" role="listitem" title="' + escapeHtml(metaLabel(meta)) + ': ' + escapeHtml(counts[status]) + '" aria-label="' + escapeHtml(metaLabel(meta)) + ': ' + escapeHtml(counts[status]) + '"><span class="state-chip-glyph" aria-hidden="true">' + meta.glyph + '</span><b>' + counts[status] + '</b><span>' + escapeHtml(t(meta.short)) + "</span></span>";
   }).join("");
   const stateStrip = $("fleet-state-strip");
   if (stateStrip.innerHTML !== stateMarkup) stateStrip.innerHTML = stateMarkup;
