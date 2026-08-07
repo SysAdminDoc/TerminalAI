@@ -42,7 +42,24 @@ if (-not $SkipBuild) {
     # cargo tauri build product with a dev-URL shell. Built for the host without
     # an explicit --target so the artifacts share cargo tauri build's target dir
     # instead of compiling every dependency a second time.
-    & cargo build --release -p terminalai-daemon -p terminalai-probe
+    # `cargo auditable build` where it is available: it embeds a zlib-compressed
+    # dependency list in a `.dep-v0` linker section, which is how `cargo audit
+    # bin` can answer "which crate versions are in this exe" from the artifact
+    # itself rather than from a lockfile someone has to be trusted to have kept.
+    # That is what an advisory response actually needs, and it is the only copy
+    # that travels with a downloaded binary.
+    #
+    # It records names and versions only — no timestamps and no absolute paths —
+    # so it stays compatible with the reproducibility work. Absence is a warning
+    # rather than an error: a machine without the subcommand must still be able
+    # to build, and the loss is the manifest, not the program.
+    $auditable = Get-Command cargo-auditable -ErrorAction SilentlyContinue
+    if ($auditable) {
+        & cargo auditable build --release -p terminalai-daemon -p terminalai-probe
+    } else {
+        Write-Warning 'cargo-auditable not found; sidecars will ship without an embedded dependency manifest. Install with: cargo install cargo-auditable --locked'
+        & cargo build --release -p terminalai-daemon -p terminalai-probe
+    }
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE" }
 }
 

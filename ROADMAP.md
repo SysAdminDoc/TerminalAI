@@ -108,13 +108,6 @@ additions; where they touch, the note says so.
   Acceptance: `cargo mutants --in-diff` runs on core modules as a periodic check with PTY and process-spawning modules excluded; surviving mutants are either killed with a test or recorded as intentional. A full-tree run is explicitly not the goal.
   Complexity: S
 
-- [ ] P3 — Embed a dependency manifest in the shipped binaries and publish an SBOM
-  Why: there is currently no way to answer "which crate versions are in this exe" from the artifact itself, which is what an advisory response actually needs.
-  Evidence: `cargo auditable` embeds a zlib-compressed dependency list in a `.dep-v0` linker section, under 4 kB at 400+ dependencies, with no timestamps or paths so it stays reproducibility-safe, and Windows is supported — https://github.com/rust-secure-code/cargo-auditable ; `cargo audit bin` then reads it exactly. CycloneDX is at 1.7 (ECMA-424) — https://cyclonedx.org/specification/overview/ . A locally built artifact tops out at SLSA Build L1 by definition, since L2 requires a hosted build platform — https://slsa.dev/spec/v1.2/
-  Touches: the release build step, `scripts/`
-  Acceptance: released binaries are built with `cargo auditable` and `cargo audit bin` resolves the full tree from the artifact; a CycloneDX SBOM ships as a release asset. If provenance is published, it states SLSA L1 rather than implying more.
-  Complexity: M
-
 - [ ] P3 — Make the sidecar and app binaries reproducible
   Why: reproducibility is the only claim that lets someone else confirm a released unsigned binary came from this source, and most of the work is configuration rather than code.
   Evidence: sources of non-determinism and their fixes are documented at https://reproducible-builds.org/docs/rust/ — `--locked`, `SOURCE_DATE_EPOCH` for anything reading the clock, and `trim-paths` (RFC 3127, default `object` in release) for absolute paths in debuginfo. The installers are out of scope and should be stated so: Tauri's WiX template generates `ProductCode Id="*"` per build and NSIS output is LZMA-solid-compressed, so the MSI cannot be byte-reproducible as templated.

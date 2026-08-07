@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Added
+
+- The shipped sidecars carry their own dependency manifest. `cargo auditable` embeds a compressed
+  list of crate names and versions in a `.dep-v0` section, so `cargo audit bin terminalai-daemon.exe`
+  answers "which crate versions are in this exe" from the exe — which is what an advisory response
+  actually needs, and the only copy that travels with a download. A lockfile in the repository
+  answers a different question and requires trusting that the artifact was built from it.
+
+- `scripts/supply-chain.ps1` produces a CycloneDX SBOM per shipped executable and, first, verifies
+  every one of them carries its embedded manifest. The verification is the point: an SBOM generated
+  beside a binary describes the source tree, not the binary, so it would look identical if the
+  auditable step had been silently skipped. The check is on the reported data, not the exit code —
+  `cargo audit bin` exits zero for a binary with no manifest, having simply found nothing to say, so
+  an exit-code gate would certify exactly the binaries this exists to catch. `terminalai.exe` is
+  built by the Tauri CLI and carries no section; that is reported rather than passed over.
+
+- The README states the provenance level as SLSA Build L1 and says why it is not higher: these are
+  locally built artifacts, and L2 requires a hosted build platform.
+
 ### Fixed
 
 - The browser chrome audit now measures the fleet — the main view of the application, which it had

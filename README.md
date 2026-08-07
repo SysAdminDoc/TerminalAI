@@ -260,6 +260,45 @@ Get-FileHash .\TerminalAI_x64-setup.exe -Algorithm SHA256
 and compare against the hash published with the release. That answers "did I get the file the
 release published", which is the question a signature would have answered.
 
+## What is in the binary
+
+An unsigned download raises a question a signature would not have answered anyway: *which crate
+versions are actually in this executable?* A lockfile in this repository answers a different
+question — what the source tree said at some point — and believing it requires trusting that the
+artifact was built from it.
+
+So `terminalai-daemon.exe` and `terminalai-probe.exe` are built with
+[`cargo auditable`](https://github.com/rust-secure-code/cargo-auditable), which embeds a compressed
+list of crate names and versions in a `.dep-v0` linker section. It travels with the file, and any
+copy can be interrogated directly:
+
+```powershell
+cargo install cargo-audit --locked
+cargo audit bin .\terminalai-daemon.exe
+```
+
+That reports the full dependency tree read out of the artifact, and checks it against the RustSec
+advisory database. The section carries names and versions only — no timestamps, no absolute paths.
+
+A CycloneDX SBOM ships as a release asset, one per shipped executable. Both are produced and
+verified by one script:
+
+```powershell
+pwsh -NoProfile -File scripts/supply-chain.ps1
+```
+
+It refuses to write an SBOM unless every shipped binary carries its embedded manifest, because an
+SBOM generated beside a binary describes the *source tree* rather than the binary — publishing one
+on its own would prove nothing about what shipped.
+
+`terminalai.exe` is built by the Tauri CLI, which does not route through `cargo auditable`, so it
+carries no embedded section; the script says so rather than passing over it, and the SBOM still
+covers its dependencies.
+
+**Provenance:** these are locally built artifacts, which is
+[SLSA](https://slsa.dev/spec/v1.2/) Build **L1**. L2 requires a hosted build platform, and no
+claim beyond L1 is made.
+
 ## Reporting a security problem
 
 Please report vulnerabilities privately, through
