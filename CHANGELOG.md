@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-08-07
+
 ### Added
 
 - Model-based tests over the registry and session store. A reference model with no threads, pty,
