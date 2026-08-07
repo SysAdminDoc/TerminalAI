@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Changed
+
+- The README says plainly what installing an unsigned build looks like: the SmartScreen prompt and
+  the way through it, that reputation is built per file hash and therefore resets every release, that
+  a self-signed certificate is rated identically to no certificate, that Smart App Control can block
+  the daemon *after* a successful install, and how to verify a download by hash since there is no
+  signature to check. No claim is made that reputation improves over time, because for an unsigned
+  build it does not.
+- The repository has its own `.github/` surface: a bug form that asks up front for the three facts
+  every finding in this project has needed — the daemon log path, the agent versions and the Windows
+  build — plus display scaling, since most measurement defects here have been scaling-related. It
+  asks callers not to paste session output, which is their own source and sometimes their
+  credentials. Security reports are routed to private GitHub Security Advisories rather than to a
+  public issue.
+
 ### Fixed
 
 - Choosing Claude in the launcher no longer rewrites a plan-mode selection to "ask". The reset had

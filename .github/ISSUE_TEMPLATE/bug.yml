@@ -1,0 +1,73 @@
+name: Bug report
+description: Something in TerminalAI behaves differently from what it says it does.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Three facts have been needed to diagnose essentially every defect found in this project so
+        far: the daemon log, the agent versions, and the Windows build. The fields below ask for
+        them up front so the first reply is an answer rather than a request for more information.
+
+        **Please do not paste session output or transcripts.** They contain whatever your agent and
+        its tools printed, which is usually your own source and sometimes your credentials.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect instead?
+      description: The difference between the two is the bug; both halves are needed to see it.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How can this be reproduced?
+      description: >
+        Exact steps if you have them. If it only happens sometimes, say roughly how often and what
+        else was running — several defects here have turned out to be load-sensitive.
+    validations:
+      required: true
+  - type: input
+    id: terminalai-version
+    attributes:
+      label: TerminalAI version
+      description: Shown in the app's overflow menu, or `terminalai-probe --version`.
+      placeholder: "0.18.0"
+    validations:
+      required: true
+  - type: input
+    id: windows-build
+    attributes:
+      label: Windows build
+      description: "`winver`, or `[System.Environment]::OSVersion.Version` in PowerShell."
+      placeholder: "10.0.26100"
+    validations:
+      required: true
+  - type: input
+    id: agent-versions
+    attributes:
+      label: Agent versions
+      description: "`claude --version` and `codex --version`, for whichever you were running."
+      placeholder: "claude 2.1.170, codex 0.146.0"
+    validations:
+      required: true
+  - type: input
+    id: display-scaling
+    attributes:
+      label: Display scaling
+      description: >
+        Only matters for layout and screenshot problems, but it matters a lot — most of this
+        project's measurement defects have been scaling-related.
+      placeholder: "125%"
+    validations:
+      required: false
+  - type: textarea
+    id: daemon-log
+    attributes:
+      label: Relevant lines from the daemon log
+      description: >
+        `%LOCALAPPDATA%\TerminalAI\logs\` — fourteen daily files. Paste the lines around the
+        failure, not the whole file, and check them for paths or names you would rather not publish.
+      render: text
+    validations:
+      required: false

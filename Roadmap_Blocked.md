@@ -1,5 +1,71 @@
 # Blocked roadmap items
 
+## Let the operator set the compaction threshold
+
+Blocked 2026-08-07: same cause as the screen-reader item — the flag postdates the Claude Code
+installed here.
+
+`--autocompact <auto|tokens>` arrived in **v2.1.221**; this machine has **2.1.170**, and
+`claude --help` does not mention it. Claude Code rejects unknown flags, so mapping it would produce
+an argv this machine's agent refuses, and the argv goldens cannot catch that: they assert what this
+tool emits, not what the agent accepts.
+
+The display half already shipped in v0.17.0 — the row reports context occupancy against the model's
+window when the agent states one. Only the half that *sets* the threshold is blocked.
+
+Codex's `model_auto_compact_token_limit` is a config key rather than a flag and is not
+version-gated, so that half could land alone; it is held back deliberately so the feature does not
+ship as "works for one agent, silently absent for the other", which is the failure mode the
+`LaunchError::Unsupported` rule exists to prevent.
+
+Unblocks by upgrading Claude Code to 2.1.221 or later — not done during an autonomous drain,
+because Claude Code is the tool the operator is actively running.
+
+Original item:
+
+- [ ] P3 — Let the operator set the compaction threshold the row now displays
+  Why: the context reading landed 2026-08-07, so the fleet reports how full a window is but cannot influence when the agent acts on it — and both agents take the threshold as a launch-time input this launcher does not map.
+  Evidence: Claude Code added `--autocompact <auto|tokens>` in v2.1.221 and the `CLAUDE_CODE_AUTO_COMPACT_WINDOW` variable (100000–1000000 tokens); Codex exposes `model_auto_compact_token_limit`. `LaunchSpec` (`crates/terminalai-core/src/launch.rs:203`) maps neither; `max_budget_usd` is the shape to mirror — an existing optional numeric that is Claude-only in the same way. `web/src/contextPressure.js` already has the cell that would show the threshold beside the usage.
+  Touches: `crates/terminalai-core/src/launch.rs`, `environment.rs`, `web/src/main.js`, `web/src/contextPressure.js`, `crates/terminalai-core/tests/launch_golden.rs`
+  Acceptance: the launcher can set a compaction threshold per session, it reaches the previewed argv for both agents, and the row shows it beside the occupancy so a session near its own threshold is visible before it compacts. An agent with no equivalent is refused rather than silently launched without it, per `LaunchError::Unsupported`.
+  Complexity: S
+
+### P3
+
+## Tell the agent when the operator is using a screen reader
+
+Blocked 2026-08-07: the flag does not exist in the Claude Code installed on this machine, so the
+mapping cannot be verified against the binary it would run.
+
+`--ax-screen-reader` and `CLAUDE_AX_SCREEN_READER` are documented from **v2.1.181**. This machine
+has **2.1.170** — `claude --version` reports it, and `claude --help` lists no `--ax` flag and no
+screen-reader option at all. Claude Code rejects unknown flags, so mapping it now would ship a
+launcher that produces an argv this machine's agent refuses, and no test here could catch it: the
+argv goldens assert what we emit, not what the agent accepts.
+
+This is the same trap the plan-mode item named from the other side — *the flag being documented is
+not proof this build accepts it* — and the answer is the same: verify against the installed binary.
+Codex has no equivalent at all (`codex --help` shows none), so that half is a refusal rather than a
+mapping regardless of version.
+
+Unblocks by upgrading Claude Code to 2.1.181 or later. Deliberately not done as part of an
+autonomous drain: Claude Code is the tool the operator is actively running, and upgrading it
+mid-session changes the environment the session itself depends on.
+
+When unblocked, the acceptance is unchanged: turning on the app's screen-reader mode launches new
+sessions with the agent's equivalent where the agent has one, says plainly that it cannot change
+sessions already running, and refuses rather than silently launching an agent that has no equivalent
+as if it had one — per `LaunchError::Unsupported`.
+
+Original item:
+
+- [ ] P3 — Tell the agent when the operator is using a screen reader
+  Why: the app has an explicit opt-in screen-reader mode for its own terminal, and the agent whose output fills that terminal has a matching mode that is never turned on, so the accessible surface stops at the renderer.
+  Evidence: the focused terminal toolbar's screen-reader opt-in is described in `README.md:132-133`. Claude Code exposes `--ax-screen-reader`, "render screen-reader friendly output; flat text without decorations (v2.1.181+)", and the environment variable `CLAUDE_AX_SCREEN_READER` (https://code.claude.com/docs/en/cli-reference, /settings). Neither is reachable: the flag is not in `launch.rs`'s table and the variable is not in `safe_environment_keys()`.
+  Touches: `crates/terminalai-core/src/launch.rs`, `environment.rs`, `web/src/main.js`
+  Acceptance: turning on the app's screen-reader mode launches new sessions with the agent's equivalent where the agent has one, and says plainly that it cannot change sessions already running. An agent with no equivalent is not silently launched as if it had one. Pairs with the launcher-flag passthrough item above; file the flag there if that item lands first.
+  Complexity: S
+
 ## Verify Windows toast delivery on an interactive desktop
 
 Blocked 2026-08-03: requires an interactive desktop session, which the standing visual-isolation

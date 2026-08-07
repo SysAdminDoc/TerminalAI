@@ -224,6 +224,48 @@ It ranks entries by file and line review cost, shows additions/deletions and con
 diff payloads at 128 KiB per session, and lets the operator mark a session reviewed. It never stages,
 resolves, or commits changes.
 
+
+## Installing an unsigned build
+
+Every release here is **unsigned**, deliberately and permanently. That is a real thing you will
+meet, so here is what it looks like rather than a surprise at the point of install.
+
+**SmartScreen.** Running a downloaded installer raises "Windows protected your PC". The way through
+is *More info* → *Run anyway*. There is no version of this that eventually stops happening:
+Microsoft builds SmartScreen reputation **per file hash**, and states that reputation "cannot
+transfer from previous versions unless both were signed using the same publisher identity". Every
+release is a new hash with no history, so every release starts from zero. Nobody should tell you it
+will settle down after a few downloads — for an unsigned build it will not.
+
+**A self-signed certificate would change nothing.** Microsoft rates self-signed executables the same
+as unsigned ones. Signing with a certificate no one trusts buys a longer install story and no
+additional trust.
+
+**Smart App Control.** If it is on — it is only ever on for clean installs of Windows 11, and it
+cannot be turned back on once off — it blocks unsigned executables outright, and it applies to
+everything that runs, not just to things you downloaded. So it can block `terminalai-daemon.exe`
+*after* a successful install, which presents as the app opening and the fleet never appearing. Check
+under Windows Security → App & browser control → Smart App Control. There is no workaround short of
+turning it off, which is a decision about your whole machine and not one this README will push you
+toward.
+
+**Verifying what you downloaded instead.** Since there is no signature to check, check the bytes:
+
+```powershell
+Get-FileHash .\TerminalAI_x64-setup.exe -Algorithm SHA256
+```
+
+and compare against the hash published with the release. That answers "did I get the file the
+release published", which is the question a signature would have answered.
+
+## Reporting a security problem
+
+Please report vulnerabilities privately, through
+[GitHub Security Advisories](https://github.com/SysAdminDoc/TerminalAI/security/advisories/new),
+rather than as a public issue. This tool supervises agent processes and holds a named pipe that
+grants control of them, so a defect in that boundary should not be public before there is a build
+that fixes it.
+
 ## Requirements
 
 - Rust 1.88+ (the true floor; see Build for how to re-derive it)

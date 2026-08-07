@@ -61,28 +61,12 @@ item above; where the two touch, the note says so.
 
 ### P2
 
-- [ ] P3 — Let the operator set the compaction threshold the row now displays
-  Why: the context reading landed 2026-08-07, so the fleet reports how full a window is but cannot influence when the agent acts on it — and both agents take the threshold as a launch-time input this launcher does not map.
-  Evidence: Claude Code added `--autocompact <auto|tokens>` in v2.1.221 and the `CLAUDE_CODE_AUTO_COMPACT_WINDOW` variable (100000–1000000 tokens); Codex exposes `model_auto_compact_token_limit`. `LaunchSpec` (`crates/terminalai-core/src/launch.rs:203`) maps neither; `max_budget_usd` is the shape to mirror — an existing optional numeric that is Claude-only in the same way. `web/src/contextPressure.js` already has the cell that would show the threshold beside the usage.
-  Touches: `crates/terminalai-core/src/launch.rs`, `environment.rs`, `web/src/main.js`, `web/src/contextPressure.js`, `crates/terminalai-core/tests/launch_golden.rs`
-  Acceptance: the launcher can set a compaction threshold per session, it reaches the previewed argv for both agents, and the row shows it beside the occupancy so a session near its own threshold is visible before it compacts. An agent with no equivalent is refused rather than silently launched without it, per `LaunchError::Unsupported`.
-  Complexity: S
-
-### P3
-
 - [ ] P3 — Corroborate cost from OpenTelemetry rather than only from an unsupported transcript format
   Why: Anthropic documents the transcript entry format as internal and version-changing, so the entire cost path rests on a contract that is explicitly not promised, while a sanctioned metrics surface exists.
   Evidence: code.claude.com/docs/en/sessions states the entry format "is internal to Claude Code and changes between versions". code.claude.com/docs/en/monitoring-usage defines `claude_code.cost.usage` and `claude_code.token.usage` with `query_source` (`main|subagent|auxiliary`) attribution; Codex exposes `[otel]` in config. Note both are client-side estimates, not bills.
   Touches: `crates/terminalai-core/src/transcript.rs`, `crates/terminalai-daemon/src/lib.rs`, `crates/terminalai-core/src/hook_config.rs`
   Acceptance: when an OTel endpoint is configured the fleet prefers it and says so in the price-table tooltip, falling back to transcript arithmetic otherwise; a disagreement between the two beyond a threshold is logged rather than silently resolved. Gated on the open question in `RESEARCH.md` about enabling OpenTelemetry export on a subscription plan.
   Complexity: L
-
-- [ ] P3 — Add the repository's own `.github/` surface
-  Why: the repo is public with no issue templates and no in-repo security contact, so the first external bug report and the first vulnerability report both arrive unstructured.
-  Evidence: `ls -a .github` returns nothing; there is no `SECURITY.md`, `CONTRIBUTING.md` or `docs/` directory. Community health files are served org-wide from `SysAdminDoc/.github`, which covers conduct and contributing but not repository-specific triage or a security contact.
-  Touches: `.github/ISSUE_TEMPLATE/`, `SECURITY.md`
-  Acceptance: a bug template that asks for the daemon log path, agent versions and Windows build — the three facts every finding in this roadmap needed. If lint/test CI is wanted, the repository owner's standing rule permits validation workflows but forbids building or releasing binaries there; the release gate stays local either way.
-  Complexity: S
 
 - [ ] P3 — Make the localization scaffolding do something
   Why: the Fluent machinery, a shared catalog and a Rust-side duplicate-key check are all built for exactly one locale that is also the fallback, so the abstraction currently costs maintenance and returns nothing.
@@ -155,13 +139,6 @@ additions; where they touch, the note says so.
   Acceptance: two clean builds of `terminalai-daemon.exe` and `terminalai-probe.exe` from the same commit produce identical hashes on this machine, and the README states that the exes are reproducible while the installers are not.
   Complexity: M
 
-- [ ] P3 — Say what an unsigned install actually looks like
-  Why: users meet SmartScreen and possibly Smart App Control with no guidance, and the project's own README is the only place that can set the expectation honestly.
-  Evidence: Microsoft documents that unsigned reputation is per file hash, "cannot transfer from previous versions unless both were signed using the same publisher identity", and builds only through download volume over weeks — resetting every release: https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/smartscreen-reputation . Self-signed is rated identical to unsigned: https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/code-signing-options . Smart App Control blocks unsigned executables outright and applies to all executables, not just downloaded ones — so it can block `terminalai-daemon.exe` after a successful install.
-  Touches: `README.md`
-  Acceptance: the README states plainly that builds are unsigned, what the SmartScreen prompt looks like and how to proceed, that Smart App Control may block the daemon and how to tell, and how to verify the download instead. No claim is made that reputation will improve over time.
-  Complexity: S
-
 ## Research-Driven Additions — 2026-08-06
 
 Third external research pass (see `RESEARCH.md`), against `652f33d` / v0.9.0 with a green baseline
@@ -185,13 +162,6 @@ the historical `R-NN` scheme and the entries below follow the current convention
   Complexity: L
 
 ### P3
-
-- [ ] P3 — Tell the agent when the operator is using a screen reader
-  Why: the app has an explicit opt-in screen-reader mode for its own terminal, and the agent whose output fills that terminal has a matching mode that is never turned on, so the accessible surface stops at the renderer.
-  Evidence: the focused terminal toolbar's screen-reader opt-in is described in `README.md:132-133`. Claude Code exposes `--ax-screen-reader`, "render screen-reader friendly output; flat text without decorations (v2.1.181+)", and the environment variable `CLAUDE_AX_SCREEN_READER` (https://code.claude.com/docs/en/cli-reference, /settings). Neither is reachable: the flag is not in `launch.rs`'s table and the variable is not in `safe_environment_keys()`.
-  Touches: `crates/terminalai-core/src/launch.rs`, `environment.rs`, `web/src/main.js`
-  Acceptance: turning on the app's screen-reader mode launches new sessions with the agent's equivalent where the agent has one, and says plainly that it cannot change sessions already running. An agent with no equivalent is not silently launched as if it had one. Pairs with the launcher-flag passthrough item above; file the flag there if that item lands first.
-  Complexity: S
 
 - [ ] P3 — Attribute the quota window to the sessions that consumed it
   Why: the header already reports that a provider is rate limiting and when the window reopens, but not which of the running sessions spent it — and subscription-window exhaustion is the single loudest operational complaint about the agents this tool supervises.

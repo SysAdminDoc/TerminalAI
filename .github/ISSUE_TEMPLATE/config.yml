@@ -1,0 +1,12 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/SysAdminDoc/TerminalAI/security/advisories/new
+    about: >
+      Please report vulnerabilities privately through GitHub Security Advisories rather than as a
+      public issue. This tool supervises agent processes and holds a named pipe that grants control
+      of them, so a defect in that boundary should not be public before there is a build that fixes
+      it.
+  - name: What this tool is, and the decisions behind it
+    url: https://github.com/SysAdminDoc/TerminalAI#readme
+    about: The README covers the design decisions, the supported agents and the release gate.
