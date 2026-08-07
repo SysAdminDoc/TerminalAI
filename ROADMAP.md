@@ -77,13 +77,6 @@ item above; where the two touch, the note says so.
   Acceptance: when an OTel endpoint is configured the fleet prefers it and says so in the price-table tooltip, falling back to transcript arithmetic otherwise; a disagreement between the two beyond a threshold is logged rather than silently resolved. Gated on the open question in `RESEARCH.md` about enabling OpenTelemetry export on a subscription plan.
   Complexity: L
 
-- [ ] P3 — Declare per-monitor-v2 DPI awareness for the Rust side
-  Why: this machine runs 125% scaling, and any Rust-side code that enumerates monitors or captures pixels gets virtualized numbers unless awareness is declared before the first such call.
-  Evidence: no manifest and no `SetProcessDpiAwarenessContext` call exists in `crates/terminalai-app/`; the process inherits whatever Tauri/wry sets. The screenshot and visual-isolation tooling this repo's release gate depends on already has to declare it independently — learn.microsoft.com/en-us/windows/win32/hidpi/setting-the-default-dpi-awareness-for-a-process
-  Touches: `crates/terminalai-app/src/main.rs`, `crates/terminalai-app/build.rs` (manifest), `scripts/verify-installer.ps1`
-  Acceptance: awareness is declared explicitly rather than inherited, and a diagnostic reports the process's DPI context so a wrong value is visible instead of silently wrong.
-  Complexity: S
-
 - [ ] P3 — Add the repository's own `.github/` surface
   Why: the repo is public with no issue templates and no in-repo security contact, so the first external bug report and the first vulnerability report both arrive unstructured.
   Evidence: `ls -a .github` returns nothing; there is no `SECURITY.md`, `CONTRIBUTING.md` or `docs/` directory. Community health files are served org-wide from `SysAdminDoc/.github`, which covers conduct and contributing but not repository-specific triage or a security contact.

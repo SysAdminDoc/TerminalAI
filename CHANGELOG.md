@@ -16,6 +16,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- The app declares per-monitor-v2 DPI awareness explicitly, before any window exists, and then reads
+  back what the process actually has. Awareness is a process property decided by whoever declares it
+  first, and nothing here declared it — so the value was inherited rather than chosen. The failure it
+  prevents is silent by construction: an under-aware process is not told the truth about monitors, so
+  window rectangles and system metrics come back virtualized on a 125% display while still looking
+  plausible and self-consistent. The effective value is logged, at `warn` when it is not what was
+  asked for, because a call whose failure is an error code nobody looks at is the same mistake in a
+  different place.
 - `CwdChanged` is ingested, so a session that moves stops being described by where it used to be.
   The row's folder and branch both name where the session *is*, and neither was updated: a moved
   session went on naming a directory it had left and a branch belonging to that directory, quietly,

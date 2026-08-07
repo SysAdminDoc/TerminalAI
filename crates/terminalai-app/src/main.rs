@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod dpi;
 mod preset;
 mod projects;
 mod toast;
@@ -2470,6 +2471,12 @@ fn run_hook_cli(args: &[String]) -> i32 {
 
 fn main() {
     let _logging = terminalai_daemon::init_logging_with_prefix("terminalai-app");
+    // Before anything creates a window, which is the documented requirement and
+    // the reason this is the first thing after logging. Awareness is a process
+    // property decided by whoever declares it first; leaving it inherited meant
+    // every monitor and window measurement was virtualized on a 125% display
+    // while still looking plausible.
+    dpi::declare_and_report();
     terminalai_daemon::install_panic_hook();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if is_hook_invocation(&args) {
