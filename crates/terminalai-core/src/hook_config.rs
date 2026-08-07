@@ -2,6 +2,37 @@
 //!
 //! The writer only owns entries carrying [`MANAGED_MARKER`]. Existing user
 //! hooks and unrelated Codex notification commands are retained verbatim.
+//!
+//! # Why this writes to the operator's configuration at all
+//!
+//! Writing into someone's global agent settings is the most invasive thing this
+//! project does, so the alternative was tested rather than assumed. Claude Code
+//! grew `--include-hook-events`, which emits hook lifecycle records on the
+//! session's own stdout — apparently making this module unnecessary. It does
+//! not, for two independent reasons, both measured against Claude Code 2.1.170
+//! on 2026-08-07:
+//!
+//! 1. **The stream reports hooks running, not lifecycle events happening.**
+//!    Records arrive as `{"type":"system","subtype":"hook_started"|
+//!    "hook_progress"|"hook_response","hook_event":…,"hook_name":…}`, where
+//!    `hook_name` is the *configured* entry (`SessionStart:startup`,
+//!    `PreToolUse:Read`) and one lifecycle moment yields one record per
+//!    installed hook. Re-running the identical prompt under
+//!    `--settings '{"disableAllHooks":true}'` produced the same tool call and
+//!    the same result with **zero** hook records. So the flag is a view onto
+//!    the hooks already installed; it cannot be the reason not to install them.
+//! 2. **It is print-mode only.** `--include-hook-events` requires
+//!    `--output-format stream-json`, which the CLI documents as working only
+//!    with `--print`, and `--print` runs one non-interactive turn. This tool
+//!    supervises interactive PTY sessions, which is the mode that has no such
+//!    stream.
+//!
+//! Recorded here rather than in working notes so the next reader who finds that
+//! flag does not repeat the run. The policy preflight this module performs —
+//! `disableAllHooks`, `allowManagedHooksOnly`, the HKLM managed-settings chain —
+//! is therefore not a fallback path but the only path, and finding #1 is
+//! precisely why: a policy that stops the hooks from running also silences the
+//! stream that would have reported them.
 
 use std::fs;
 use std::path::{Path, PathBuf};

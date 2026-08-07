@@ -147,13 +147,6 @@ the historical `R-NN` scheme and the entries below follow the current convention
 
 ### P2
 
-- [ ] P2 — Decide whether status can come from the session's own output instead of the operator's settings file
-  Why: this tool writes managed hooks into the user's global Claude and Codex configuration to learn what its own child processes are doing, and Claude Code now emits the same lifecycle events on the session's stdout — which would make the fleet observable without touching anything outside the process it launched.
-  Evidence: `--include-hook-events` "include hook lifecycle events from every hook in output stream; requires `--output-format stream-json`", alongside `--forward-subagent-text` (emits subagent text with `parent_tool_use_id`) and `--include-partial-messages` (https://code.claude.com/docs/en/cli-reference). Today `crates/terminalai-core/src/hook_config.rs` (1,328 lines) installs and owns sixteen managed hook entries and has to reason about `disableAllHooks`, `allowManagedHooksOnly` and the whole HKLM/managed-settings policy chain to know whether they will fire at all.
-  Touches: `crates/terminalai-core/src/hook_config.rs`, `hooks.rs`, `pty.rs`, `crates/terminalai-daemon/src/lib.rs`
-  Acceptance: RESEARCH.md open question 3 is answered by one live run — whether those events match the installed-hook set and whether the flags work outside `--print` mode — and the answer is recorded in `CLAUDE.md` either way. If they match, stdout becomes the preferred channel and managed hooks become the fallback for agents that lack it, with the policy preflight kept for that fallback. If they do not, record what is missing so this is not re-investigated.
-  Complexity: L
-
 ### P3
 
 - [ ] P3 — Attribute the quota window to the sessions that consumed it
