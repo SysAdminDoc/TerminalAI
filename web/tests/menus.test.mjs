@@ -186,10 +186,40 @@ test("the panels are disclosures, and do not claim ARIA menu semantics", () => {
     assert.equal(id(panel).getAttribute("role"), null, `${panel} claims a role it does not keep`);
   }
   assert.equal(doc.querySelectorAll('[role="menuitem"]').length, 0);
-  assert.equal(doc.querySelectorAll(".menu [role]").length, 0);
+  // Only the menu-pattern roles are forbidden. A live region inside the panel
+  // is legitimate — the update check writes its answer there.
+  assert.equal(doc.querySelectorAll('.menu [role="menuitem"], .menu [role="separator"], .menu [role="menu"]').length, 0);
   // The half that must survive: the trigger still announces the relationship.
   for (const [button, panel] of [["app-menu-button", "app-menu"], ["tools-menu-button", "tools-menu"]]) {
     assert.equal(id(button).getAttribute("aria-controls"), panel);
     assert.equal(id(button).getAttribute("aria-expanded"), "false");
   }
+});
+
+test("the update check answers in place, and the answer is actionable", () => {
+  // "A newer version exists, go get it" is the one outcome of the check the
+  // operator can act on. It used to be a toast: gone in four seconds, no link,
+  // and no way back to it — while the message itself said to go to GitHub.
+  const { id, click } = mount();
+  const check = id("update-check-button");
+  assert.ok(check, "the check must live in the menu");
+  assert.notEqual(
+    check.dataset.keepOpen,
+    undefined,
+    "the menu must not close on the click that asks the question, or the answer lands in a hidden panel",
+  );
+
+  const result = id("update-result");
+  assert.ok(result, "there must be somewhere for the answer to go");
+  assert.ok(result.classList.contains("view-hidden"), "nothing to say before a check runs");
+  assert.equal(result.getAttribute("role"), "status");
+  assert.equal(result.getAttribute("aria-live"), "polite");
+  assert.ok(id("update-open-releases"), "the answer carries the action it asks for");
+
+  // Clicking through to the releases page does close the menu: the operator has
+  // left for the browser.
+  click(id("app-menu-button"));
+  assert.equal(id("app-menu").hidden, false);
+  click(id("update-open-releases"));
+  assert.equal(id("app-menu").hidden, true);
 });

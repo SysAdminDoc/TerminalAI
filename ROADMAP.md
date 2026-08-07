@@ -10,16 +10,6 @@ widths. No pre-existing test, lint or build failure exists. Verification: every 
 below was traced to a real caller; the theming finding was observed live (Vite + headless Chromium,
 both `prefers-color-scheme` values) rather than inferred from source.
 
-- [ ] P3 — "Update available" arrives as a 4-second toast with no way to act on it
-  Category: ux
-  Where: `web/src/main.js:460` (`checkForUpdates`), `showToast` at `web/src/main.js:275`
-  Problem: the one actionable result of the update check — a newer version exists, go get it — is shown in a toast that removes itself after 4.2 s, contains no link, and cannot be recalled except by re-running the check. The string even says "Download it from GitHub" while offering no way to open GitHub, in an app that already ships a validated `open_external_url` command allowing https.
-  Evidence: `showToast` is fire-and-forget text (no action support, fixed 4200 ms); `update-available` in `terminalai.ftl:13`; `validate_external_url` allows https and is already used for OSC 8 links.
-  Fix: render the check's result inline where the action lives: a small result line under `#update-check-button` in the app menu (persisting until the menu closes) with an "Open releases page" button wired to `open_external_url` on the repository's releases URL. Keep the toast for the up-to-date and error cases, which need no action.
-  Acceptance: after a check that finds a newer version, the app menu shows the result and a working releases link; re-opening the menu within the session still shows it; the up-to-date and error flows are unchanged.
-  Confidence: Verified
-  Effort: S
-
 - [ ] P3 — The archive dedup guard is unreachable by the model and uncovered by any test
   Category: testing
   Where: `crates/terminalai-core/src/registry/mod.rs:948` (`state.archives.retain(|item| item.id != *id)` in `archive`), model at `crates/terminalai-core/tests/registry_model.rs`

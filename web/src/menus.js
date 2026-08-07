@@ -45,8 +45,13 @@ export function wireOverflowMenus(doc = document) {
     });
     // An item that opens a dialog must not leave the menu hanging open behind
     // it; the click still reaches the item's own handler first.
+    //
+    // `data-keep-open` is for the controls whose whole purpose is to answer in
+    // place — the update check writes its result into this panel, and closing on
+    // the click would hide the answer the operator just asked for.
     menu.panel.addEventListener("click", (event) => {
-      if (event.target.closest(".menu-item, .menu-inline .button")) closeAll();
+      const control = event.target.closest(".menu-item, .menu-inline .button, .menu-result .button");
+      if (control && control.dataset.keepOpen === undefined) closeAll();
     });
   }
 

@@ -35,7 +35,8 @@
               <hr class="menu-separator" />
               <button class="menu-item" id="refresh-button" type="button"><span data-i18n="button-refresh">Refresh</span></button>
               <button class="menu-item" id="preflight-toggle" type="button" aria-pressed="false" data-i18n="button-preflight-short">Preflight</button>
-              <button class="menu-item" id="update-check-button" type="button" data-i18n="button-check-updates">Check updates</button>
+              <button class="menu-item" id="update-check-button" type="button" data-keep-open data-i18n="button-check-updates">Check updates</button>
+              <div id="update-result" class="menu-result view-hidden" role="status" aria-live="polite"><span id="update-result-message"></span><button class="button button-quiet" id="update-open-releases" type="button" data-i18n="button-open-releases">Open releases page</button></div>
             </div>
           </div>
         </div>

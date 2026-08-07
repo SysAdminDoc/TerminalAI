@@ -15,6 +15,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   deliberately not dismissable: a quarantine is a past event to acknowledge once, this is an ongoing
   condition, and dismissing it would hide a live problem.
 
+### Changed
+
+- The update check answers in place. "A newer version exists" is the only outcome the operator can
+  act on, and it arrived as a toast: gone in four seconds, no link, no way back to it — while the
+  message itself said to download from GitHub. It now renders under the check button in the app
+  menu, with a working releases link, and the menu stays open on the click that asks the question.
+  The up-to-date and error outcomes need no action and remain toasts.
+
 ### Fixed
 
 - The focused terminal follows the theme. Its palette was a literal in the renderer, so the one

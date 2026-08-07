@@ -63,6 +63,9 @@ const PREFLIGHT_META = {
   unsupported: { glyph: "—", label: "preflight-not-applicable", tone: "overlay0" },
 };
 const RELEASES_ENDPOINT = "https://api.github.com/repos/SysAdminDoc/TerminalAI/releases/latest";
+/// Where the operator goes when the check says there is something newer. The
+/// API endpoint above answers the question; this is the page that answers it.
+const RELEASES_PAGE = "https://github.com/SysAdminDoc/TerminalAI/releases/latest";
 const FALLBACK_APP_VERSION = __APP_VERSION__;
 
 /// What the row shows as "the last thing that happened".
@@ -451,10 +454,23 @@ function isNewerVersion(candidate, current) {
   return false;
 }
 
+/// The one result the operator can act on stays where the action is.
+///
+/// A newer version is the only outcome of the check that asks for anything, and
+/// it used to arrive as a toast: gone in four seconds, no link, and no way back
+/// to it except running the check again — while the message itself said to go to
+/// GitHub. The other outcomes need nothing, so they stay toasts.
+function showUpdateResult(message) {
+  const result = $("update-result");
+  result.classList.toggle("view-hidden", !message);
+  $("update-result-message").textContent = message ?? "";
+}
+
 async function checkForUpdates() {
   const button = $("update-check-button");
   if (button.disabled) return;
   button.disabled = true;
+  showUpdateResult(null);
   button.querySelector("span").textContent = t("update-checking");
   try {
     const current = state.appVersion ?? await invoke("app_version").catch(() => FALLBACK_APP_VERSION);
@@ -473,7 +489,7 @@ async function checkForUpdates() {
     const latest = String(release.tag_name ?? "").replace(/^v/i, "");
     if (!versionTuple(latest)) throw new Error(t("update-invalid-release"));
     if (isNewerVersion(latest, current)) {
-      showToast(t("update-available", { latest, current }), "success");
+      showUpdateResult(t("update-available", { latest, current }));
     } else {
       showToast(t("update-up-to-date", { version: current }), "success");
     }
@@ -3489,6 +3505,7 @@ function bindEvents() {
     void loadPreflight(true);
   });
   $("update-check-button").addEventListener("click", () => void checkForUpdates());
+  $("update-open-releases").addEventListener("click", () => void openSessionLink(RELEASES_PAGE));
   $("filter-input").addEventListener("input", renderRows);
   $("agent-filter").addEventListener("change", (event) => {
     state.agentFilter = event.target.value;

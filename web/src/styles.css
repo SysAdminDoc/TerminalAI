@@ -738,6 +738,27 @@ button {
   background: var(--surface0);
 }
 
+/* The update check's answer, kept where the action is rather than thrown at a
+   toast that expires. Only rendered when there is something to say. */
+.menu-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 2px 4px 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  background: var(--mantle);
+  color: var(--subtext1);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.menu-result.view-hidden {
+  display: none;
+}
+
 .menu-item[aria-pressed="true"] {
   color: var(--mauve);
 }
