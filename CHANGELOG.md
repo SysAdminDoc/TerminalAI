@@ -7,6 +7,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Changed
 
+- Recorded that this project ships English only. The single-locale Fluent setup looked like
+  scaffolding waiting for a second language, and a reader could reasonably have started building
+  one. It is not waiting: the catalog buys one source of truth for the daemon and the renderer, and
+  the Rust side is the only one that rejects a duplicate message identifier — the JS loader silently
+  takes the last definition, and a duplicate has shipped once and was caught by that check alone. So
+  the abstraction is not idle and removing it would cost both of those. A test fails if a second
+  catalog appears, so adding a locale is a deliberate change to the decision rather than a
+  half-built mechanism nothing selects between.
+
 - The README says plainly what installing an unsigned build looks like: the SmartScreen prompt and
   the way through it, that reputation is built per file hash and therefore resets every release, that
   a self-signed certificate is rated identically to no certificate, that Smart App Control can block

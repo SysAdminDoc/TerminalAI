@@ -92,3 +92,25 @@ test("compact rows keep localized status words out of the fixed-height line", ()
   // when the phase has one.
   assert.match(main, /title="\$\{escapeHtml\(detail \|\| label\)\}"/);
 });
+
+test("the project ships one locale, and adding a second is a deliberate act", () => {
+  // Recorded 2026-08-07: English only. The catalog stays regardless, because
+  // what it buys is not translation — it is one source of truth for the daemon
+  // and the renderer, and the Rust side is the only one that rejects a
+  // duplicate message identifier (the JS loader silently takes the last
+  // definition, and a duplicate has shipped once already).
+  //
+  // This fails if a second `.ftl` appears, so adding one means reading the
+  // decision and choosing to change it rather than half-building negotiation
+  // that nothing selects between.
+  const catalogs = readdirSync(new URL("../src/i18n/", import.meta.url)).filter((name) =>
+    name.endsWith(".ftl"),
+  );
+  assert.deepEqual(catalogs, ["terminalai.ftl"], "a second locale needs negotiation to go with it");
+
+  const core = readFileSync(
+    new URL("../../crates/terminalai-core/src/i18n.rs", import.meta.url),
+    "utf8",
+  ).replace(/\r\n/g, "\n");
+  assert.match(core, /This project ships English only, and that is a decision/);
+});

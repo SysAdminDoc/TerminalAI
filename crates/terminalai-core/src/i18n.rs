@@ -3,11 +3,33 @@
 //! The source is intentionally the same `.ftl` file imported by the web
 //! renderer. Rust loads it at compile time so a malformed catalog fails in the
 //! daemon's startup path and both sides format the same message identifiers.
+//!
+//! # This project ships English only, and that is a decision
+//!
+//! Recorded 2026-08-07. There is one locale, it is also the fallback, and no
+//! OS-preference negotiation exists — so this looks like scaffolding waiting
+//! for a second language, and a reader could reasonably start building one.
+//!
+//! It is not waiting. What the catalog actually buys is not translation:
+//!
+//! - **One source of truth for two runtimes.** The daemon formats the same
+//!   message identifiers the renderer does. Without the shared file, a status
+//!   label would exist twice and drift.
+//! - **The only side that checks.** `fluent-bundle` treats a duplicate message
+//!   identifier as an error here; the JS loader silently takes the last
+//!   definition. A duplicate key has already shipped once and was caught by
+//!   this side and nothing else.
+//!
+//! So the abstraction is not idle and removing it would cost both of those. If
+//! a second locale is ever wanted, what is missing is negotiation and a
+//! fallback chain — not this module.
 
 use fluent_bundle::concurrent::FluentBundle;
 use fluent_bundle::{FluentArgs, FluentResource};
 use unic_langid::LanguageIdentifier;
 
+/// The only locale this project ships. Not a default among several — see the
+/// module docs for why there is one and why the catalog stays anyway.
 pub const DEFAULT_LOCALE: &str = "en-US";
 pub const CATALOG_SOURCE: &str = include_str!("../../../web/src/i18n/terminalai.ftl");
 

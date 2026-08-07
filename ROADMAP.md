@@ -68,13 +68,6 @@ item above; where the two touch, the note says so.
   Acceptance: when an OTel endpoint is configured the fleet prefers it and says so in the price-table tooltip, falling back to transcript arithmetic otherwise; a disagreement between the two beyond a threshold is logged rather than silently resolved. Gated on the open question in `RESEARCH.md` about enabling OpenTelemetry export on a subscription plan.
   Complexity: L
 
-- [ ] P3 — Make the localization scaffolding do something
-  Why: the Fluent machinery, a shared catalog and a Rust-side duplicate-key check are all built for exactly one locale that is also the fallback, so the abstraction currently costs maintenance and returns nothing.
-  Evidence: `crates/terminalai-core/src/i18n.rs:11` hardcodes `DEFAULT_LOCALE = "en-US"`; `web/src/i18n/` contains a single `terminalai.ftl`. The existing P3 i18n item above covers catalog hygiene (orphaned keys, hardcoded strings) but not locale coverage or negotiation.
-  Touches: `crates/terminalai-core/src/i18n.rs`, `web/src/i18n.js`, `web/src/i18n/`
-  Acceptance: either a second locale plus OS-preference negotiation with a documented fallback chain, or a recorded decision that the project ships English only — in which case say so in `README.md` and stop paying for the abstraction.
-  Complexity: M
-
 - [ ] P3 — Show agent-reported progress on the taskbar
   Why: the overlay-icon half of the taskbar integration already ships; the progress half is missing its input, and an addon that decodes it exists.
   Evidence: `update_taskbar_waiting_count` (`crates/terminalai-app/src/main.rs:1682`) sets an overlay icon only. `@xterm/addon-progress` 0.2.0 parses ConEmu's `OSC 9;4` progress sequence, new in the xterm 6.0 cycle (https://github.com/xtermjs/xterm.js/releases); `ITaskbarList3::SetProgressValue` is the sink.

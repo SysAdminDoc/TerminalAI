@@ -266,6 +266,21 @@ rather than as a public issue. This tool supervises agent processes and holds a 
 grants control of them, so a defect in that boundary should not be public before there is a build
 that fixes it.
 
+## Language
+
+TerminalAI ships **English only**, and that is a decision rather than a gap — recorded 2026-08-07.
+
+The Fluent catalog stays anyway, because what it buys is not translation. It is one source of truth
+for two runtimes: the daemon formats the same message identifiers the renderer does, and without a
+shared file every status label would exist twice and drift. It is also the only side that checks —
+`fluent-bundle` treats a duplicate message identifier as an error, while the JS loader silently
+takes the last definition, and a duplicate key has shipped once and was caught by the Rust side and
+nothing else.
+
+Adding a locale needs OS-preference negotiation and a documented fallback chain, neither of which
+exists. A test fails if a second catalog appears, so adding one is a deliberate change to this
+decision rather than a half-built mechanism nothing selects between.
+
 ## Requirements
 
 - Rust 1.88+ (the true floor; see Build for how to re-derive it)
