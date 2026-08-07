@@ -33,13 +33,6 @@ item above; where the two touch, the note says so.
 
 ### P2
 
-- [ ] P2 — Extract the row renderers out of `main.js`
-  Why: `styles.css` was un-minified on 2026-08-04 and is now one declaration per line, but `main.js` still carries 62 lines over 120 columns — 3,506 lines with a longest line of 1,348 — and those are the renderers, where a typo is least visible and most load-bearing.
-  Evidence: `web/tests/lineLength.test.mjs` holds `MAIN_JS_LONG_LINE_BUDGET = 62` as a ratchet; every other file under `web/src/` is already inside the limit. The long lines are single-expression HTML templates (`renderRows`, the fleet row `<article>` at `main.js:1447-1453`, the wide-meta and reply blocks), so mechanical rewrapping changes the string a template produces rather than only its layout. Five extracted modules (`broadcast.js`, `fleetRows.js`, `projects.js`, `rateLimit.js`, `rollup.js`) establish the pattern.
-  Touches: `web/src/main.js`, new modules under `web/src/`, `web/tests/lineLength.test.mjs`, the tests that slice `main.js` by function name
-  Acceptance: the row and wide-meta renderers live in their own modules within the 120-column limit, the ratchet in `lineLength.test.mjs` drops to what remains, and the rendered markup is unchanged — verified by driving the UI, not by reading the diff.
-  Complexity: M
-
 - [ ] P2 — An approvals inbox across the fleet
   Why: permission decisions are the fleet's blocking work and are currently answered one focused session at a time; the field has converged on a single queue, and Claude Code exposes the hook needed to answer programmatically.
   Evidence: `SessionStatus::NeedsApproval` exists (`crates/terminalai-core/src/session.rs:73`) but no aggregate surface does. `PermissionRequest`/`PermissionDenied` are already managed in `hook_config.rs` and support `updatedInput` and `retry` (code.claude.com/docs/en/hooks). Requested at anthropics/claude-code#58247; shipped by wmux and octomux (https://github.com/ShreyPaharia/octomux).

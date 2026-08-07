@@ -13,11 +13,11 @@ const JS_LIMIT = 120;
  * main.js still carries long lines, almost all of them single-expression HTML
  * templates. They are tracked as a ratchet rather than reformatted in one pass:
  * breaking a template literal changes the string it produces, so the fix is to
- * extract those renderers into modules — tracked on the roadmap — not to rewrap
- * them mechanically. What this number guarantees is that the debt cannot grow
- * while that is pending.
+ * extract those renderers into modules — as the fleet row was, into
+ * rowMarkup.js — not to rewrap them mechanically. What this number guarantees is
+ * that the debt cannot grow while the rest is pending. It only ever goes down.
  */
-const MAIN_JS_LONG_LINE_BUDGET = 62;
+const MAIN_JS_LONG_LINE_BUDGET = 54;
 
 const dir = new URL("../src/", import.meta.url);
 const files = readdirSync(dir).filter((name) => name.endsWith(".css") || name.endsWith(".js"));

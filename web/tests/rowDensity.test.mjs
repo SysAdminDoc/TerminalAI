@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { renderFixtureRow } from "./rowFixture.mjs";
 
 import { JSDOM } from "jsdom";
 
@@ -79,7 +80,7 @@ test("row actions meet the 24px target without widening the compact pitch", () =
   // The 24px hit box and two 1px negative margins occupy 22px; with the 1px
   // flex gap, adjacent fleet controls stay on their documented 23px pitch.
   assert.equal(24 - 1 - 1 + 1, 23);
-  assert.match(main, /class="row-action row-action-queue"/);
+  assert.match(renderFixtureRow(), /class="row-action row-action-queue"/);
 });
 
 test("the fleet row and its column labels share one grid definition", () => {

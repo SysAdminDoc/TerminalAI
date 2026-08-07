@@ -5,6 +5,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Changed
+
+- The fleet row's markup moved out of `main.js` into `web/src/rowMarkup.js`. It was the longest and
+  least reviewable code in the tree — a single-expression template where a typo is invisible in a
+  diff, rendering every row of the fleet. `main.js` drops from 62 lines over 120 columns to 54, and
+  the new module has none.
+
+  The rendered markup is byte-for-byte unchanged, and that is checked rather than asserted: the
+  renderer was moved verbatim first, a spread of fixture sessions was rendered and hashed, and the
+  same fixtures were re-rendered after the template was divided into concatenated pieces. A literal
+  is only ever split outside an interpolation, and an interpolation is always taken whole, so the
+  pieces rejoin to the original bytes.
+
+  The first attempt was caught by exactly that check. Indenting the moved function shifted the lines
+  *inside* the template literal, which are markup rather than source, so every row gained two spaces
+  of indentation — 112 bytes across the fixtures, invisible in review and invisible to every test.
+
+- Three row assertions now read rendered markup instead of grepping `main.js` for a contiguous run
+  of source text. That was always a proxy — it passes when the source happens to contain the right
+  characters and fails when a line is wrapped, neither of which is a fact about what the operator
+  sees. Extracting the renderer made it importable, so `web/tests/rowFixture.mjs` renders a real row
+  and the tests read that.
+
 ## [0.12.0] — 2026-08-06
 
 ### Added

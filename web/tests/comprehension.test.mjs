@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { renderFixtureRow } from "./rowFixture.mjs";
 
-const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+// The fleet row markup lives in `rowMarkup.js` since it was extracted out of
+// this file. These assertions are about what the app renders, not about which
+// module holds the template, so they read both.
+const main =
+  readFileSync(new URL("../src/main.js", import.meta.url), "utf8") +
+  readFileSync(new URL("../src/rowMarkup.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 
@@ -27,7 +33,10 @@ test("every icon-only button says what it does", () => {
 test("controls built at runtime carry a tooltip too", () => {
   // Row actions never appear in index.html, so the static sweep above cannot
   // see them — and they are the densest icons in the app.
-  const row = main.slice(main.indexOf('<div class="row-actions">'), main.indexOf("function updateSession"));
+  // Rendered, not sliced out of the source: the markup is built from
+  // concatenated pieces, so a source slice proves nothing about what an
+  // operator is actually handed.
+  const row = renderFixtureRow({ status: "needs-you" });
   const buttons = [...row.matchAll(/<button[^>]*data-action="([a-z]+)"[^>]*/g)];
   assert.ok(buttons.length >= 5, `only ${buttons.length} row actions found`);
   for (const [markup, action] of buttons) {

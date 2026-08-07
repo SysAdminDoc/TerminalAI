@@ -6,7 +6,12 @@ import { FluentBundle, FluentResource } from "@fluent/bundle";
 
 const catalogSource = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 const i18n = readFileSync(new URL("../src/i18n.js", import.meta.url), "utf8");
-const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+// The fleet row markup lives in `rowMarkup.js` since it was extracted out of
+// this file. These assertions are about what the app renders, not about which
+// module holds the template, so they read both.
+const main =
+  readFileSync(new URL("../src/main.js", import.meta.url), "utf8") +
+  readFileSync(new URL("../src/rowMarkup.js", import.meta.url), "utf8");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 // Every module, read from the directory rather than a hand-kept list: a list
 // silently drops a newly extracted renderer out of coverage, which is the

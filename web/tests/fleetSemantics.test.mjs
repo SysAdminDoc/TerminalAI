@@ -1,16 +1,27 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { renderFixtureRow } from "./rowFixture.mjs";
 
 import { JSDOM } from "jsdom";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
+// The fleet row markup lives in `rowMarkup.js` since it was extracted out of
+// this file. These assertions are about what the app renders, not about which
+// module holds the template, so they read both.
+const main =
+  readFileSync(new URL("../src/main.js", import.meta.url), "utf8") +
+  readFileSync(new URL("../src/rowMarkup.js", import.meta.url), "utf8");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 
 test("fleet container and rows use single-select listbox semantics", () => {
   assert.match(html, /id="fleet-list"[^>]*role="listbox"/);
-  assert.match(main, /role="option" tabindex="-1" aria-posinset="1" aria-setsize="1" aria-selected="false"/);
+  // Read off the rendered row. The attributes are one contiguous run in the
+  // markup whatever the source does with line breaks.
+  assert.match(
+    renderFixtureRow(),
+    /role="option" tabindex="-1" aria-posinset="1" aria-setsize="1" aria-selected="false"/,
+  );
   assert.match(main, /aria-posinset/);
   assert.match(main, /aria-setsize/);
   assert.match(main, /aria-selected/);
