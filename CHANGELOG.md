@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+## [0.12.1] — 2026-08-06
+
 ### Changed
 
 - The fleet row's markup moved out of `main.js` into `web/src/rowMarkup.js`. It was the longest and

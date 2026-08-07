@@ -149,7 +149,16 @@ else {
     function Measure-CargoTests([string[]]$cargoArguments) {
         $output = & cargo @cargoArguments 2>&1
         if ($LASTEXITCODE -ne 0) {
-            throw "cargo $($cargoArguments -join ' ') failed; fix the suite before checking its count"
+            # Say WHICH test failed. Throwing the output away leaves the operator
+            # with "the suite failed" and a re-run that usually passes, which is
+            # the least actionable thing this gate can report -- the failures
+            # seen here have been load-sensitive ones that only appear while the
+            # workspace is also rebuilding.
+            $failed = $output |
+                Select-String -Pattern '^(test .* \.\.\. FAILED|\s+[a-z0-9_]+::[a-z0-9_:]+$|thread .* panicked at .*)$' |
+                Select-Object -First 20
+            $detail = if ($failed) { "`n" + ($failed -join "`n") } else { "`n(cargo produced no recognisable failure lines; re-run it directly)" }
+            throw "cargo $($cargoArguments -join ' ') failed; fix the suite before checking its count.$detail"
         }
         $total = 0
         foreach ($line in $output) {
