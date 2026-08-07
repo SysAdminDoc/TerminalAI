@@ -1,0 +1,15 @@
+rows 5
+cols 6
+why ECMA-48 IL opens blank lines at the cursor and pushes the rest of the
+why scrolling region down; the line pushed past the bottom margin is lost rather
+why than spilling onto rows outside the region.
+stream \e[Ha\r\nb\r\nc\r\nd\r\ne
+stream \e[2;4r
+stream \e[2;1H
+stream \e[1L
+cursor 1 0
+line a
+line
+line b
+line c
+line e

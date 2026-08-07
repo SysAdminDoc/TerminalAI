@@ -1,0 +1,15 @@
+rows 5
+cols 6
+why ECMA-48 IND at the bottom margin scrolls the scrolling region up by one
+why line and leaves the cursor where it was. Rows outside the region set by
+why DECSTBM are untouched, which is the whole point of a region.
+stream \e[Ha\r\nb\r\nc\r\nd\r\ne
+stream \e[2;4r
+stream \e[4;1H
+stream \eD
+cursor 3 0
+line a
+line c
+line d
+line
+line e

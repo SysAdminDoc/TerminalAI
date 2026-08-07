@@ -1,0 +1,9 @@
+rows 1
+cols 8
+why With IRM set every graphic character inserts rather than replaces, pushing
+why the remainder of the line right by one column each time.
+stream abcdef
+stream \e[1;3H\e[4h
+stream XY
+cursor 0 4
+line abXYcdef

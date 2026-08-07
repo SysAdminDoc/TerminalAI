@@ -1,0 +1,15 @@
+rows 3
+cols 4
+why DECALN is a screen alignment pattern: it overwrites the whole page with E,
+why resets the margins to the full screen and homes the cursor. The IND at the
+why end is what proves the margins were released - it sits on what would have
+why been the bottom margin, so a surviving region would scroll a row blank
+why instead of simply moving the cursor down.
+stream \e[Hold\r\nrows\r\nhere
+stream \e[1;2r
+stream \e#8
+stream \e[2;1H\eD
+cursor 2 0
+line EEEE
+line EEEE
+line EEEE

@@ -5,7 +5,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Added
+
+- A VT conformance corpus for the terminal grid. Eighteen fixtures under
+  `crates/terminalai-core/tests/fixtures/vt/` each carry a byte stream, the grid a conforming
+  terminal must hold afterwards, and the rule that decides it — scrolling regions and IND/RI at the
+  margins, ICH/DCH/ECH, IL/DL, tab set and clear, the alternate screen, autowrap, insert mode, ED,
+  wide characters, combining marks, REP and DECALN. Expectations are derived from ECMA-48 and
+  DEC STD 070, not captured from this implementation: an expectation taken from the code under test
+  only pins today's behaviour and would ratify a bug as the standard. Every case is also replayed at
+  six chunk sizes, because a pty hands over whatever the last read contained and an escape sequence
+  arrives split as often as whole.
+
 ### Fixed
+
+- `CSI n @` (ICH) was parsed and dropped. The screen already knew how to insert blanks — insert mode
+  has always used it — but nothing dispatched the sequence, so an agent inserting characters got
+  nothing. Found by the corpus above on its first run.
+- `ESC # 8` (DECALN) was ignored. It is a screen alignment pattern, so a program that sends it
+  expects the whole page overwritten and the margins released; ignoring it left stale text under a
+  scrolling region that was never let go.
 
 - A hook now reads the clock **once** for the whole event. Applying one hook made four separate
   `SystemTime::now()` calls under one lock — the quota reading's `reported_at`, its computed

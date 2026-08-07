@@ -1,0 +1,11 @@
+rows 3
+cols 6
+why ED with parameter zero erases from the cursor to the end of the page,
+why including the cursor cell itself, and leaves everything before it alone.
+stream \e[Haaa\r\nbbb\r\nccc
+stream \e[2;2H
+stream \e[0J
+cursor 1 1
+line aaa
+line b
+line

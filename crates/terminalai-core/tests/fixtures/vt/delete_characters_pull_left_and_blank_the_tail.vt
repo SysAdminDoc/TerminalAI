@@ -1,0 +1,10 @@
+rows 1
+cols 8
+why ECMA-48 DCH removes characters at the cursor and pulls the remainder of the
+why line left, filling the vacated columns at the right with blanks. The cursor
+why does not move.
+stream abcdefgh
+stream \e[1;3H
+stream \e[2P
+cursor 0 2
+line abefgh

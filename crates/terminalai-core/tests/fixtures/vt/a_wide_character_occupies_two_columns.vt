@@ -1,0 +1,8 @@
+rows 1
+cols 6
+why An East Asian wide character takes two columns; the second is a
+why continuation carrying no character of its own, so text after it starts at
+why the column past the pair rather than one column along.
+stream \xe6\xbc\xa2\xe5\xad\x97x
+cursor 0 5
+line \xe6\xbc\xa2\xe5\xad\x97x

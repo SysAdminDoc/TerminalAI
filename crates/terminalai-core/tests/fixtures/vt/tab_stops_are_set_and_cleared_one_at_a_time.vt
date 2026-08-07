@@ -1,0 +1,11 @@
+rows 1
+cols 24
+why HTS sets a tab stop at the cursor column and TBC with parameter zero clears
+why only the stop under the cursor, leaving the default every-eight stops in
+why place. HT then advances to whichever stop is next.
+stream \e[1;5H\eH
+stream \e[1;1H\tX
+stream \e[1;5H\e[0g
+stream \e[1;1H\tZ
+cursor 0 9
+line     X   Z

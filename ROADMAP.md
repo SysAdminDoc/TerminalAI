@@ -134,13 +134,6 @@ additions; where they touch, the note says so.
 
 ### P2
 
-- [ ] P2 — A VT conformance corpus for the grid
-  Why: `grid.rs` has property tests but no conformance cases, and it is the renderer for the pinned split view — so every divergence from a real terminal is currently invisible until someone looks at a pane.
-  Evidence: alacritty's ref-test harness is raw recording bytes plus `size.json` and a serialized `grid.json`, replayed in-process with `parser.advance()` — no GUI, no PTY: https://github.com/alacritty/alacritty/blob/master/alacritty_terminal/tests/ref.rs . Its case list covers exactly this grid's untested areas (`vttest_origin_mode_1/2`, `vttest_insert`, `vttest_scroll`, `vttest_tab_clear_set`, `saved_cursor_alt`, `wrapline_alt_toggle`, `zerowidth`, `csi_rep`, `decaln_reset`, plus real captures `tmux_htop`, `vim_*`). Apache-2.0, so the corpus is reusable with attribution.
-  Touches: `crates/terminalai-core/tests/grid_ref.rs`, new fixture directory under `crates/terminalai-core/tests/fixtures/`
-  Acceptance: recorded byte streams replay into the grid and compare against a serialized expected grid; the zero-width and resize fixes above are covered by cases rather than by hand-written assertions. `esctest2` is explicitly not adopted — it reads cells back via DECRQCRA, which `vte` 0.15 does not dispatch.
-  Complexity: M
-
 - [ ] P2 — Model-based tests over the registry and session store
   Why: 411 example-based tests are structurally blind to the failure this program is most exposed to — an *ordering* of individually legal operations whose end state diverges from what the model says it should be.
   Evidence: `proptest` is already a workspace dependency and used in exactly one module (`crates/terminalai-core/src/grid.rs`). `proptest-state-machine` provides `ReferenceStateMachine` + `StateMachineTest` + `prop_state_machine!` and lives in the proptest repo — https://docs.rs/proptest-state-machine/ . The surface under test — create, kill, restart, archive, lease, release, persist, reload, quarantine — is `crates/terminalai-core/src/registry/` plus `store.rs`. The decomposition this item was waiting on has landed: admission and restart policy are now pure modules (`admission.rs`, `restart.rs`) the reference model can be written against directly, and the registry itself is split into `mod.rs` plus ingest/lifecycle/output/prompt_queue/provisioning/sampling.
@@ -149,6 +142,13 @@ additions; where they touch, the note says so.
   Complexity: L
 
 ### P3
+
+- [ ] P3 — Implement origin mode, or say the grid does not have it
+  Why: DECOM is parsed and silently dropped. A program that sets it and then addresses the cursor relative to the top margin draws in the wrong place, and nothing anywhere says so — which is worse than not accepting the sequence.
+  Evidence: `set_private_mode`/`unset_private_mode` in `crates/terminalai-core/src/grid.rs` match `LineWrap` and the alternate-screen modes and fall through on everything else, so `PrivateMode::Named(NamedPrivateMode::Origin)` (`CSI ?6h`) reaches the handler and is ignored. `vte` 0.15 does dispatch it. Found while building the conformance corpus, which covers every other sequence in its target list; the two cases it would need (`vttest_origin_mode_1/2`) are the ones it does not have.
+  Touches: `crates/terminalai-core/src/grid.rs`, `crates/terminalai-core/tests/fixtures/vt/`
+  Acceptance: either DECOM makes CUP row-relative to the top margin and confines the cursor to the scrolling region, covered by fixtures for both the set and reset states, or the decision not to support it is recorded in `grid.rs` next to the modes that are supported, with the reason. Silently ignoring it is not one of the options.
+  Complexity: S
 
 - [ ] P3 — Close the coverage gaps the first `llvm-cov` run named
   Why: coverage was run once on 2026-08-04 (72.15% regions, 71.28% lines workspace-wide) to find untested arms rather than to chase a number, and it named two modules whose low figures are not explained by being entry points.

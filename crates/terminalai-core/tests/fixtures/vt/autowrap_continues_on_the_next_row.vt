@@ -1,0 +1,8 @@
+rows 2
+cols 4
+why With autowrap on, a graphic character written past the last column starts
+why the next row rather than overwriting the last cell of the current one.
+stream abcdef
+cursor 1 2
+line abcd
+line ef

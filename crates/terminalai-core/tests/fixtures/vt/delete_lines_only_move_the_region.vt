@@ -1,0 +1,15 @@
+rows 5
+cols 6
+why ECMA-48 DL removes lines at the cursor and pulls the rest of the scrolling
+why region up, opening a blank line at the bottom margin. Rows outside the
+why region do not move into it.
+stream \e[Ha\r\nb\r\nc\r\nd\r\ne
+stream \e[2;4r
+stream \e[2;1H
+stream \e[1M
+cursor 1 0
+line a
+line c
+line d
+line
+line e

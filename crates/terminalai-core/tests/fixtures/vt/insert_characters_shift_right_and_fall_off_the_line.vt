@@ -1,0 +1,10 @@
+rows 1
+cols 8
+why ECMA-48 ICH inserts blanks at the cursor and shifts the rest of the line
+why right; characters pushed past the last column are lost, not wrapped. The
+why cursor does not move.
+stream abcdefgh
+stream \e[1;3H
+stream \e[2@
+cursor 0 2
+line ab  cdef

@@ -1,0 +1,15 @@
+rows 5
+cols 6
+why ECMA-48 RI at the top margin scrolls the region down by one line, opening a
+why blank row at the top of the region and pushing the region's last line out.
+why Rows outside the region are untouched.
+stream \e[Ha\r\nb\r\nc\r\nd\r\ne
+stream \e[2;4r
+stream \e[2;1H
+stream \eM
+cursor 1 0
+line a
+line
+line b
+line c
+line e

@@ -1,0 +1,10 @@
+rows 2
+cols 8
+why ECMA-48 REP repeats the last graphic character the given number of times,
+why so `a` followed by REP 3 is four a's in total and not three. With no
+why preceding character it must do nothing rather than repeat a blank.
+stream a\e[3b
+stream !\e[2b
+cursor 0 7
+line aaaa!!!
+line

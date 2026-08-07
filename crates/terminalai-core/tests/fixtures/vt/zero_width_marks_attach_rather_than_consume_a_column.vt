@@ -1,0 +1,8 @@
+rows 1
+cols 6
+why A combining mark has no column of its own in any real terminal, so it
+why attaches to the cell before it. Consuming a column would shift everything
+why after it and misreport how wide the line is.
+stream e\xcc\x81xy
+cursor 0 3
+line e\xcc\x81xy

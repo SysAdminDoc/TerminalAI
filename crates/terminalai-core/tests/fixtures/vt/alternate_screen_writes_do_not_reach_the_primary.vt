@@ -1,0 +1,12 @@
+rows 3
+cols 10
+why The alternate screen is a separate page. Whatever an agent draws on it - a
+why pager, a full-screen editor - must not survive the switch back, which is the
+why property the pinned split view depends on.
+stream \e[Hprimary
+stream \e[?1049h
+stream \e[Hscratch
+stream \e[?1049l
+line primary
+line
+line

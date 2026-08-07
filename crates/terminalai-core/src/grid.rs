@@ -659,6 +659,13 @@ impl Handler for GridState {
         self.screen.delete_lines(count);
     }
 
+    /// ICH. The screen already knew how to do this - insert mode has always
+    /// used it - but nothing dispatched the escape sequence, so `CSI n @`
+    /// parsed cleanly and did nothing. Found by the conformance corpus.
+    fn insert_blank(&mut self, count: usize) {
+        self.screen.insert_blank(count);
+    }
+
     fn erase_chars(&mut self, count: usize) {
         self.screen.wrap_pending = false;
         self.screen.cursor_col = self
@@ -696,6 +703,26 @@ impl Handler for GridState {
 
     fn reset_state(&mut self) {
         self.reset();
+    }
+
+    /// DECALN. Fills the page with `E`, resets the margins to the full screen
+    /// and homes the cursor.
+    ///
+    /// It is a screen alignment pattern, not a decoration: a program that sends
+    /// it expects the whole page overwritten and the region gone. Ignoring it
+    /// left stale text on the grid under a scrolling region that was never
+    /// released, which is worse than not supporting it at all.
+    fn decaln(&mut self) {
+        self.screen.set_scrolling_region(1, None);
+        self.screen.cells.fill(Cell {
+            character: 'E',
+            combining: ['\0'; MAX_COMBINING],
+            combining_len: 0,
+            continuation: false,
+        });
+        self.screen.cursor_row = 0;
+        self.screen.cursor_col = 0;
+        self.screen.wrap_pending = false;
     }
 
     fn reverse_index(&mut self) {

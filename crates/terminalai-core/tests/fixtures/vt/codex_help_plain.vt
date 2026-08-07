@@ -1,0 +1,11 @@
+rows 4
+cols 120
+why A bare CRLF pair on its own produces an empty row rather than being folded
+why into the next line break, so the blank line the help text prints is retained.
+stream Codex CLI\r\n\r\n
+stream If no subcommand is specified, options will be forwarded to the interactive CLI.\r\n
+cursor 3 0
+line Codex CLI
+line
+line If no subcommand is specified, options will be forwarded to the interactive CLI.
+line

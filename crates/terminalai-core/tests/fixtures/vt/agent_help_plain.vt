@@ -1,0 +1,15 @@
+# Ported from the previous hand-written reference test: a stable capture of the
+# installed CLI's non-interactive help header. No credentials, no network, no
+# version-dependent subprocess.
+rows 4
+cols 120
+why CR returns to column one and LF opens the next row, so three CRLF-separated
+why lines occupy rows one to three and leave the cursor at the start of row four.
+stream Usage: claude [options] [command] [prompt]\r\n
+stream Claude Code - starts an interactive session by default, use -p/--print for\r\n
+stream non-interactive output\r\n
+cursor 3 0
+line Usage: claude [options] [command] [prompt]
+line Claude Code - starts an interactive session by default, use -p/--print for
+line non-interactive output
+line

@@ -1,0 +1,9 @@
+rows 1
+cols 8
+why ECMA-48 ECH replaces characters with blanks in place. Unlike DCH nothing
+why moves, which is what distinguishes the two and is easy to implement wrongly.
+stream abcdefgh
+stream \e[1;3H
+stream \e[2X
+cursor 0 2
+line ab  efgh
