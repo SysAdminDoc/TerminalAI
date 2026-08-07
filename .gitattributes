@@ -1,0 +1,38 @@
+# Line endings are the repository's decision, not the checkout's.
+#
+# Without this file, what lands on disk depends entirely on each machine's
+# `core.autocrlf`, so the same commit is a different byte sequence for different
+# people. That is not a cosmetic difference here — several frontend tests assert
+# cross-language contracts by reading Rust source as one string, and a pattern
+# spanning two lines matches or fails depending on how the file was checked out.
+# It bit for real on 2026-08-07: a tool rewrote source files in text mode, they
+# became CRLF, and a passing assertion started failing with the code unchanged.
+#
+# `eol=lf` rather than plain `text=auto`, deliberately. `text=auto` normalizes
+# what is *stored* and still lets the working tree be CRLF, which is exactly the
+# state that broke. Everything this repository builds — rustc, node, vite,
+# PowerShell 7 — reads LF without complaint on Windows.
+* text=auto eol=lf
+
+# Content whose bytes are the point. `-text` keeps Git from touching them at
+# all; a "helpful" newline conversion inside these corrupts the file.
+*.png binary
+*.ico binary
+*.jpg binary
+*.gif binary
+*.webp binary
+*.pdf binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.msi binary
+
+# Terminal conformance fixtures are exact byte streams: the escape sequences and
+# the bare carriage returns in them are the thing under test, and a line-ending
+# rewrite would silently change what each case asserts.
+*.vt -text
+
+# Lockfiles are generated. Marking them keeps a diff readable without inviting
+# hand edits.
+Cargo.lock linguist-generated=true
+web/package-lock.json linguist-generated=true
