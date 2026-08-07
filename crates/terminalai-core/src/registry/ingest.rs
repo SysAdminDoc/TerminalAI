@@ -20,12 +20,27 @@ impl SessionRegistry {
         self.apply_hook_with_token(event, None)
     }
 
+    /// [`Self::apply_hook`] at an instant the caller chose.
+    pub fn apply_hook_at(&self, event: HookEvent, now: SystemTime) -> bool {
+        self.apply_hook_with_token_at(event, None, now)
+    }
+
     /// Apply a hook whose per-session secret was carried by the hook adapter.
     ///
     /// The daemon-wide HTTP bearer token only proves that a caller reached the
     /// listener. This second token is the session identity: it is minted when
     /// the row is created and placed only in that agent process's environment.
     pub fn apply_hook_with_token(&self, event: HookEvent, hook_token: Option<&str>) -> bool {
+        self.apply_hook_with_token_at(event, hook_token, SystemTime::now())
+    }
+
+    /// [`Self::apply_hook_with_token`] at an instant the caller chose.
+    pub fn apply_hook_with_token_at(
+        &self,
+        event: HookEvent,
+        hook_token: Option<&str>,
+        now: SystemTime,
+    ) -> bool {
         if let HookSignal::Unknown { event: hook_name } = &event.signal {
             tracing::warn!(
                 agent = ?event.agent,
@@ -34,7 +49,7 @@ impl SessionRegistry {
                 "unknown agent hook event observed"
             );
         }
-        self.apply_hook_from(event, StatusSource::Hook, hook_token)
+        self.apply_hook_from_at(event, StatusSource::Hook, hook_token, now)
     }
 
     /// Re-read the session's branch when it is worth re-reading.
@@ -74,11 +89,19 @@ impl SessionRegistry {
         Some(branch)
     }
 
-    fn apply_hook_from(
+    /// Apply one hook at an instant the caller measured.
+    ///
+    /// The clock is read once per event, not once per decision inside it. Four
+    /// separate `SystemTime::now()` calls used to run under this one lock — the
+    /// quota's `reported_at`, its `resets_at`, the expiry check and the
+    /// notification observation — so a single event could stamp four different
+    /// times and a window-expiry test could only reach the boundary by sleeping.
+    fn apply_hook_from_at(
         &self,
         mut event: HookEvent,
         source: StatusSource,
         hook_token: Option<&str>,
+        now: SystemTime,
     ) -> bool {
         // The pipe transport accepts an already-normalized event and therefore
         // bypasses `parse_hook`; enforce the same boundary for both transports.
@@ -164,36 +187,35 @@ impl SessionRegistry {
                     }
                 }
                 HookSignal::SessionEnd | HookSignal::Stop | HookSignal::StopFailure => {
-                    entry.session.set_status_from(SessionStatus::Idle, source)
+                    entry.session.set_status_from_at(SessionStatus::Idle, now, source)
                 }
                 HookSignal::UserPromptSubmit
                 | HookSignal::PreToolUse
                 | HookSignal::SubagentStart => entry
                     .session
-                    .set_status_from(SessionStatus::Working, source),
+                    .set_status_from_at(SessionStatus::Working, now, source),
                 HookSignal::PostToolUse
                 | HookSignal::PostToolUseFailure
                 | HookSignal::SubagentStop
                 | HookSignal::PostCompact => entry
                     .session
-                    .set_status_from(SessionStatus::Thinking, source),
+                    .set_status_from_at(SessionStatus::Thinking, now, source),
                 HookSignal::PermissionRequest | HookSignal::PermissionDenied => entry
                     .session
-                    .set_status_from(SessionStatus::NeedsApproval, source),
+                    .set_status_from_at(SessionStatus::NeedsApproval, now, source),
                 HookSignal::PreCompact => entry
                     .session
-                    .set_status_from(SessionStatus::Thinking, source),
+                    .set_status_from_at(SessionStatus::Thinking, now, source),
                 HookSignal::Notification { notification } => match notification {
                     HookNotification::PermissionPrompt => entry
                         .session
-                        .set_status_from(SessionStatus::NeedsApproval, source),
+                        .set_status_from_at(SessionStatus::NeedsApproval, now, source),
                     HookNotification::IdlePrompt => entry
                         .session
-                        .set_status_from(SessionStatus::AwaitingInput, source),
+                        .set_status_from_at(SessionStatus::AwaitingInput, now, source),
                     HookNotification::Other => {}
                 },
                 HookSignal::RateLimited { ref limit } => {
-                    let now = SystemTime::now();
                     let reported = RateLimit {
                         scope: limit.scope.clone(),
                         used_percent: limit.used_percent,
@@ -213,14 +235,13 @@ impl SessionRegistry {
                     entry.session.rate_limit = Some(reported);
                     entry
                         .session
-                        .set_status_from(SessionStatus::RateLimited, source);
+                        .set_status_from_at(SessionStatus::RateLimited, now, source);
                 }
                 HookSignal::RateLimitCleared { ref limit } => {
                     // Positive evidence the window has room. Keep the reading:
                     // it is the headroom the header warns on, and throwing it
                     // away is why the fleet could only speak about quota after
                     // work had already stopped.
-                    let now = SystemTime::now();
                     entry.session.quota = Some(RateLimit {
                         scope: limit.scope.clone(),
                         used_percent: limit.used_percent,
@@ -244,7 +265,7 @@ impl SessionRegistry {
                     {
                         entry
                             .session
-                            .set_status_from(SessionStatus::Thinking, source);
+                            .set_status_from_at(SessionStatus::Thinking, now, source);
                     }
                 }
                 HookSignal::Unknown { .. } => {}
@@ -253,20 +274,18 @@ impl SessionRegistry {
             // window has since reset stops holding the row down. Runs after the
             // match so a fresh limit in this same event is not immediately
             // undone by its own predecessor's expiry.
-            if !matches!(event.signal, HookSignal::RateLimited { .. }) {
-                let now = SystemTime::now();
-                if entry
+            if !matches!(event.signal, HookSignal::RateLimited { .. })
+                && entry
                     .session
                     .rate_limit
                     .as_ref()
                     .is_some_and(|limit| limit.is_expired(now))
-                {
-                    entry.session.rate_limit = None;
-                    if entry.session.status == SessionStatus::RateLimited {
-                        entry
-                            .session
-                            .set_status_from(SessionStatus::Thinking, source);
-                    }
+            {
+                entry.session.rate_limit = None;
+                if entry.session.status == SessionStatus::RateLimited {
+                    entry
+                        .session
+                        .set_status_from_at(SessionStatus::Thinking, now, source);
                 }
             }
             // A non-idle provider signal means the prior composition has been
@@ -288,7 +307,7 @@ impl SessionRegistry {
                 &session,
                 previous_status,
                 previous_state_since,
-                SystemTime::now(),
+                now,
             );
             (session, notifications)
         };
@@ -309,9 +328,14 @@ impl SessionRegistry {
     /// the matching native thread id; unknown external threads never create a
     /// fleet entry.
     pub fn apply_agent_event(&self, event: AgentEvent) -> bool {
+        self.apply_agent_event_at(event, SystemTime::now())
+    }
+
+    /// [`Self::apply_agent_event`] at an instant the caller chose.
+    pub fn apply_agent_event_at(&self, event: AgentEvent, now: SystemTime) -> bool {
         let matched = match event.clone() {
-            AgentEvent::Hook(event) => self.apply_hook(event),
-            AgentEvent::AppServer(event) => self.apply_app_server_event(event),
+            AgentEvent::Hook(event) => self.apply_hook_at(event, now),
+            AgentEvent::AppServer(event) => self.apply_app_server_event_at(event, now),
         };
         if matched {
             self.emit(RegistryEvent::AgentEvent { event });
@@ -319,7 +343,7 @@ impl SessionRegistry {
         matched
     }
 
-    fn apply_app_server_event(&self, event: AppServerEvent) -> bool {
+    fn apply_app_server_event_at(&self, event: AppServerEvent, now: SystemTime) -> bool {
         let Some(thread_id) = app_server_thread_id(&event) else {
             return false;
         };
@@ -329,7 +353,7 @@ impl SessionRegistry {
         let Some(signal) = app_server_signal(&event) else {
             return true;
         };
-        self.apply_hook_from(
+        self.apply_hook_from_at(
             HookEvent {
                 agent: crate::agent::Agent::Codex,
                 session_id: Some(thread_id.to_owned()),
@@ -341,6 +365,7 @@ impl SessionRegistry {
             },
             StatusSource::AppServer,
             None,
+            now,
         )
     }
 

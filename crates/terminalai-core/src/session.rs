@@ -458,7 +458,23 @@ impl Session {
 
     /// Apply a status transition with the evidence source shown in diagnostics.
     pub fn set_status_from(&mut self, status: SessionStatus, source: StatusSource) {
-        self.set_status_at(status, SystemTime::now(), source, false);
+        self.set_status_from_at(status, SystemTime::now(), source);
+    }
+
+    /// Apply a status transition at an instant the caller measured.
+    ///
+    /// One event should stamp one time. Reading the clock again per transition
+    /// lets a single hook produce a row whose reported quota, status stamp and
+    /// expiry check disagree by however long the lock was held — and it is what
+    /// makes a window-expiry test have to sleep instead of stating the time it
+    /// means.
+    pub fn set_status_from_at(
+        &mut self,
+        status: SessionStatus,
+        now: SystemTime,
+        source: StatusSource,
+    ) {
+        self.set_status_at(status, now, source, false);
     }
 
     fn set_status_at(

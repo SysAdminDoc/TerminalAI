@@ -148,13 +148,6 @@ additions; where they touch, the note says so.
   Acceptance: a reference model with no threads, PTY or disk runs alongside the real registry and store over generated operation sequences; a divergence shrinks to a minimal reproducing sequence. Start sequential-mode only.
   Complexity: L
 
-- [ ] P2 — A mock clock for the time-dependent state machines
-  Why: backoff, lease expiry, rate-limit windows, dwell and notification grace are all time-driven, and `registry.rs` alone makes 52 time calls — so those behaviours are currently either sleep-based tests or untested.
-  Evidence: `mock_instant` provides drop-in `Instant`/`SystemTime` with `MockClock::advance()` — https://crates.io/crates/mock_instant . The repo has already been bitten by clock-granularity assumptions: the 2026-08-03 `CLAUDE.md` entry on two files sharing a 15.6 ms tick, and the `BIRTH_GRACE` constant that exists to paper over it.
-  Touches: `crates/terminalai-core/src/registry.rs`, `session.rs`, `notification.rs`, `lease.rs`, `Cargo.toml`
-  Acceptance: restart backoff, the restart window, lease expiry and notification grace are asserted by advancing a mock clock rather than sleeping; no test in those areas calls `thread::sleep`. Prerequisite for the windowed restart budget being testable at all.
-  Complexity: M
-
 ### P3
 
 - [ ] P3 — Close the coverage gaps the first `llvm-cov` run named

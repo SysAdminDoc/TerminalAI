@@ -2620,21 +2620,49 @@ mod tests {
     fn a_reset_window_returns_the_row_to_the_fleet() {
         let registry = SessionRegistry::with_admission(AdmissionConfig::new(2, None));
         insert_session(&registry, &SessionId::new(1), SessionStatus::Working);
-        // A window that has already elapsed by the time the next event lands.
-        assert!(apply_test_hook(&registry, rate_limit_event(0)));
+        // Both events name their own instant, so the window is stated rather
+        // than waited out. This used to report a zero-second window and sleep
+        // 20 ms hoping the wall clock had moved — a coin flip on Windows, whose
+        // system clock ticks every 15.6 ms.
+        let reported_at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let window = Duration::from_secs(300);
+        assert!(apply_test_hook_at(
+            &registry,
+            rate_limit_event(window.as_secs()),
+            reported_at
+        ));
         assert_eq!(registry.snapshot()[0].status, SessionStatus::RateLimited);
 
-        std::thread::sleep(Duration::from_millis(20));
-        apply_test_hook(&registry, HookEvent {
-            agent: Agent::Claude,
-            session_id: None,
-            cwd: Some(Path::new(".").to_path_buf()),
-            signal: HookSignal::PostToolUse,
-            progress: None,
-        });
+        // What the reset window actually decides is whether the *reading* is
+        // still held. The status is not the discriminator: any provider signal
+        // moves the row off `RateLimited`, because an agent emitting tool events
+        // is by definition not being refused. Asserting on status alone is why
+        // this test passed for years without exercising the window at all.
+        let still_limited = |at: SystemTime| {
+            apply_test_hook_at(
+                &registry,
+                HookEvent {
+                    agent: Agent::Claude,
+                    session_id: None,
+                    cwd: Some(Path::new(".").to_path_buf()),
+                    signal: HookSignal::PostToolUse,
+                    progress: None,
+                },
+                at,
+            );
+            registry.snapshot()[0].rate_limit.is_some()
+        };
+
+        assert!(
+            still_limited(reported_at + window - Duration::from_secs(1)),
+            "a second short of the reset is not a reset"
+        );
+        assert!(
+            !still_limited(reported_at + window),
+            "at the reset the reading stops holding the row"
+        );
 
         assert_ne!(registry.snapshot()[0].status, SessionStatus::RateLimited);
-        assert!(registry.snapshot()[0].rate_limit.is_none());
         assert_eq!(registry.admission_snapshot().live_sessions, 1);
     }
 

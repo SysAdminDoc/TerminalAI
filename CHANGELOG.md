@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Fixed
+
+- A hook now reads the clock **once** for the whole event. Applying one hook made four separate
+  `SystemTime::now()` calls under one lock — the quota reading's `reported_at`, its computed
+  `resets_at`, the expiry check, and the notification observation — so a single event could stamp
+  four different times. `apply_hook_at`, `apply_hook_with_token_at` and `apply_agent_event_at` take
+  the instant, and the existing entry points read the clock and delegate.
+- `a_reset_window_returns_the_row_to_the_fleet` never exercised the reset window. It asserted that
+  the row left `RateLimited`, which happens on **any** provider signal regardless of the window,
+  because an agent emitting tool events is by definition not being refused. The window's real effect
+  is whether the stored reading is still held, and that is what the test now asserts — at one second
+  before the reset and at the reset. It also stops sleeping 20 ms hoping the wall clock moved, which
+  on Windows is a coin flip against a 15.6 ms tick.
+
 ## [0.13.0] — 2026-08-07
 
 ### Changed

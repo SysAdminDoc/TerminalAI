@@ -169,6 +169,17 @@ pub(super) fn insert_session(registry: &SessionRegistry, id: &SessionId, status:
 /// for the only matching row, then sending it through the same authenticated
 /// registry entry point as the daemon.
 pub(super) fn apply_test_hook(registry: &SessionRegistry, event: HookEvent) -> bool {
+    apply_test_hook_at(registry, event, SystemTime::now())
+}
+
+/// The same, at an instant the test chose. Time-dependent behaviour — a quota
+/// window reopening, a notification's grace elapsing — is stated by naming the
+/// moment rather than by sleeping until the real clock catches up.
+pub(super) fn apply_test_hook_at(
+    registry: &SessionRegistry,
+    event: HookEvent,
+    now: SystemTime,
+) -> bool {
     let token = {
         let state = lock_state(&registry.inner);
         state
@@ -186,7 +197,7 @@ pub(super) fn apply_test_hook(registry: &SessionRegistry, event: HookEvent) -> b
             })
             .map(|entry| entry.session.hook_token.clone())
     };
-    registry.apply_hook_with_token(event, token.as_deref())
+    registry.apply_hook_with_token_at(event, token.as_deref(), now)
 }
 
 pub(super) fn rate_limit_event(resets_in_seconds: u64) -> HookEvent {
