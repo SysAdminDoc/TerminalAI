@@ -93,7 +93,10 @@ pub struct PresetStore {
 /// The bypass entry is deliberately paired with worktree isolation. An agent
 /// that never asks permission belongs in its own checkout, and shipping the
 /// dangerous half of that pair without the safe half would be the app
-/// recommending it.
+/// recommending it. Its description says so out loud, because on native Windows
+/// neither agent has a first-party filesystem sandbox — Claude Code's is macOS,
+/// Linux and WSL2 only — so the worktree and the environment lease are not a
+/// belt-and-braces addition to a sandbox, they are the whole of the isolation.
 fn builtins() -> Vec<Preset> {
     fn preset(
         name: &str,
@@ -132,7 +135,7 @@ fn builtins() -> Vec<Preset> {
         ),
         preset(
             "Claude · Full auto, isolated",
-            "Never asks — so it runs in its own worktree",
+            "Never asks, and Windows offers it no sandbox — so its own worktree is the isolation",
             LaunchSpec {
                 agent: Agent::Claude,
                 permission: Some(Permission::Bypass),
@@ -423,6 +426,19 @@ mod tests {
         assert!(!bypass.is_empty(), "the axis is not covered at all");
         for preset in bypass {
             assert!(preset.spec.worktree, "{} bypasses without isolation", preset.name);
+            // An operator reading "never asks" cannot tell a missing sandbox
+            // flag from a missing sandbox. On native Windows it is the latter,
+            // and the worktree is the only thing standing in for one.
+            let description = preset
+                .description
+                .as_deref()
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            assert!(
+                description.contains("sandbox") && description.contains("worktree"),
+                "{} does not say what is isolating it: {description:?}",
+                preset.name
+            );
         }
     }
 

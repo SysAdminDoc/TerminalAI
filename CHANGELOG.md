@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Changed
 
+- The README says what a sandbox does and does not mean on native Windows. The em dash in the
+  Claude Sandbox row read as "not mapped" when the truth is that neither agent has a first-party
+  filesystem sandbox on this platform at all — Claude Code's is macOS, Linux and WSL2 only, and
+  Codex's `--sandbox` constrains Codex's own tool calls rather than the OS. So the worktree and the
+  environment lease are not an addition to a sandbox here, they are the whole of the isolation, and
+  the built-in bypass preset now says that in its own description rather than leaving an operator to
+  infer it.
+
 - Agent identity and flag mapping are data, not code. Everything that differs between the two
   supervised families — label, command name, executable stem, version banner, npm package layout,
   the environment variable naming the agent's own config directory, and which launcher choice

@@ -354,6 +354,35 @@ Verified flags, not guesses.
 | Spend cap | `--max-budget-usd` | — |
 | Web search | — | `--search` |
 
+The mapping itself is data, not code: `crates/terminalai-core/agents/builtin.toml` describes each
+family's identity, npm layout and every flag spelling above, and one builder emits the argument
+vector in the order that file lists. An operator can override it with `agents.toml` in the
+TerminalAI data directory; a repository cannot supply one, because a repo-declared agent definition
+would be arbitrary argv arriving with a clone.
+
+### What a sandbox does and does not mean here
+
+The em dash in the Sandbox row is not "TerminalAI does not map this flag". **On native Windows
+neither agent has a first-party filesystem sandbox available at all.** Claude Code's Bash sandbox
+"runs on macOS, Linux, and WSL2. Native Windows is not supported"
+([sandboxing](https://code.claude.com/docs/en/sandboxing)) — so there is no Claude flag to map,
+and a Claude session on this machine is confined by nothing but the permission mode it was started
+in. Codex's `--sandbox` is the only sandbox flag in the table, and what it constrains is Codex's own
+tool calls: `read-only` refuses writes, `workspace-write` permits them under the workspace roots,
+`danger-full-access` removes the check. None of the three is an OS boundary — a shell command the
+agent runs still executes as the operator, with the operator's token.
+
+What actually isolates a session here is the pair this app ships together:
+
+- **the worktree** — a session in its own checkout and branch cannot touch another session's files,
+  which is why the built-in bypass preset turns it on and why it never adopts an existing branch;
+- **the environment lease** — the child gets a sanitized allowlist carrying no credential of any
+  kind, plus its own port block, so a session cannot reach a token merely because the parent shell
+  had one exported.
+
+That pair is the mitigation. If a bypass session needs a real OS boundary, run TerminalAI's agent
+inside a WSL2 distribution or a VM; nothing in this launcher can supply one on native Windows.
+
 ### Which authentication a session runs as
 
 The agent inherits a sanitized environment allowlist that carries no credential of any kind, so by
