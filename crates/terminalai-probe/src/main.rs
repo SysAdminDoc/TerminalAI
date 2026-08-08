@@ -21,7 +21,10 @@ use std::time::Duration;
 use std::{io, io::BufRead, io::Read, io::Write};
 
 use serde::Serialize;
-use terminalai_core::agent::{self, Agent};
+use terminalai_core::agent::{self, Agent, AgentBinary};
+use terminalai_core::compatibility::{
+    CompatibilityFixture, CompatibilityStatus, MATRIX_SCHEMA_VERSION,
+};
 use terminalai_core::launch::{Effort, LaunchSpec, Permission, ResolvedCommand, Sandbox};
 use terminalai_core::pty::{self, PtySession};
 use terminalai_core::{parse_hook_in, HookTransport, SessionId};
@@ -217,7 +220,7 @@ const COMMANDS: &[Subcommand] = &[
     },
     Subcommand {
         name: "verify-goldens",
-        synopsis: "terminalai-probe verify-goldens [--goldens <dir>]  (does the installed CLI accept -- and act on -- the golden argv?)",
+        synopsis: "terminalai-probe verify-goldens [--goldens <dir>]  (verify versioned argv/capability matrix against installed CLIs)",
         run: |args| cmd_verify_goldens(&args[1..]),
     },
 ];
@@ -2267,24 +2270,17 @@ mod tests {
     }
 }
 
-/// Does the installed agent accept the argument vector the goldens pin?
+/// Does the installed agent accept the versioned compatibility matrix?
 ///
-/// The golden fixtures assert what this tool *emits* for a named CLI version.
-/// What they cannot assert is the other half — whether the agent on this
-/// machine accepts it. Those are different facts, and the gap is not
-/// theoretical: `--ax-screen-reader` and `--autocompact` were both filed as
-/// roadmap work and both turned out to postdate the installed Claude Code, so
-/// mapping either would have produced an argv the agent refuses before it
-/// starts, with every golden still green.
+/// The core tests consume the same fixture cases to prove emitted argv shape.
+/// This machine-facing half adds the facts that cannot belong in a deterministic
+/// unit test: which exact CLI version is installed, whether its help lists every
+/// emitted flag, and whether listed options are usable in the mode we launch.
+/// Older fixtures are skipped when a newer matching fixture exists; an agent with
+/// no exact fixture is still a failure rather than an unverified pass.
 ///
-/// So this runs the real `--help` and reports every flag in the golden argv
-/// that the installed CLI does not list. It lives in the probe rather than in
-/// `cargo test` because the answer depends on what is installed, and a unit
-/// test whose result changes when the operator upgrades an unrelated tool is a
-/// test that gets ignored.
-///
-/// Exit codes follow the rest of this binary: 0 clean, 1 usage, 2 the agent
-/// could not be resolved or asked, 3 a golden names a flag the CLI refuses.
+/// Exit codes: 0 clean, 1 usage, 2 the agent could not be resolved or asked, 3
+/// the installed version or compatibility matrix disagrees with the fixture.
 fn cmd_verify_goldens(args: &[String]) -> i32 {
     let (machine, args) = without_json(args);
     let mut goldens = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -2324,24 +2320,18 @@ fn cmd_verify_goldens(args: &[String]) -> i32 {
         return 2;
     }
 
+    let fixture_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../terminalai-core")
+        .canonicalize()
+        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../terminalai-core"));
     let mut reports: Vec<GoldenReport> = Vec::new();
+    let mut matched_agents: Vec<Agent> = Vec::new();
     let mut worst = 0;
     for fixture in &fixtures {
         let name = fixture
             .file_name()
             .map(|value| value.to_string_lossy().into_owned())
             .unwrap_or_default();
-        // The agent is decided by the fixture's own name, so adding a golden
-        // for a third agent is a rename away rather than a code change here.
-        let agent = if name.starts_with("claude") {
-            Agent::Claude
-        } else if name.starts_with("codex") {
-            Agent::Codex
-        } else {
-            eprintln!("{name}: cannot tell which agent this golden is for");
-            worst = worst.max(2);
-            continue;
-        };
         let text = match std::fs::read_to_string(fixture) {
             Ok(text) => text,
             Err(error) => {
@@ -2350,7 +2340,7 @@ fn cmd_verify_goldens(args: &[String]) -> i32 {
                 continue;
             }
         };
-        let golden: GoldenFixture = match serde_json::from_str(&text) {
+        let golden: CompatibilityFixture = match serde_json::from_str(&text) {
             Ok(golden) => golden,
             Err(error) => {
                 eprintln!("{name}: {error}");
@@ -2358,14 +2348,56 @@ fn cmd_verify_goldens(args: &[String]) -> i32 {
                 continue;
             }
         };
-        let binary = match agent::resolve(agent, None) {
+        if let Err(error) = golden.validate() {
+            eprintln!("{name}: invalid compatibility matrix: {error}");
+            worst = worst.max(3);
+            continue;
+        }
+        if golden.schema_version != MATRIX_SCHEMA_VERSION {
+            eprintln!("{name}: unsupported compatibility matrix schema");
+            worst = worst.max(3);
+            continue;
+        }
+        let binary = match agent::resolve(golden.agent, None) {
             Ok(binary) => binary,
             Err(error) => {
-                eprintln!("{name}: cannot resolve {agent:?}: {error}");
+                eprintln!("{name}: cannot resolve {:?}: {error}", golden.agent);
                 worst = worst.max(2);
                 continue;
             }
         };
+        let installed_version = match agent::version_banner(&binary.path) {
+            Ok(version) => version.trim().to_owned(),
+            Err(error) => {
+                eprintln!("{name}: cannot read --version: {error}");
+                worst = worst.max(2);
+                continue;
+            }
+        };
+        let version_match = installed_version.contains(&golden.agent_version);
+        if !version_match {
+            reports.push(GoldenReport {
+                fixture: name,
+                pinned_version: golden.version,
+                installed_version,
+                resolved: binary.path.display().to_string(),
+                version_match,
+                skipped: true,
+                case_count: golden.cases.len(),
+                accepted_cases: 0,
+                rejected_cases: 0,
+                shape_errors: Vec::new(),
+                flags_checked: 0,
+                passthrough_skipped: 0,
+                unlisted: Vec::new(),
+                restricted: Vec::new(),
+                vendor_unlisted: Vec::new(),
+                vendor_present: Vec::new(),
+                vendor_mode_mismatch: Vec::new(),
+            });
+            continue;
+        }
+        matched_agents.push(golden.agent);
         let help = match agent_help(&binary.path) {
             Ok(help) => help,
             Err(error) => {
@@ -2381,48 +2413,127 @@ fn cmd_verify_goldens(args: &[String]) -> i32 {
             worst = worst.max(2);
             continue;
         }
-        let used = terminalai_core::help::flags_used(&golden.expected_args, &golden.value_args);
-        let mapped: Vec<&str> = used
+        let (accepted_cases, rejected_cases, shape_errors, emitted_flags) =
+            verify_matrix_shape(&golden, &binary, &fixture_root);
+        let mut unlisted = Vec::new();
+        let mut restricted = Vec::new();
+        let mut checked = 0;
+        let mut passthrough = 0;
+        for case in golden
+            .cases
             .iter()
-            .copied()
-            .filter(|flag| !golden.passthrough_args.iter().any(|extra| extra == flag))
-            .collect();
-        let unlisted: Vec<String> = mapped
+            .filter(|case| case.status == CompatibilityStatus::Accepted)
+        {
+            let spec = golden.expand_spec(case, &fixture_root);
+            let args = golden.expand_args(case, &fixture_root);
+            let used = terminalai_core::help::flags_used(&args, &spec.extra_args);
+            let mapped: Vec<&str> = used
+                .iter()
+                .copied()
+                .filter(|flag| !spec.extra_args.iter().any(|extra| extra == flag))
+                .collect();
+            unlisted.extend(
+                mapped
+                    .iter()
+                    .copied()
+                    .filter(|flag| !terminalai_core::help::help_lists_flag(&help, flag))
+                    .map(str::to_owned),
+            );
+            restricted.extend(
+                terminalai_core::help::mode_restricted_flags(&help, &args, &spec.extra_args)
+                    .into_iter()
+                    .filter(|(flag, _)| !spec.extra_args.iter().any(|extra| extra == flag))
+                    .map(|(flag, requires)| GoldenRestriction {
+                        flag: flag.to_owned(),
+                        requires,
+                    }),
+            );
+            checked += mapped.len();
+            passthrough += spec
+                .extra_args
+                .iter()
+                .filter(|extra| extra.starts_with('-'))
+                .count();
+        }
+        let vendor_unlisted: Vec<String> = golden
+            .vendor
+            .accepted_flags
             .iter()
-            .copied()
             .filter(|flag| !terminalai_core::help::help_lists_flag(&help, flag))
-            .map(str::to_owned)
+            .cloned()
             .collect();
-        // Listed is not the same as applicable. A flag whose own help says it
-        // works only under another mode is accepted, ignored, and silently does
-        // nothing -- which is what `--max-budget-usd` did in an interactive argv
-        // for two releases while this check reported clean.
-        let restricted: Vec<GoldenRestriction> = terminalai_core::help::mode_restricted_flags(
-            &help,
-            &golden.expected_args,
-            &golden.value_args,
-        )
-        .into_iter()
-        .filter(|(flag, _)| !golden.passthrough_args.iter().any(|extra| extra == flag))
-        .map(|(flag, requires)| GoldenRestriction {
-            flag: flag.to_owned(),
-            requires,
-        })
-        .collect();
-        let checked = mapped.len();
-        let passthrough = used.len() - checked;
-        if !unlisted.is_empty() || !restricted.is_empty() {
+        let vendor_present: Vec<String> = golden
+            .vendor
+            .unsupported_flags
+            .iter()
+            .filter(|flag| terminalai_core::help::help_lists_flag(&help, flag))
+            .cloned()
+            .collect();
+        let vendor_mode_mismatch = golden
+            .vendor
+            .mode_restricted
+            .iter()
+            .filter_map(|expected| {
+                let option = terminalai_core::help::help_options(&help)
+                    .into_iter()
+                    .find(|option| option.flags.iter().any(|flag| flag == &expected.flag));
+                let actual = option
+                    .as_ref()
+                    .and_then(terminalai_core::help::mode_requirement);
+                (actual.as_deref() != Some(expected.requires.as_str())).then_some(format!(
+                    "{} requires {}, installed help says {}",
+                    expected.flag,
+                    expected.requires,
+                    actual.as_deref().unwrap_or("no mode restriction")
+                ))
+            })
+            .collect::<Vec<_>>();
+        let mut shape_errors = shape_errors;
+        for flag in &golden.vendor.accepted_flags {
+            if !emitted_flags.iter().any(|emitted| emitted == flag) {
+                shape_errors.push(format!(
+                    "vendor accepted flag {flag} has no accepted matrix case"
+                ));
+            }
+        }
+        if !unlisted.is_empty()
+            || !restricted.is_empty()
+            || !vendor_unlisted.is_empty()
+            || !vendor_present.is_empty()
+            || !vendor_mode_mismatch.is_empty()
+            || !shape_errors.is_empty()
+        {
             worst = worst.max(3);
         }
         reports.push(GoldenReport {
             fixture: name,
             pinned_version: golden.version,
+            installed_version,
             resolved: binary.path.display().to_string(),
+            version_match,
+            skipped: false,
+            case_count: golden.cases.len(),
+            accepted_cases,
+            rejected_cases,
+            shape_errors,
             flags_checked: checked,
             passthrough_skipped: passthrough,
             unlisted,
             restricted,
+            vendor_unlisted,
+            vendor_present,
+            vendor_mode_mismatch,
         });
+    }
+
+    for agent in Agent::ALL {
+        if !matched_agents.contains(&agent) {
+            eprintln!(
+                "no compatibility fixture matches installed {} version",
+                agent.label()
+            );
+            worst = worst.max(3);
+        }
     }
 
     if machine {
@@ -2435,10 +2546,24 @@ fn cmd_verify_goldens(args: &[String]) -> i32 {
     for report in &reports {
         println!("{} (pins {})", report.fixture, report.pinned_version);
         println!("  resolved: {}", report.resolved);
+        println!("  installed: {}", report.installed_version);
+        if report.skipped {
+            println!("  SKIPPED: fixture version does not match the installed CLI");
+            continue;
+        }
+        println!(
+            "  matrix cases: {} ({} accepted, {} refused)",
+            report.case_count, report.accepted_cases, report.rejected_cases
+        );
         println!(
             "  flags checked: {} ({} operator passthrough skipped)",
             report.flags_checked, report.passthrough_skipped
         );
+        if report.shape_errors.is_empty() {
+            println!("  emitted argv shape matches every matrix case");
+        } else {
+            println!("  MATRIX SHAPE ERRORS: {}", report.shape_errors.join("; "));
+        }
         if report.unlisted.is_empty() {
             println!("  every flag is listed by the installed CLI");
         } else {
@@ -2454,42 +2579,112 @@ fn cmd_verify_goldens(args: &[String]) -> i32 {
                 );
             }
         }
+        if report.vendor_unlisted.is_empty() {
+            println!("  every explicitly accepted vendor flag is listed");
+        } else {
+            println!(
+                "  ACCEPTED FLAGS NOT LISTED: {}",
+                report.vendor_unlisted.join(", ")
+            );
+        }
+        if report.vendor_present.is_empty() {
+            println!("  every explicitly unsupported vendor flag is absent");
+        } else {
+            println!(
+                "  UNSUPPORTED FLAGS STILL LISTED: {}",
+                report.vendor_present.join(", ")
+            );
+        }
+        if report.vendor_mode_mismatch.is_empty() {
+            println!("  every versioned mode restriction matches installed help");
+        } else {
+            println!(
+                "  MODE RESTRICTION MISMATCH: {}",
+                report.vendor_mode_mismatch.join("; ")
+            );
+        }
     }
     worst
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct GoldenFixture {
-    version: String,
-    expected_args: Vec<String>,
-    /// Tokens that look like flags but are values. Rarely needed — the argv's
-    /// `--` marker already covers the initial prompt — but a wrong guess about
-    /// one would be silent, so it stays declarable.
-    #[serde(default)]
-    value_args: Vec<String>,
-    /// Flags the *operator* supplied, forwarded verbatim through
-    /// `LaunchSpec::extra_args`.
-    ///
-    /// Excluded from the accept check, and the distinction is the point: this
-    /// tool is answerable for the argv it constructs, not for arguments a
-    /// person chose to pass through it. Codex 0.146.0 lists no `--verbose` at
-    /// all, so leaving these in reported a failure against a design decision
-    /// rather than against a defect.
-    #[serde(default)]
-    passthrough_args: Vec<String>,
+fn verify_matrix_shape(
+    fixture: &CompatibilityFixture,
+    binary: &AgentBinary,
+    root: &std::path::Path,
+) -> (usize, usize, Vec<String>, Vec<String>) {
+    let mut accepted = 0;
+    let mut rejected = 0;
+    let mut errors = Vec::new();
+    let mut emitted_flags = Vec::new();
+    for case in &fixture.cases {
+        let spec = fixture.expand_spec(case, root);
+        match case.status {
+            CompatibilityStatus::Accepted => {
+                accepted += 1;
+                match spec.resolve(binary) {
+                    Ok(command) => {
+                        let expected = fixture.expand_args(case, root);
+                        if command.args != expected {
+                            errors.push(format!(
+                                "{} expected {:?}, got {:?}",
+                                case.id, expected, command.args
+                            ));
+                        }
+                        emitted_flags.extend(
+                            terminalai_core::help::flags_used(&command.args, &spec.extra_args)
+                                .into_iter()
+                                .map(str::to_owned),
+                        );
+                    }
+                    Err(error) => errors.push(format!("{} refused: {error}", case.id)),
+                }
+            }
+            CompatibilityStatus::Unsupported | CompatibilityStatus::ModeRestricted => {
+                rejected += 1;
+                match spec.resolve(binary) {
+                    Err(error)
+                        if error
+                            .to_string()
+                            .contains(case.error_contains.as_deref().unwrap_or_default()) => {}
+                    Err(error) => errors.push(format!(
+                        "{} named {}, got {error}",
+                        case.id,
+                        case.error_contains.as_deref().unwrap_or_default()
+                    )),
+                    Ok(command) => errors.push(format!(
+                        "{} launched unexpectedly as {:?}",
+                        case.id, command.args
+                    )),
+                }
+            }
+        }
+    }
+    emitted_flags.sort();
+    emitted_flags.dedup();
+    (accepted, rejected, errors, emitted_flags)
 }
 
 #[derive(Debug, Serialize)]
 struct GoldenReport {
     fixture: String,
     pinned_version: String,
+    installed_version: String,
     resolved: String,
+    version_match: bool,
+    skipped: bool,
+    case_count: usize,
+    accepted_cases: usize,
+    rejected_cases: usize,
+    shape_errors: Vec<String>,
     flags_checked: usize,
     passthrough_skipped: usize,
     unlisted: Vec<String>,
     /// Flags the CLI lists and would then ignore, because its own help
     /// restricts them to a mode this argv is not in.
     restricted: Vec<GoldenRestriction>,
+    vendor_unlisted: Vec<String>,
+    vendor_present: Vec<String>,
+    vendor_mode_mismatch: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]

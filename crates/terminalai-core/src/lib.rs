@@ -15,6 +15,7 @@ pub mod app_server;
 pub mod atomic_file;
 pub mod auth;
 pub mod capabilities;
+pub mod compatibility;
 pub mod context;
 pub mod diagnostics;
 pub mod domain;

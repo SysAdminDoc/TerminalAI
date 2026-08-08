@@ -200,6 +200,7 @@ pub fn is_valid_resume_id(id: &str) -> bool {
 
 /// Everything the launcher dialog collects.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct LaunchSpec {
     pub agent: Agent,
     /// Display name for the fleet row. Claude gets it via `--name`; for Codex

@@ -1,41 +1,159 @@
 {
+  "schema_version": 1,
+  "agent": "claude",
   "version": "Claude Code 2.1.170",
-  "passthrough_args": [
-    "--verbose"
-  ],
-  "expected_args": [
-    "--model",
-    "opus",
-    "--effort",
-    "xhigh",
-    "--permission-mode",
-    "plan",
-    "--name",
-    "golden review",
-    "--add-dir",
-    "__CARGO_MANIFEST_DIR__/shared",
-    "--allowed-tools",
-    "Bash(git log:*)",
-    "--allowed-tools",
-    "Read",
-    "--disallowed-tools",
-    "WebFetch",
-    "--settings",
-    "golden-settings.json",
-    "--setting-sources",
-    "user,project",
-    "--mcp-config",
-    "golden-mcp.json",
-    "--strict-mcp-config",
-    "--plugin-dir",
-    "golden-plugin",
-    "--plugin-url",
-    "https://example.invalid/plugin.zip",
-    "--resume",
-    "claude-session-1",
-    "--fork-session",
-    "--verbose",
-    "--",
-    "--dangerously-skip-permissions"
+  "agent_version": "2.1.170",
+  "vendor": {
+    "accepted_flags": [
+      "--model",
+      "--effort",
+      "--permission-mode",
+      "--name",
+      "--session-id",
+      "--add-dir",
+      "--allowed-tools",
+      "--disallowed-tools",
+      "--settings",
+      "--setting-sources",
+      "--mcp-config",
+      "--strict-mcp-config",
+      "--plugin-dir",
+      "--plugin-url",
+      "--resume"
+    ],
+    "unsupported_flags": ["--sandbox", "--profile", "--search"],
+    "mode_restricted": [
+      { "flag": "--max-budget-usd", "requires": "--print" },
+      { "flag": "--fallback-model", "requires": "--print" }
+    ]
+  },
+  "cases": [
+    {
+      "id": "canonical-interactive",
+      "capability": "all-advertised-interactive-options",
+      "status": "accepted",
+      "spec": {
+        "agent": "claude",
+        "cwd": "__CARGO_MANIFEST_DIR__",
+        "name": "golden review",
+        "model": "opus",
+        "effort": "xhigh",
+        "permission": "plan",
+        "add_dirs": ["__CARGO_MANIFEST_DIR__/shared"],
+        "resume": { "kind": "fork", "id": "claude-session-1" },
+        "max_budget_usd": 5.0,
+        "allowed_tools": ["Bash(git log:*)", "Read"],
+        "disallowed_tools": ["WebFetch"],
+        "settings": "golden-settings.json",
+        "setting_sources": "user,project",
+        "mcp_config": ["golden-mcp.json"],
+        "strict_mcp_config": true,
+        "plugin_dirs": ["golden-plugin"],
+        "plugin_urls": ["https://example.invalid/plugin.zip"],
+        "initial_prompt": "--dangerously-skip-permissions",
+        "extra_args": ["--verbose"]
+      },
+      "expected_args": [
+        "--model",
+        "opus",
+        "--effort",
+        "xhigh",
+        "--permission-mode",
+        "plan",
+        "--name",
+        "golden review",
+        "--add-dir",
+        "__CARGO_MANIFEST_DIR__/shared",
+        "--allowed-tools",
+        "Bash(git log:*)",
+        "--allowed-tools",
+        "Read",
+        "--disallowed-tools",
+        "WebFetch",
+        "--settings",
+        "golden-settings.json",
+        "--setting-sources",
+        "user,project",
+        "--mcp-config",
+        "golden-mcp.json",
+        "--strict-mcp-config",
+        "--plugin-dir",
+        "golden-plugin",
+        "--plugin-url",
+        "https://example.invalid/plugin.zip",
+        "--resume",
+        "claude-session-1",
+        "--fork-session",
+        "--verbose",
+        "--",
+        "--dangerously-skip-permissions"
+      ]
+    },
+    {
+      "id": "new-session-id",
+      "capability": "session-id",
+      "status": "accepted",
+      "spec": {
+        "agent": "claude",
+        "cwd": "__CARGO_MANIFEST_DIR__",
+        "session_id": "new-session-1"
+      },
+      "expected_args": ["--session-id", "new-session-1"]
+    },
+    {
+      "id": "custom-permission-mode",
+      "capability": "forward-compatible-permission-mode",
+      "status": "accepted",
+      "spec": {
+        "agent": "claude",
+        "cwd": "__CARGO_MANIFEST_DIR__",
+        "permission": "dontAsk"
+      },
+      "expected_args": ["--permission-mode", "dontAsk"]
+    },
+    {
+      "id": "sandbox-is-codex-only",
+      "capability": "sandbox",
+      "status": "unsupported",
+      "spec": {
+        "agent": "claude",
+        "cwd": "__CARGO_MANIFEST_DIR__",
+        "sandbox": "read-only"
+      },
+      "error_contains": "--sandbox"
+    },
+    {
+      "id": "profile-is-codex-only",
+      "capability": "profile",
+      "status": "unsupported",
+      "spec": {
+        "agent": "claude",
+        "cwd": "__CARGO_MANIFEST_DIR__",
+        "profile": "work"
+      },
+      "error_contains": "--profile"
+    },
+    {
+      "id": "web-search-is-codex-only",
+      "capability": "web-search",
+      "status": "unsupported",
+      "spec": {
+        "agent": "claude",
+        "cwd": "__CARGO_MANIFEST_DIR__",
+        "web_search": true
+      },
+      "error_contains": "--search"
+    },
+    {
+      "id": "fallback-model-is-print-only",
+      "capability": "fallback-model",
+      "status": "mode-restricted",
+      "spec": {
+        "agent": "claude",
+        "cwd": "__CARGO_MANIFEST_DIR__",
+        "fallback_model": "sonnet"
+      },
+      "error_contains": "--fallback-model"
+    }
   ]
 }

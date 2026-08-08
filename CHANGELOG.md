@@ -5,6 +5,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Added
+
+- Added a versioned Claude/Codex compatibility matrix shared by the Rust launch goldens and
+  `terminalai-probe verify-goldens`. It checks emitted argv shape, explicit unsupported choices,
+  exact installed CLI versions, vendor flag coverage and mode-restricted options before a session
+  can be spawned.
+- Hardened the packaged Tauri/WebView2 smoke path with isolated-display placement retries, native
+  daemon event delivery, focused-terminal resize/attach assertions and outage recovery screenshots.
+
 ## [0.23.0] — 2026-08-08
 
 ### Changed

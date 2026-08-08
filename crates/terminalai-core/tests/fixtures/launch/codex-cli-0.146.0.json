@@ -1,28 +1,165 @@
 {
+  "schema_version": 1,
+  "agent": "codex",
   "version": "codex-cli 0.146.0",
-  "passthrough_args": [
-    "--verbose"
-  ],
-  "expected_args": [
-    "resume",
-    "codex-thread-1",
-    "--model",
-    "gpt-5.1-codex",
-    "--config",
-    "model_reasoning_effort=\"xhigh\"",
-    "--ask-for-approval",
-    "on-request",
-    "--sandbox",
-    "workspace-write",
-    "--profile",
-    "work",
-    "--cd",
-    "__CARGO_MANIFEST_DIR__",
-    "--add-dir",
-    "__CARGO_MANIFEST_DIR__/shared",
-    "--search",
-    "--verbose",
-    "--",
-    "--dangerously-skip-permissions"
+  "agent_version": "0.146.0",
+  "vendor": {
+    "accepted_flags": [
+      "--model",
+      "--config",
+      "--ask-for-approval",
+      "--sandbox",
+      "--profile",
+      "--cd",
+      "--add-dir",
+      "--search"
+    ],
+    "unsupported_flags": [
+      "--allowed-tools",
+      "--disallowed-tools",
+      "--settings",
+      "--setting-sources",
+      "--mcp-config",
+      "--plugin-dir",
+      "--fallback-model"
+    ],
+    "mode_restricted": []
+  },
+  "cases": [
+    {
+      "id": "canonical-interactive",
+      "capability": "all-advertised-interactive-options",
+      "status": "accepted",
+      "spec": {
+        "agent": "codex",
+        "cwd": "__CARGO_MANIFEST_DIR__",
+        "model": "gpt-5.1-codex",
+        "effort": "xhigh",
+        "permission": "accept-edits",
+        "sandbox": "workspace-write",
+        "profile": "work",
+        "add_dirs": ["__CARGO_MANIFEST_DIR__/shared"],
+        "resume": { "kind": "session", "id": "codex-thread-1" },
+        "web_search": true,
+        "max_budget_usd": 5.0,
+        "initial_prompt": "--dangerously-skip-permissions",
+        "extra_args": ["--verbose"]
+      },
+      "expected_args": [
+        "resume",
+        "codex-thread-1",
+        "--model",
+        "gpt-5.1-codex",
+        "--config",
+        "model_reasoning_effort=\"xhigh\"",
+        "--ask-for-approval",
+        "on-request",
+        "--sandbox",
+        "workspace-write",
+        "--profile",
+        "work",
+        "--cd",
+        "__CARGO_MANIFEST_DIR__",
+        "--add-dir",
+        "__CARGO_MANIFEST_DIR__/shared",
+        "--search",
+        "--verbose",
+        "--",
+        "--dangerously-skip-permissions"
+      ]
+    },
+    {
+      "id": "codex-plan-mode",
+      "capability": "plan-mode-config-override",
+      "status": "accepted",
+      "spec": {
+        "agent": "codex",
+        "cwd": "__CARGO_MANIFEST_DIR__",
+        "permission": "plan"
+      },
+      "expected_args": [
+        "--config",
+        "collaboration_mode.mode=\"Plan\"",
+        "--cd",
+        "__CARGO_MANIFEST_DIR__"
+      ]
+    },
+    {
+      "id": "tool-allowlist-is-claude-only",
+      "capability": "allowed-tools",
+      "status": "unsupported",
+      "spec": {
+        "agent": "codex",
+        "cwd": "__CARGO_MANIFEST_DIR__",
+        "allowed_tools": ["Read"]
+      },
+      "error_contains": "--allowed-tools"
+    },
+    {
+      "id": "tool-denylist-is-claude-only",
+      "capability": "disallowed-tools",
+      "status": "unsupported",
+      "spec": {
+        "agent": "codex",
+        "cwd": "__CARGO_MANIFEST_DIR__",
+        "disallowed_tools": ["WebFetch"]
+      },
+      "error_contains": "--disallowed-tools"
+    },
+    {
+      "id": "settings-are-claude-only",
+      "capability": "settings",
+      "status": "unsupported",
+      "spec": {
+        "agent": "codex",
+        "cwd": "__CARGO_MANIFEST_DIR__",
+        "settings": "settings.json"
+      },
+      "error_contains": "--settings"
+    },
+    {
+      "id": "setting-sources-are-claude-only",
+      "capability": "setting-sources",
+      "status": "unsupported",
+      "spec": {
+        "agent": "codex",
+        "cwd": "__CARGO_MANIFEST_DIR__",
+        "setting_sources": "user"
+      },
+      "error_contains": "--setting-sources"
+    },
+    {
+      "id": "mcp-config-is-claude-only",
+      "capability": "mcp-config",
+      "status": "unsupported",
+      "spec": {
+        "agent": "codex",
+        "cwd": "__CARGO_MANIFEST_DIR__",
+        "mcp_config": ["mcp.json"]
+      },
+      "error_contains": "--mcp-config"
+    },
+    {
+      "id": "plugin-directory-is-claude-only",
+      "capability": "plugin-dir",
+      "status": "unsupported",
+      "spec": {
+        "agent": "codex",
+        "cwd": "__CARGO_MANIFEST_DIR__",
+        "plugin_dirs": ["plugin"]
+      },
+      "error_contains": "--plugin-dir"
+    },
+    {
+      "id": "fallback-model-is-not-expressed",
+      "capability": "fallback-model",
+      "status": "unsupported",
+      "spec": {
+        "agent": "codex",
+        "cwd": "__CARGO_MANIFEST_DIR__",
+        "fallback_model": "gpt-5.1-codex"
+      },
+      "error_contains": "--fallback-model"
+    }
   ]
 }

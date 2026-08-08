@@ -1,16 +1,12 @@
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
 use terminalai_core::agent::{Agent, AgentBinary, Origin};
-use terminalai_core::launch::{
-    Effort, LaunchError, LaunchSpec, Permission, Resume, Sandbox,
+use terminalai_core::compatibility::{
+    CompatibilityFixture, CompatibilityStatus, MATRIX_SCHEMA_VERSION,
 };
-
-#[derive(Debug, Deserialize)]
-struct Golden {
-    version: String,
-    expected_args: Vec<String>,
-}
+use terminalai_core::launch::{
+    LaunchError, LaunchSpec, Permission, Sandbox,
+};
 
 fn binary(agent: Agent) -> AgentBinary {
     AgentBinary {
@@ -20,95 +16,47 @@ fn binary(agent: Agent) -> AgentBinary {
     }
 }
 
-fn claude_only(agent: Agent, values: &[&str]) -> Vec<String> {
-    if agent == Agent::Claude {
-        values.iter().map(|value| (*value).to_owned()).collect()
-    } else {
-        Vec::new()
-    }
-}
-
-fn canonical_spec(agent: Agent, cwd: &Path) -> LaunchSpec {
-    LaunchSpec {
-        agent,
-        name: Some("golden review".into()),
-        cwd: cwd.to_path_buf(),
-        model: Some(if agent == Agent::Claude {
-            "opus".into()
-        } else {
-            "gpt-5.1-codex".into()
-        }),
-        effort: Some(Effort::XHigh),
-        permission: Some(if agent == Agent::Claude {
-            Permission::Plan
-        } else {
-            Permission::AcceptEdits
-        }),
-        sandbox: (agent == Agent::Codex).then_some(Sandbox::WorkspaceWrite),
-        profile: (agent == Agent::Codex).then_some("work".into()),
-        add_dirs: vec![cwd.join("shared")],
-        resume: if agent == Agent::Claude {
-            Resume::Fork("claude-session-1".into())
-        } else {
-            Resume::Session("codex-thread-1".into())
-        },
-        // Set deliberately, and deliberately absent from every fixture: the
-        // cap is enforced by this tool's ledger, and `--max-budget-usd` only
-        // binds under `--print`. This is the golden that pins that decision.
-        max_budget_usd: Some(5.0),
-        web_search: agent == Agent::Codex,
-        // Claude-only passthrough. Codex expresses none of these — verified
-        // against `codex --help` 0.146.0 — so setting them on a Codex spec
-        // would refuse the launch rather than change the argv.
-        allowed_tools: claude_only(agent, &["Bash(git log:*)", "Read"]),
-        disallowed_tools: claude_only(agent, &["WebFetch"]),
-        settings: (agent == Agent::Claude).then(|| "golden-settings.json".to_owned()),
-        setting_sources: (agent == Agent::Claude).then(|| "user,project".to_owned()),
-        mcp_config: claude_only(agent, &["golden-mcp.json"]),
-        strict_mcp_config: agent == Agent::Claude,
-        plugin_dirs: claude_only(agent, &["golden-plugin"])
-            .into_iter()
-            .map(PathBuf::from)
-            .collect(),
-        plugin_urls: claude_only(agent, &["https://example.invalid/plugin.zip"]),
-        // Neither agent expresses this: Codex has no such flag, and Claude's
-        // own help restricts it to `--print`. Left out of the canonical spec
-        // because setting it is now a refusal for both, which
-        // `every_claude_only_option_is_refused_for_codex` asserts by name.
-        fallback_model: None,
-        initial_prompt: Some("--dangerously-skip-permissions".into()),
-        extra_args: vec!["--verbose".into()],
-        ..Default::default()
-    }
-}
-
 fn assert_golden(agent: Agent, fixture: &str) {
     let cwd = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let golden: Golden = serde_json::from_str(fixture).expect("decode launch golden");
-    assert!(!golden.version.is_empty(), "fixture must pin a CLI version");
-    let command = canonical_spec(agent, cwd)
-        .resolve(&binary(agent))
-        .expect("resolve canonical launch");
-    let expected = golden
-        .expected_args
-        .into_iter()
-        .map(|arg| {
-            // Only a path placeholder is rewritten to this platform's
-            // separator. Rewriting every argument turned a URL into a UNC-ish
-            // path, which is not a mismatch the fixture is trying to describe.
-            if !arg.contains("__CARGO_MANIFEST_DIR__") {
-                return arg;
+    let golden: CompatibilityFixture = serde_json::from_str(fixture)
+        .expect("decode versioned launch compatibility fixture");
+    assert_eq!(golden.schema_version, MATRIX_SCHEMA_VERSION);
+    assert_eq!(golden.agent, agent);
+    golden.validate().expect("fixture schema is valid");
+    let mut accepted = 0;
+    for case in &golden.cases {
+        let spec = golden.expand_spec(case, cwd);
+        match case.status {
+            CompatibilityStatus::Accepted => {
+                accepted += 1;
+                let command = spec
+                    .resolve(&binary(agent))
+                    .unwrap_or_else(|error| panic!("{}: {error}", case.id));
+                assert_eq!(
+                    command.args,
+                    golden.expand_args(case, cwd),
+                    "{} ({}) argument vector changed",
+                    golden.version,
+                    case.capability
+                );
             }
-            let separator = std::path::MAIN_SEPARATOR.to_string();
-            arg.replace("__CARGO_MANIFEST_DIR__", &cwd.to_string_lossy())
-                .replace('/', &separator)
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        command.args, expected,
-        "{} argument vector changed",
-        golden.version
-    );
+            CompatibilityStatus::Unsupported | CompatibilityStatus::ModeRestricted => {
+                let error = spec
+                    .resolve(&binary(agent))
+                    .expect_err("a rejected compatibility case launched");
+                assert!(
+                    error
+                        .to_string()
+                        .contains(case.error_contains.as_deref().unwrap_or_default()),
+                    "{} ({}) refusal did not name {}: {error}",
+                    golden.version,
+                    case.capability,
+                    case.error_contains.as_deref().unwrap_or_default()
+                );
+            }
+        }
+    }
+    assert!(accepted > 0, "fixture has no accepted compatibility case");
 }
 
 #[test]

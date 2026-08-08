@@ -359,7 +359,7 @@ fn cached_version_banner(path: &Path) -> Result<String, String> {
 /// Both real banners are a single short line, so the pipe cannot fill before the
 /// process exits; a candidate that floods stdout instead trips the deadline and
 /// is killed, which is the correct answer for an unidentifiable binary.
-pub(crate) fn version_banner(path: &Path) -> Result<String, String> {
+pub fn version_banner(path: &Path) -> Result<String, String> {
     let mut command = Command::new(path);
     command
         .arg("--version")
