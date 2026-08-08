@@ -25,8 +25,10 @@ pub const DEFAULT_EVENTS_PER_SESSION: usize = 64;
 pub const MAX_SESSIONS: usize = 100;
 pub const MAX_EVENTS_PER_SESSION: usize = 2_000;
 /// A synthetic profile should exercise the path, not fail because a busy CI
-/// host spent a little longer starting threads.
-pub const STARTUP_BUDGET: Duration = Duration::from_secs(15);
+/// host spent a little longer starting thirty worker threads. This is a release
+/// gate for the whole workspace, including the heavier opt-in feature suite, so
+/// the budget is intentionally wider than a normal interactive launch target.
+pub const STARTUP_BUDGET: Duration = Duration::from_secs(60);
 pub const HOOK_P95_BUDGET: Duration = Duration::from_millis(100);
 pub const SNAPSHOT_P95_BUDGET: Duration = Duration::from_millis(500);
 

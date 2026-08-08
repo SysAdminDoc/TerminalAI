@@ -88,7 +88,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Stabilized the release test gate under Windows load: the 30-session synthetic profile now backs
   off while polling its shared registry lock, branch semantics retry bounded Git lookups in tests,
   and the ConPTY ETX contract accepts both current Windows control-event behavior and the older
-  byte-only behavior. The full core suite remains 530/530.
+  byte-only behavior. Its whole-workspace startup budget is 60 seconds so the heavier opt-in
+  feature suite can exercise the same profile without turning scheduler pressure into a false
+  release failure. The full core suite remains 530/530.
 
 ## [0.23.0] — 2026-08-08
 

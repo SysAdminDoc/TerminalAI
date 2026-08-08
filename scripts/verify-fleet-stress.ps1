@@ -8,7 +8,7 @@ fleet profile, and fails if the bounded registry gates or Windows process
 resource budgets fail. No real agent, credential, browser or window is used.
 
 The profile budgets are intentionally documented in the JSON report:
-15 seconds for synthetic startup, 100 ms hook p95, 500 ms snapshot p95 and
+60 seconds for synthetic startup, 100 ms hook p95, 500 ms snapshot p95 and
 256 MiB working-set growth. The registry also proves the subscriber cap,
 scrollback cap, store round trip and malformed-store rejection.
 
