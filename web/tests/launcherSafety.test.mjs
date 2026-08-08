@@ -245,3 +245,40 @@ test("plan mode survives a built-in preset into the previewed argv", () => {
   ).replace(/\r\n/g, "\n");
   assert.match(launch, /Permission::Plan => "plan"/, "Claude still maps plan to its own flag");
 });
+
+// Admission governs how many sessions run, what they may spend and what they
+// may hold. It has no view of the one multiplier a *single* session controls:
+// since Claude Code 2.1.216 one session runs up to twenty concurrent subagents
+// by default, and with agent teams it can hold several separate agent instances.
+test("a launch can bound its own fan-out, and Codex is not offered the choice", () => {
+  const { dom } = launcherForm();
+  for (const id of ["subagents-input", "agent-teams-input"]) {
+    const element = dom.window.document.getElementById(id);
+    assert.ok(element, `${id} is missing from the launcher`);
+    assert.ok(
+      element.closest(".claude-only"),
+      `${id} is offered for an agent that has no equivalent and would refuse the launch`,
+    );
+  }
+  // Three states, not a checkbox: "leave it to the agent's configuration" and
+  // "refuse teams" are different decisions, and a checkbox can only say one.
+  const teams = dom.window.document.getElementById("agent-teams-input");
+  assert.deepEqual([...teams.options].map((option) => option.value), ["", "on", "off"]);
+
+  const readSpec = main.slice(main.indexOf("function readSpec"), main.indexOf("function setPermissionValue"));
+  assert.match(readSpec, /max_concurrent_subagents: agent === "claude"/);
+  assert.match(readSpec, /agent_teams: agent === "claude"/);
+  const writeSpec = main.slice(main.indexOf("function writeSpec"), main.indexOf("function clearFolderValidation"));
+  assert.match(writeSpec, /subagents-input/);
+  assert.match(writeSpec, /agent-teams-input/);
+});
+
+test("a blank subagent cap means the agent's default rather than zero", () => {
+  // Blank and zero are opposite requests, and the core refuses zero rather than
+  // reading it as "no cap" — so the field must never turn blank into a number.
+  const helper = main.slice(main.indexOf("function optionalCount"), main.indexOf("function teamsChoice"));
+  assert.match(helper, /if \(!raw\) return null;/);
+  const teams = main.slice(main.indexOf("function teamsChoice"), main.indexOf("/// One comma-separated field"));
+  assert.match(teams, /if \(value === "off"\) return false;/);
+  assert.match(teams, /return null;/);
+});

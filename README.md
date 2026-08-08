@@ -76,6 +76,9 @@ Working today (`terminalai-probe`, headless):
   Windows taskbar overlay.
 - Native Claude and Codex version checks run through the same sanitized environment allowlist as
   live sessions, including opt-in proxy variables without inheriting parent secrets
+- Lets a launch bound its own fan-out — the concurrent-subagent cap and whether agent teams are
+  allowed at all — because admission governs how many sessions run, not how many agents one session
+  is. Codex, which documents no equivalent, is refused rather than launched as if it had one
 - Ships an installer that actually starts: the NSIS and MSI bundles carry the daemon and probe as
   sidecars, and `scripts/verify-installer.ps1` installs into a scratch prefix, launches the
   installed binary on an isolated display, asserts the window and the daemon pipe, then uninstalls

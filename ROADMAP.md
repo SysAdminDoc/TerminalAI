@@ -79,13 +79,6 @@ where an item depends on another in this section, its Why says which.
 
 ### P2
 
-- [ ] P2 — Let a launch bound its own fan-out
-  Why: admission governs sessions, spend and memory, but a single session can now spawn a team and up to 20 concurrent subagents — the one resource multiplier the launcher cannot express. Depends on the job-memory item above, whose process count is the only way to see whether a cap took effect.
-  Evidence: `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` (default 20, Claude Code 2.1.216), `CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION` (default 200, 2.1.212), `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` (https://code.claude.com/docs/en/agent-teams). None appears in `safe_environment_keys()` (`crates/terminalai-core/src/environment.rs:325`), a 17-entry Windows allowlist — correct by default, but it means the caps are reachable only through the generic passthrough and nothing in the fleet's own governance knows about them.
-  Touches: `crates/terminalai-core/src/launch.rs`, `crates/terminalai-core/src/environment.rs`, `web/src/main.js`
-  Acceptance: a launch can set the concurrent-subagent cap and enable or refuse agent teams explicitly; the value reaches the previewed argv or environment; Codex, which has no equivalent, is refused rather than silently launched as if it had one. The row's process count from the job-memory item is what proves the cap took effect.
-  Complexity: M
-
 - [ ] P2 — Split the daemon's control plane the way the registry was split
   Why: `lib.rs` is the tree's largest Rust file and fuses the wire protocol, the dispatcher, the server, the client and the console handler in one scope — worth splitting before it reaches the size that forced the registry split, not after.
   Evidence: `crates/terminalai-daemon/src/lib.rs` is 3,254 lines, of which roughly a third is its test module. It is not yet the 6,106 lines `CHANGELOG.md:524` records for `registry.rs` when that was decomposed, which is the point; the seams are already visible as `Request`/`Response`, `dispatch_with_endpoint`, `DaemonServer`, `DaemonClient`. The precedent, including the moved-code-unchanged discipline and the cross-language string-reading tests, is `crates/terminalai-core/src/registry/` and `web/tests/registrySource.mjs`.

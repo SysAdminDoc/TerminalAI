@@ -22,6 +22,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   it to a mode this argv is not in is reported as accepted-but-ignored. It found `--fallback-model`
   on its first run.
 
+- A launch can bound its own fan-out. Admission governs how many sessions run, what they may spend
+  and what they may hold — and had no view of the one multiplier a *single* session controls: since
+  Claude Code 2.1.216 a session runs up to twenty concurrent subagents by default, and with agent
+  teams it can hold several separate agent instances. The launcher can now set the concurrent cap
+  and state whether teams are allowed at all, delivered as environment variables because the agent
+  offers no flag for either. Blank leaves the agent's own default; zero is refused rather than read
+  as "no cap"; "refuse teams" is a value this launch sets rather than something inherited from
+  ambient configuration. Codex, which documents no equivalent, is refused per the
+  `LaunchError::Unsupported` rule rather than launched as if it had one.
+
 - A row that leads an agent team names its teammates. Since agent teams, one supervised session can
   be a lead plus several *separate* agent instances, and the fleet showed that as one row with one
   status — defensible only while the operator can see what the row actually holds. The team's own

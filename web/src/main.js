@@ -2853,6 +2853,8 @@ function defaultSpec() {
     add_dirs: [],
     resume: { kind: "new" },
     max_budget_usd: null,
+    max_concurrent_subagents: null,
+    agent_teams: null,
     web_search: false,
     initial_prompt: null,
     extra_args: [],
@@ -2868,6 +2870,26 @@ function defaultSpec() {
     environment: { setup: null, teardown: null, port_base: 42000, port_count: 4 },
     worktree: false,
   };
+}
+
+/// A whole-number field, or null when it is blank.
+///
+/// Blank and zero are different requests: blank means the agent's own default,
+/// and zero is refused by the core rather than read as "no cap".
+function optionalCount(id) {
+  const raw = $(id).value.trim();
+  if (!raw) return null;
+  const value = Number(raw);
+  return Number.isInteger(value) ? value : null;
+}
+
+/// The three-state teams choice. `null` leaves it to the agent's own
+/// configuration; the other two state it, because "teams off" is a decision
+/// about a session's cost and should not depend on ambient configuration.
+function teamsChoice(value) {
+  if (value === "on") return true;
+  if (value === "off") return false;
+  return null;
 }
 
 /// One comma-separated field as a list, with empty entries dropped. An empty
@@ -2903,6 +2925,11 @@ function readSpec() {
     // them has and neither honours outside print mode.
     max_budget_usd: budget ? Number(budget) : null,
     web_search: agent === "codex" && $("search-input").checked,
+    // Claude-only, and sent only for Claude so switching agents does not carry
+    // a field the core would refuse. Admission governs how many sessions run;
+    // this is the one multiplier a single session controls.
+    max_concurrent_subagents: agent === "claude" ? optionalCount("subagents-input") : null,
+    agent_teams: agent === "claude" ? teamsChoice($("agent-teams-input").value) : null,
     initial_prompt: $("prompt-input").value.trim() || null,
     extra_args: [],
     worktree: $("worktree-input").checked,
@@ -2979,6 +3006,8 @@ function writeSpec(spec) {
   $("resume-id-input").value = spec.resume?.id ?? "";
   $("budget-input").value = spec.max_budget_usd ?? "";
   $("search-input").checked = Boolean(spec.web_search);
+  $("subagents-input").value = spec.max_concurrent_subagents ?? "";
+  $("agent-teams-input").value = spec.agent_teams === true ? "on" : spec.agent_teams === false ? "off" : "";
   $("worktree-input").checked = Boolean(spec.worktree);
   $("agent-home-input").value = spec.agent_home ?? "";
   $("env-passthrough-input").value = (spec.env_passthrough ?? []).join(", ");

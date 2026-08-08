@@ -254,6 +254,28 @@ pub struct LaunchSpec {
     pub max_budget_usd: Option<f64>,
     /// Codex only.
     pub web_search: bool,
+    /// How many subagents this session may run at once.
+    ///
+    /// Admission governs sessions, spend and memory — the things one row costs.
+    /// It has no view of the one multiplier a *single* session controls: since
+    /// Claude Code 2.1.216 a session runs up to twenty concurrent subagents by
+    /// default, and with agent teams it can also hold several separate agent
+    /// instances. Delivered as an environment variable because that is the only
+    /// interface the agent offers for it; there is no flag.
+    ///
+    /// `None` leaves the agent's own default in place. Zero is refused rather
+    /// than clamped, for the same reason the admission gate refuses a zero
+    /// session cap: silently turning "none" into "one" gives the operator the
+    /// opposite of what they asked for.
+    #[serde(default)]
+    pub max_concurrent_subagents: Option<u32>,
+    /// Whether this session may start an agent team.
+    ///
+    /// `None` inherits whatever the agent's own configuration says; `Some` states
+    /// it either way, because "teams off" is a decision an operator makes about
+    /// a session's cost and it should not depend on ambient configuration.
+    #[serde(default)]
+    pub agent_teams: Option<bool>,
     /// Tool names this session may use without asking, and those it may not use
     /// at all. Permission-prompt fatigue is the loudest complaint about these
     /// agents, and this is the precise lever for it: an allowlist answers the
@@ -337,6 +359,8 @@ pub enum LaunchError {
     InvalidResumeId,
     #[error("max_budget_usd must be finite and non-negative")]
     InvalidBudget,
+    #[error("the concurrent subagent cap must be at least 1; leave it unset for the agent's default")]
+    InvalidSubagentCap,
     #[error("accept-edits cannot be combined with the read-only sandbox: the agent would accept edits it is not permitted to make")]
     AcceptEditsUnderReadOnlySandbox,
     #[error("environment variable name {0:?} is not a plain name")]
@@ -453,6 +477,33 @@ impl LaunchSpec {
     /// through and silently got a session without it would debug the agent.
     pub fn agent_environment(&self) -> Result<Vec<(String, String)>, LaunchError> {
         let mut pairs = Vec::new();
+        // Refused, not dropped -- the same rule the argv slots follow. An
+        // operator who capped a session's fan-out and silently got an uncapped
+        // one has been told something untrue about what they launched.
+        if let Some(cap) = self.max_concurrent_subagents {
+            if self.agent != Agent::Claude {
+                return Err(LaunchError::Unsupported {
+                    flag: MAX_CONCURRENT_SUBAGENTS,
+                    agent: self.agent.label(),
+                });
+            }
+            if cap == 0 {
+                return Err(LaunchError::InvalidSubagentCap);
+            }
+            pairs.push((MAX_CONCURRENT_SUBAGENTS.to_owned(), cap.to_string()));
+        }
+        if let Some(teams) = self.agent_teams {
+            if self.agent != Agent::Claude {
+                return Err(LaunchError::Unsupported {
+                    flag: AGENT_TEAMS,
+                    agent: self.agent.label(),
+                });
+            }
+            pairs.push((
+                AGENT_TEAMS.to_owned(),
+                if teams { "1" } else { "0" }.to_owned(),
+            ));
+        }
         if let Some(home) = &self.agent_home {
             if !home.is_dir() {
                 return Err(LaunchError::MissingAgentHome(home.clone()));
@@ -731,6 +782,14 @@ fn permission_mode<'a>(
 }
 
 /// `--max-budget-usd` wants a plain decimal, not scientific notation.
+/// Claude Code's own cap on how many subagents one session runs at once.
+/// Default 20 as of 2.1.216; there is no flag for it.
+pub const MAX_CONCURRENT_SUBAGENTS: &str = "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS";
+
+/// Whether a session may start an agent team, where each teammate is a separate
+/// agent instance. Experimental and opt-in.
+pub const AGENT_TEAMS: &str = "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS";
+
 /// Convenience for callers that only have a path.
 pub fn spec_for(agent: Agent, cwd: &Path) -> LaunchSpec {
     LaunchSpec {
@@ -958,6 +1017,78 @@ mod tests {
         assert!(matches!(
             s.resolve(&binary(Agent::Claude)),
             Err(LaunchError::MissingCwd(_))
+        ));
+    }
+
+    #[test]
+    fn a_session_can_bound_its_own_fan_out() {
+        // The one resource multiplier admission cannot see: it governs how many
+        // sessions run, not how many agents one session is.
+        let spec = LaunchSpec {
+            max_concurrent_subagents: Some(4),
+            agent_teams: Some(true),
+            ..spec(Agent::Claude)
+        };
+        let environment = spec.agent_environment().expect("Claude expresses both");
+        assert!(environment.contains(&(MAX_CONCURRENT_SUBAGENTS.to_owned(), "4".to_owned())));
+        assert!(environment.contains(&(AGENT_TEAMS.to_owned(), "1".to_owned())));
+    }
+
+    #[test]
+    fn teams_are_refused_explicitly_rather_than_left_to_ambient_configuration() {
+        // "Off" has to be a value this launch sets. Leaving it unset means
+        // whatever the machine's configuration happens to say, which is not the
+        // same decision and is not visible on the row.
+        let off = LaunchSpec {
+            agent_teams: Some(false),
+            ..spec(Agent::Claude)
+        };
+        assert!(off
+            .agent_environment()
+            .expect("valid")
+            .contains(&(AGENT_TEAMS.to_owned(), "0".to_owned())));
+        let unset = spec(Agent::Claude);
+        assert!(!unset
+            .agent_environment()
+            .expect("valid")
+            .iter()
+            .any(|(name, _)| name == AGENT_TEAMS));
+    }
+
+    #[test]
+    fn codex_is_refused_rather_than_launched_as_if_it_had_a_fan_out_cap() {
+        for spec in [
+            LaunchSpec {
+                max_concurrent_subagents: Some(4),
+                ..spec(Agent::Codex)
+            },
+            LaunchSpec {
+                agent_teams: Some(true),
+                ..spec(Agent::Codex)
+            },
+        ] {
+            assert!(
+                matches!(
+                    spec.agent_environment(),
+                    Err(LaunchError::Unsupported { .. })
+                ),
+                "Codex accepted a cap it has no equivalent for"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cap_of_zero_is_refused_rather_than_read_as_no_cap() {
+        // Zero and unset are opposite requests. `None` means the agent's own
+        // default of twenty; zero would have to mean no subagents at all, and
+        // the variable has no spelling for that.
+        let spec = LaunchSpec {
+            max_concurrent_subagents: Some(0),
+            ..spec(Agent::Claude)
+        };
+        assert!(matches!(
+            spec.agent_environment(),
+            Err(LaunchError::InvalidSubagentCap)
         ));
     }
 
