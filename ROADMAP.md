@@ -86,13 +86,6 @@ where an item depends on another in this section, its Why says which.
   Acceptance: `lib.rs` is under ~1,200 lines with the moved code unchanged, both suites pass without assertion edits, and the private items the dispatcher relies on stay private rather than being widened to make the split possible.
   Complexity: L
 
-- [ ] P2 — Translate the launcher's advanced disclosure
-  Why: the i18n gate enforces that every catalogued message is referenced and every `data-i18n` attribute is handled, but it cannot see literal text with no attribute at all — so 86 user-facing strings sit outside the catalog while coverage reports clean.
-  Evidence: `web/index.html:245-282` — the `Agent`, `Permission mode`, `Sandbox`, `Resume`, `Native session id`, `Enable web search`, `Extra writable folders` and `Use only those MCP servers` labels, 13 `<option>` values, 23 `<em>` hints, 29 label spans and 21 `placeholder=` attributes in that block carry no `data-i18n` — 86 strings in total. `web/tests/i18n.test.mjs` asserts the reverse direction only. Three strings in `web/src/main.js` (lines 1821, 2890, 2909) also bypass `t()`.
-  Touches: `web/index.html`, `web/src/i18n/terminalai.ftl`, `web/src/main.js`, `web/tests/i18n.test.mjs`
-  Acceptance: every user-facing string in the launcher goes through the catalog, and the i18n test fails when a text-bearing element inside a dialog has no `data-i18n` attribute and no runtime writer — the check that would have caught this.
-  Complexity: M
-
 ### P3
 
 - [ ] P3 — Close the gap between what the probe dispatches and what it documents

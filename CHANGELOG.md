@@ -22,6 +22,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   it to a mode this argv is not in is reported as accepted-but-ignored. It found `--fallback-model`
   on its first run.
 
+- The launcher's advanced disclosure goes through the catalog. Ninety-three labels, hints, option
+  captions, placeholders and button captions were literal text with no `data-i18n` attribute, and
+  the i18n gate reported full coverage the whole time — it checks that every catalogued message is
+  referenced and that every attribute the shell uses is handled, and neither question can see text
+  that is in neither place. A new check reads the shell's own markup and asks the opposite: every
+  text-bearing element and every placeholder inside a dialog must get its words from the catalog or
+  from a named runtime writer. It was baited both ways before being trusted — the first version
+  passed for anything inside a dialog, because it accepted an ancestor's id as evidence of a runtime
+  writer, and the dialog's own id satisfies that for every element in it.
+
+  Two messages that were already catalogued rendered wrong: `localizeDom` assigns `textContent`, so
+  a message wrapping its own `<em>` flattened the hint into body text. Both are split, and a third
+  check fails if a `data-i18n` element ever gains children again.
+
 - A launch can bound its own fan-out. Admission governs how many sessions run, what they may spend
   and what they may hold — and had no view of the one multiplier a *single* session controls: since
   Claude Code 2.1.216 a session runs up to twenty concurrent subagents by default, and with agent
