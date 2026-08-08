@@ -48,6 +48,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   `web/src/rollupPage.js`; rollup source assertions now read the owning page module.
 - Extracted the row-model explainer and its guarded page entry into `web/src/explainerPage.js`,
   keeping the explainer's status vocabulary sourced from the shared fleet metadata.
+- Extracted serialized focused-session switching, stale-failure guards, and route restoration into
+  `web/src/sessionFocus.js`; workspace-page creation now consumes the coordinator after terminal
+  history is initialized.
 - Split the stylesheet into import-ordered `tokens`, `foundation`, `pages`, and `shell` layers;
   frontend style assertions now resolve the same assembled cascade through `web/tests/cssSource.mjs`.
 

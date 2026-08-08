@@ -13,7 +13,7 @@ test("snapshot refreshes replay events that arrived during the fetch", () => {
   assert.match(main, /if \(state\.snapshotLoading\) state\.snapshotEvents\.push\(\{ kind: "session-removed", id \}\);/);
 
   const start = main.indexOf("async function loadSnapshotNow");
-  const end = main.indexOf("\nasync function focusSession", start);
+  const end = main.indexOf("\n/**\n * Which projects", start);
   assert.ok(start >= 0 && end > start, "snapshot implementation is present");
   const body = main.slice(start, end);
   const snapshotAssignment = body.indexOf("state.sessions = snapshot.sessions ?? [];");
