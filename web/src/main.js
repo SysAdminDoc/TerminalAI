@@ -21,15 +21,9 @@ import {
 } from "./sessionStatus.js";
 import { spendCeiling, spendCeilingTitle } from "./spendCeiling.js";
 import {
-  coverage,
-  fleetTotals,
-  folderOf,
   formatCost,
-  formatTokens,
   pricingFreshness,
   PRICING_STALE_AFTER_DAYS,
-  rollupBy,
-  TOKEN_FIELDS,
 } from "./rollup.js";
 import { hasOpenWork, openItemsCell, sortProjects, stalenessLabel, summarize as summarizeProjects } from "./projects.js";
 import { renderSessionHistory } from "./sessionHistory.js";
@@ -41,7 +35,7 @@ import "./styles.css";
 import { createRowRenderer } from "./rowMarkup.js";
 import { createTerminalPane } from "./terminalPane.js";
 import { createWorkRunPanel } from "./workRunPanel.js";
-import { renderWindowShares } from "./quotaWindow.js";
+import { createRollupPage } from "./rollupPage.js";
 import { createLauncher } from "./launcher.js";
 import { createQueuePanel } from "./queuePanel.js";
 import { createWorkspacePages } from "./workspacePages.js";
@@ -701,6 +695,15 @@ const {
   sendBroadcast,
   syncBroadcastSelection,
 } = broadcastPanel;
+
+const rollupPage = createRollupPage({
+  $,
+  escapeHtml,
+  renderGuarded,
+  state,
+  t,
+});
+const { openRollup, renderRollup } = rollupPage;
 
 function sortedSessions() {
   return [...state.sessions].sort((a, b) => {
@@ -1688,68 +1691,6 @@ async function focusSessionNow(id) {
     renderRows();
     showToast(t("focus-session-error", { error: String(error) }));
   }
-}
-
-/**
- * Break the fleet's spend down by agent, by folder, and by session.
- *
- * One aggregate answers "are we spending too much" and nothing else. These
- * three groupings answer the question that follows it — which is always "on
- * what" — and every one of them states how many sessions it could not price,
- * because a total that quietly omits half the fleet is worse than no total.
- */
-function renderRollup() {
-  const sessions = state.sessions;
-  const totals = fleetTotals(sessions);
-  $("rollup-coverage").textContent = coverage(totals, t);
-
-  const tokenCells = (row) =>
-    TOKEN_FIELDS.map(([field]) => `<td class="rollup-number">${escapeHtml(formatTokens(row[field]))}</td>`).join("");
-  const groupTable = (titleKey, rows, label = (row) => row.key) => `
-    <section class="rollup-section">
-      <h3>${escapeHtml(t(titleKey))}</h3>
-      <table class="rollup-table">
-        <thead><tr><th>${escapeHtml(t(titleKey))}</th><th class="rollup-number">$</th>${TOKEN_FIELDS.map(([, key]) => `<th class="rollup-number">${escapeHtml(t(key))}</th>`).join("")}</tr></thead>
-        <tbody>${rows
-          .map(
-            (row) => `<tr><th scope="row">${escapeHtml(label(row))}${
-              row.unpriced ? `<small class="rollup-unpriced"> +${row.unpriced}</small>` : ""
-            }</th><td class="rollup-number">${escapeHtml(formatCost(row.priced ? row.cost_usd : null))}</td>${tokenCells(row)}</tr>`,
-          )
-          .join("")}</tbody>
-      </table>
-    </section>`;
-
-  // Sessions are their own grouping so a single expensive run is visible rather
-  // than hidden inside its folder's subtotal.
-  const bySession = rollupBy(sessions, (session) => session.id).map((row) => {
-    const session = sessions.find((item) => item.id === row.key);
-    return { ...row, label: session ? `${session.id} · ${session.name}` : row.key };
-  });
-
-  $("rollup-body").innerHTML = [
-    groupTable("rollup-by-agent", rollupBy(sessions, (session) => session.agent)),
-    groupTable("rollup-by-folder", rollupBy(sessions, folderOf)),
-    groupTable("rollup-by-session", bySession, (row) => row.label),
-    // The window breakdown sits with the rollup because it is the same
-    // arithmetic asked a different question: not what a session has cost, but
-    // what it spent inside the window a provider is currently refusing.
-    renderWindowShares(state.admission, sessions, {
-      escape: escapeHtml,
-      translate: t,
-      cost: (usd) => formatCost(usd),
-      hours: Number(state.admission?.spend_window_hours) || 24,
-    }),
-    `<section class="rollup-section rollup-total"><h3>${escapeHtml(t("rollup-total"))}</h3><p><b>${escapeHtml(
-      formatCost(totals.priced ? totals.cost_usd : null),
-    )}</b> · ${escapeHtml(String(totals.requests))} ${escapeHtml(t("rollup-requests"))}</p></section>`,
-  ].join("");
-}
-
-function openRollup() {
-  const dialog = $("rollup-dialog");
-  if (!dialog.open) dialog.showModal();
-  renderGuarded($("rollup-body"), t("rollup-render-error"), "openRollup", openRollup, renderRollup);
 }
 
 /**

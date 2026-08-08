@@ -5,13 +5,17 @@ import { appSource } from "./appSource.mjs";
 import { cssSource } from "./cssSource.mjs";
 
 const main = appSource();
+const rollupPage = readFileSync(
+  new URL("../src/rollupPage.js", import.meta.url),
+  "utf8",
+).replace(/\r\n/g, "\n");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 const css = cssSource();
 
 const renderRollup = (() => {
-  const start = main.indexOf("function renderRollup()");
-  return main.slice(start, main.indexOf("\nfunction openRollup", start));
+  const start = rollupPage.indexOf("function renderRollup()");
+  return rollupPage.slice(start, rollupPage.indexOf("function openRollup", start));
 })();
 
 test("the fleet's spend figure is the way into the breakdown", () => {
@@ -64,7 +68,10 @@ test("session names and folders reaching the DOM are escaped", () => {
     );
   }
   // The session grouping builds its label from the session's own name.
-  assert.match(renderRollup, /label: session \? `\$\{session\.id\} · \$\{session\.name\}`/);
+  assert.match(
+    renderRollup,
+    /label: session \? String\(session\.id\) \+ " · " \+ String\(session\.name\)/,
+  );
   assert.match(renderRollup, /escapeHtml\(label\(row\)\)/);
 });
 
@@ -76,5 +83,5 @@ test("token columns come from one list, so a new one cannot appear in the body o
   // The header and the cells are generated from the same source; adding a
   // token kind to one and not the other would shift every column silently.
   assert.match(renderRollup, /TOKEN_FIELDS\.map\(\(\[field\]\)/);
-  assert.match(renderRollup, /TOKEN_FIELDS\.map\(\(\[, key\]\)/);
+  assert.match(renderRollup, /TOKEN_FIELDS\.map\(\s*\(\[, key\]\)/);
 });

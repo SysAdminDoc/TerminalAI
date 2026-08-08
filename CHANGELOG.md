@@ -44,6 +44,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Extracted broadcast rendering, live selection synchronization, and refusal-aware sending into
   `web/src/broadcastPanel.js`; the eligibility and protocol tests now follow the panel boundary
   while event wiring remains in the shell coordinator.
+- Extracted the spend rollup tables, coverage/window breakdown, and guarded dialog entry into
+  `web/src/rollupPage.js`; rollup source assertions now read the owning page module.
 - Split the stylesheet into import-ordered `tokens`, `foundation`, `pages`, and `shell` layers;
   frontend style assertions now resolve the same assembled cascade through `web/tests/cssSource.mjs`.
 
