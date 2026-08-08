@@ -87,13 +87,6 @@ where an item depends on another in this section, its Why says which.
 
 ### P0
 
-- [ ] P0 — Ingest `agent_needs_input`, the event that means a session is waiting for you
-  Why: the platform now emits a notification whose entire meaning is "this agent needs the operator", and this tool — whose reason to exist is surfacing exactly that — parses it into a bucket the registry ignores.
-  Evidence: the `Notification` hook's documented `notification_type` values are `permission_prompt`, `idle_prompt`, `auth_success`, `elicitation_dialog`, `elicitation_complete`, `elicitation_response`, `agent_needs_input`, `agent_completed` (https://code.claude.com/docs/en/hooks; added in Claude Code 2.1.198). `parse_notification` (`crates/terminalai-core/src/hooks.rs:559`) matches only "permission"/"approval" and "idle"/"awaiting"/"waiting"/"complete"/"finished", so `agent_completed` lands on `IdlePrompt` by coincidence and `agent_needs_input` becomes `Other`, which `registry/ingest.rs` drops. `Notification` is already managed (`hook_config.rs:54`), so the payload arrives today. Same defect shape as the `PermissionRequest`/`Other` bug fixed in v0.18.0.
-  Touches: `crates/terminalai-core/src/hooks.rs`, `crates/terminalai-core/src/registry/ingest.rs`, `web/src/i18n/terminalai.ftl`
-  Acceptance: `agent_needs_input` moves the row to an attention status and reaches the approvals inbox; `agent_completed` is recognised by name rather than by containing the word "complete"; `auth_success` is recognised too and clears the auth-expiry hold instead of being ignored. Each new type has a test that fails when its arm is removed, and an unknown future type is still logged rather than silently classified.
-  Complexity: S
-
 ### P1
 
 - [ ] P1 — Run `verify-goldens` in the release gate, and teach it what a flag's mode means
@@ -132,6 +125,13 @@ where an item depends on another in this section, its Why says which.
   Complexity: S
 
 ### P2
+
+- [ ] P2 — Find out whether a teammate's hooks arrive as the lead's
+  Why: a teammate launched by a team lead inherits the lead's environment, including the hook token the daemon matches on — so a `Notification` or `SubagentStop` from a separate agent instance may be landing on the lead's row and moving a status that is not about it. Nothing today can tell the two apart, and the answer decides whether the notification arms added on 2026-08-08 need scoping.
+  Evidence: hook matching requires `entry.session.hook_token` (`crates/terminalai-core/src/registry/ingest.rs`), which is placed in the session's environment at launch; `https://code.claude.com/docs/en/agent-teams` says teammates are separate Claude Code instances started by the lead. `agent_completed` currently sets the lead's row to `AwaitingInput` by name — the same mapping the substring match produced before — and if teammate completions arrive on that token, a lead still working would be reported as waiting.
+  Touches: `crates/terminalai-core/src/registry/ingest.rs`, `crates/terminalai-core/src/hooks.rs`
+  Acceptance: a real team run is observed and the finding recorded either way. If teammate hooks do arrive on the lead's token, they carry something that distinguishes them and the notification arms use it; if they do not, that is stated in the ingest module docs so the question is not reopened.
+  Complexity: S
 
 - [ ] P2 — Let a launch bound its own fan-out
   Why: admission governs sessions, spend and memory, but a single session can now spawn a team and up to 20 concurrent subagents — the one resource multiplier the launcher cannot express. Depends on the job-memory item above, whose process count is the only way to see whether a cap took effect.

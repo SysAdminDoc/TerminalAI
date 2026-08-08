@@ -184,6 +184,9 @@ impl SessionRegistry {
             let entry = state.entries.get_mut(&id)?;
             let previous_status = entry.session.status;
             let previous_state_since = entry.session.state_since;
+            // Set inside the match, applied once the entry borrow is done: the
+            // auth map is a sibling field of `entries` on the same state.
+            let mut authenticated: Option<crate::agent::Agent> = None;
             if entry.session.resume_id.is_none()
                 && matches!(event.signal, HookSignal::SessionStart)
             {
@@ -302,6 +305,29 @@ impl SessionRegistry {
                     HookNotification::IdlePrompt => entry
                         .session
                         .set_status_from_at(SessionStatus::AwaitingInput, now, source),
+                    // `NeedsYou` rather than either of the two above: the agent
+                    // said it needs the operator without saying it is a
+                    // permission decision or an idle prompt, and claiming the
+                    // more specific of the two would put a wrong question in
+                    // front of them. The inbox lists all three.
+                    HookNotification::AgentNeedsInput
+                    | HookNotification::ElicitationDialog => entry
+                        .session
+                        .set_status_from_at(SessionStatus::NeedsYou, now, source),
+                    // Kept where the substring match used to put it, but by
+                    // name. `Stop` is the authoritative end-of-turn for the
+                    // supervised process; this is the redundant copy, and it is
+                    // what an agent that emits the notification without the hook
+                    // has.
+                    HookNotification::AgentCompleted => entry
+                        .session
+                        .set_status_from_at(SessionStatus::AwaitingInput, now, source),
+                    // Positive evidence, and the only kind this tool accepts:
+                    // an agent that says it authenticated has, so the expiry
+                    // banner comes down without waiting for the next probe.
+                    HookNotification::AuthSuccess => {
+                        authenticated = Some(entry.session.agent);
+                    }
                     HookNotification::Other => {}
                 },
                 HookSignal::RateLimited { ref limit } => {
@@ -391,6 +417,18 @@ impl SessionRegistry {
             let _ = entry;
             if clear_operator_edit {
                 state.operator_edited.remove(&id);
+            }
+            if let Some(agent) = authenticated {
+                // Only an expiry is cleared. A hold this tool never placed is
+                // not this tool's to lift, and overwriting an `Unknown` with
+                // `Authenticated` would report healthy from a signal about a
+                // different question.
+                if let Some(auth) = state.auth.get_mut(&agent) {
+                    if auth.state == crate::auth::AuthState::Expired {
+                        auth.state = crate::auth::AuthState::Authenticated;
+                        auth.detail = None;
+                    }
+                }
             }
             let notifications = state.notifications.observe(
                 &session,
@@ -682,6 +720,105 @@ mod tests {
             approval: None,
         }));
         assert_eq!(registry.snapshot()[0].status, SessionStatus::Idle);
+    }
+
+    /// A notification that means "this session is waiting for you" reaches the
+    /// row and the inbox behind it.
+    ///
+    /// `agent_needs_input` was parsed into a bucket the registry drops, which is
+    /// the same shape as the `PermissionRequest` defect fixed in v0.18.0: the
+    /// payload arrived, was understood well enough to be named, and then went
+    /// nowhere.
+    #[test]
+    fn a_session_that_says_it_needs_the_operator_is_shown_as_needing_them() {
+        for notification in [
+            HookNotification::AgentNeedsInput,
+            HookNotification::ElicitationDialog,
+        ] {
+            let registry = SessionRegistry::new();
+            let id = SessionId::new(1);
+            live_entry(&registry, id.clone(), Agent::Claude, None);
+            assert!(apply_test_hook(&registry, HookEvent {
+                agent: Agent::Claude,
+                session_id: None,
+                cwd: Some(Path::new(".").to_path_buf()),
+                signal: HookSignal::Notification { notification },
+                progress: None,
+                approval: None,
+            }));
+            let session = registry.snapshot().pop().expect("session");
+            assert_eq!(
+                session.status,
+                SessionStatus::NeedsYou,
+                "{notification:?} left the row where it was"
+            );
+            assert!(session.unread, "{notification:?} raised nothing");
+        }
+    }
+
+    /// An agent that says it signed in clears the expiry banner.
+    ///
+    /// Only an expiry. A hold this tool never placed is not this tool's to
+    /// lift, and an `Unknown` reading is a different question — reporting
+    /// healthy from it is exactly the rule `auth.rs` exists to enforce.
+    #[test]
+    fn a_reported_sign_in_clears_an_expiry_and_touches_nothing_else() {
+        for (before, after) in [
+            (crate::auth::AuthState::Expired, crate::auth::AuthState::Authenticated),
+            (crate::auth::AuthState::Unknown, crate::auth::AuthState::Unknown),
+        ] {
+            let registry = SessionRegistry::new();
+            let id = SessionId::new(1);
+            live_entry(&registry, id.clone(), Agent::Claude, None);
+            registry.set_agent_auth(crate::auth::AgentAuth {
+                agent: Agent::Claude,
+                state: before,
+                account: Some("someone@example.invalid".into()),
+                detail: Some("probe said so".into()),
+            });
+            assert!(apply_test_hook(&registry, HookEvent {
+                agent: Agent::Claude,
+                session_id: None,
+                cwd: Some(Path::new(".").to_path_buf()),
+                signal: HookSignal::Notification {
+                    notification: HookNotification::AuthSuccess,
+                },
+                progress: None,
+                approval: None,
+            }));
+            let auth = registry
+                .agent_auth(Agent::Claude)
+                .expect("the reading is still there");
+            assert_eq!(auth.state, after, "from {before:?}");
+            assert_eq!(
+                auth.account.as_deref(),
+                Some("someone@example.invalid"),
+                "the account the probe named is not this signal's to change"
+            );
+            // Codex was never touched, so a Claude sign-in cannot clear it.
+            assert_eq!(registry.agent_auth(Agent::Codex), None);
+        }
+    }
+
+    #[test]
+    fn a_sign_in_is_not_an_attention_state() {
+        // It is good news. A row that jumps to NeedsYou on it would put the
+        // operator in front of a session that wants nothing.
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        live_entry(&registry, id.clone(), Agent::Claude, None);
+        let before = registry.snapshot().pop().expect("session").status;
+        apply_test_hook(&registry, HookEvent {
+            agent: Agent::Claude,
+            session_id: None,
+            cwd: Some(Path::new(".").to_path_buf()),
+            signal: HookSignal::Notification {
+                notification: HookNotification::AuthSuccess,
+            },
+            progress: None,
+            approval: None,
+        });
+        assert_eq!(registry.snapshot().pop().expect("session").status, before);
     }
 
     #[test]

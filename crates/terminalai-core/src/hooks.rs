@@ -198,11 +198,35 @@ pub struct HookRateLimit {
     pub plan: Option<String>,
 }
 
+/// One `Notification` hook, classified.
+///
+/// The variants are the `notification_type` values Claude Code documents, and
+/// they are matched **by name** rather than by looking for a word inside the
+/// string. Substring matching is what let `agent_completed` land on `IdlePrompt`
+/// by coincidence — it contains "complete" — while `agent_needs_input`, whose
+/// entire meaning is "this session is waiting for you", matched nothing and was
+/// dropped. A taxonomy that classifies by accident classifies the next new value
+/// by accident too.
+///
+/// The heuristics are kept for names this list does not cover, because Codex and
+/// future versions send their own spellings, and an unrecognised name is logged
+/// rather than silently filed as [`Self::Other`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HookNotification {
     PermissionPrompt,
     IdlePrompt,
+    /// `agent_needs_input`, added in Claude Code 2.1.198. The one notification
+    /// whose whole meaning is the thing this tool exists to surface.
+    AgentNeedsInput,
+    /// `elicitation_dialog` — an MCP server is asking the operator something
+    /// through the agent. Attention for the same reason a permission prompt is.
+    ElicitationDialog,
+    /// `agent_completed`. The run ended.
+    AgentCompleted,
+    /// `auth_success`. Credentials that were reported expired are good again.
+    AuthSuccess,
+    /// Documented, deliberately uninteresting, or unrecognised. Never acted on.
     Other,
 }
 
@@ -560,14 +584,48 @@ fn parse_notification(value: Option<&str>) -> HookNotification {
     let Some(value) = value.map(normalize) else {
         return HookNotification::Other;
     };
+    // Documented names first, exactly. Anything reached by the heuristics below
+    // is a guess, and a guess must never outrank a value the vendor publishes.
+    match value.as_str() {
+        "permission_prompt" => return HookNotification::PermissionPrompt,
+        "idle_prompt" => return HookNotification::IdlePrompt,
+        "agent_needs_input" => return HookNotification::AgentNeedsInput,
+        "elicitation_dialog" => return HookNotification::ElicitationDialog,
+        "agent_completed" => return HookNotification::AgentCompleted,
+        "auth_success" => return HookNotification::AuthSuccess,
+        // Documented and deliberately not acted on: these report that an
+        // elicitation the operator already saw has been answered, which changes
+        // nothing about whether the session needs them.
+        "elicitation_complete" | "elicitation_response" => return HookNotification::Other,
+        _ => {}
+    }
     if is_permission_notification(&value) {
         HookNotification::PermissionPrompt
     } else if is_idle_notification(&value) {
         HookNotification::IdlePrompt
     } else {
+        // Logged rather than silently filed. A new `notification_type` is how
+        // this taxonomy falls behind the platform, and the log is the only place
+        // that can say it happened.
+        tracing::debug!(notification = %value, "unrecognised notification type");
         HookNotification::Other
     }
 }
+
+/// Every `notification_type` this build recognises by name.
+///
+/// Exposed so a test can walk it rather than restating the list, and so adding
+/// a variant without a name is a compile error rather than a silent gap.
+pub const DOCUMENTED_NOTIFICATIONS: [(&str, HookNotification); 8] = [
+    ("permission_prompt", HookNotification::PermissionPrompt),
+    ("idle_prompt", HookNotification::IdlePrompt),
+    ("auth_success", HookNotification::AuthSuccess),
+    ("elicitation_dialog", HookNotification::ElicitationDialog),
+    ("elicitation_complete", HookNotification::Other),
+    ("elicitation_response", HookNotification::Other),
+    ("agent_needs_input", HookNotification::AgentNeedsInput),
+    ("agent_completed", HookNotification::AgentCompleted),
+];
 
 fn is_permission_notification(value: &str) -> bool {
     value.contains("permission") || value.contains("approval")
@@ -606,6 +664,89 @@ mod tests {
                 notification: HookNotification::PermissionPrompt
             }
         );
+    }
+
+    /// Every documented `notification_type` is classified by its own name.
+    ///
+    /// Walks the table rather than restating it, so a variant added without a
+    /// name is a compile error and a name added without a test is impossible.
+    #[test]
+    fn every_documented_notification_type_is_recognised_by_name() {
+        for (name, expected) in DOCUMENTED_NOTIFICATIONS {
+            let event = parse_hook(
+                Agent::Claude,
+                &format!(
+                    r#"{{"session_id":"cc-1","hook_event_name":"Notification","notification_type":"{name}"}}"#
+                ),
+            )
+            .unwrap_or_else(|error| panic!("{name} should parse: {error}"));
+            assert_eq!(
+                event.signal,
+                HookSignal::Notification {
+                    notification: expected
+                },
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_two_names_that_used_to_be_classified_by_accident_are_not_anymore() {
+        // `agent_completed` contains "complete", so the idle heuristic caught it
+        // by coincidence and would have caught anything else containing the
+        // word. `agent_needs_input` — the one notification whose entire meaning
+        // is "this session is waiting for you" — matched nothing and was
+        // dropped. Both are now decided by name, and this is the assertion that
+        // fails if either arm is removed and the heuristics take over again.
+        let needs_input = notification_for("agent_needs_input");
+        assert_eq!(needs_input, HookNotification::AgentNeedsInput);
+        assert_ne!(needs_input, HookNotification::Other, "it used to be dropped");
+
+        assert_eq!(
+            notification_for("agent_completed"),
+            HookNotification::AgentCompleted
+        );
+        // The three elicitation values all contain neither "permission" nor
+        // "idle", but two of them contain words the idle heuristic looks for.
+        assert_eq!(
+            notification_for("elicitation_complete"),
+            HookNotification::Other,
+            "an answered elicitation is not the operator's turn"
+        );
+        assert_eq!(
+            notification_for("elicitation_dialog"),
+            HookNotification::ElicitationDialog
+        );
+    }
+
+    #[test]
+    fn an_unknown_notification_type_is_still_classified_by_the_heuristics() {
+        // Codex and future versions send their own spellings, so dropping the
+        // fallback would trade one gap for another.
+        assert_eq!(
+            notification_for("tool-permission-request"),
+            HookNotification::PermissionPrompt
+        );
+        assert_eq!(
+            notification_for("awaiting-user"),
+            HookNotification::IdlePrompt
+        );
+        assert_eq!(notification_for("something-new"), HookNotification::Other);
+    }
+
+    /// The classification of one `notification_type`, through the real parser.
+    fn notification_for(name: &str) -> HookNotification {
+        let event = parse_hook(
+            Agent::Claude,
+            &format!(
+                r#"{{"session_id":"cc-1","hook_event_name":"Notification","notification_type":"{name}"}}"#
+            ),
+        )
+        .unwrap_or_else(|error| panic!("{name} should parse: {error}"));
+        match event.signal {
+            HookSignal::Notification { notification } => notification,
+            other => panic!("{name} produced {other:?}"),
+        }
     }
 
     #[test]

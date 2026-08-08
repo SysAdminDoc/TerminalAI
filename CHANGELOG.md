@@ -7,6 +7,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- Every documented `notification_type` is recognised by name. The `Notification` hook is already
+  managed, so its payloads were arriving; the classifier searched them for substrings, which meant
+  `agent_completed` landed on the idle bucket because it contains the word "complete", and
+  `agent_needs_input` — added in Claude Code 2.1.198, and the one notification whose entire meaning
+  is "this session is waiting for you" — matched nothing and was dropped. Same shape as the
+  `PermissionRequest` defect fixed in v0.18.0.
+
+  All eight documented values are now matched exactly, ahead of the heuristics, which stay for the
+  spellings Codex and future versions send. `agent_needs_input` and `elicitation_dialog` move the row
+  to *Needs you* and into the approvals inbox; `auth_success` clears an expired-credentials hold
+  without touching an `Unknown` reading or an account name it did not report; an answered
+  elicitation is deliberately not an attention state. A `notification_type` this build does not know
+  is logged rather than silently filed.
+
 - A session's memory is measured over the job its cap is enforced over. `JOB_OBJECT_LIMIT_JOB_MEMORY`
   applies to every process in a session's job; the figure the row showed, and the one admission spent
   against, came from `GetProcessMemoryInfo` on the supervised pid alone. Since agent teams that is not
