@@ -2,6 +2,84 @@
 
 Single task tracker for this repo. Newest phase at the top; completed items are removed.
 
+## Improvement Program — 2026-08-08
+
+This is the next product and engineering pass after v0.23.0. The visual redesign and frontend
+decomposition are complete; the remaining work closes the gap between strong internal contracts,
+the packaged Windows application, real agent versions, and an unfamiliar operator's first run.
+Items stay here while their implementation is actionable. Operator-owned or vendor-owned evidence
+remains cross-referenced in `Roadmap_Blocked.md` and is not claimed by a local test.
+
+- [ ] P1 — Prove the packaged Tauri/WebView2 application end to end
+  Category: release confidence
+  Where: `crates/terminalai-app`, `web/scripts/chrome-audit.mjs`, `scripts/verify-installer.ps1`
+  Problem: the headless Chrome audit proves the Vite renderer, but it does not prove the packaged WebView2 shell, named-pipe startup, focus/resize wiring, WinRT toast delivery, or an upgrade over a running daemon.
+  Evidence: the current Chrome gate is clean, while the packaged UI/WebDriver path and interactive toast delivery remain external residuals in `Roadmap_Blocked.md` under R-56 and Windows toast delivery.
+  Fix: add an isolated packaged-shell smoke harness with a deterministic mock daemon, exercise launch/focus/resize/terminal output/reconnect/error recovery, and keep installer upgrade checks separate from interactive-desktop verification.
+  Touches: `crates/terminalai-app/src/main.rs`, `web/scripts/chrome-audit.mjs`, `scripts/verify-installer.ps1`, release-test fixtures.
+  Acceptance: a release-mode app starts on the isolated non-input desktop, reaches the mocked daemon, opens/focuses a session, resizes it, receives an event, survives reconnect, and the installer gate proves upgrade-over-running-daemon behavior without touching the operator desktop.
+  Complexity: L
+
+- [ ] P1 — Build a versioned Claude/Codex compatibility matrix
+  Category: agent compatibility
+  Where: `crates/terminalai-core/src/launch.rs`, capability discovery, launch fixtures and `terminalai-probe verify-goldens`.
+  Problem: argv goldens prove what TerminalAI emits, but not that the installed agent accepts and acts on every option; version-gated features can otherwise regress silently.
+  Evidence: the repository already has launch goldens and runtime capability discovery, while the compaction and screen-reader features remain blocked on vendor versions in `Roadmap_Blocked.md`.
+  Fix: make fixtures versioned by agent and capability, record accepted/rejected/mode-restricted options, validate preview and final argv through the same matrix, and render a clear unsupported explanation in the launcher.
+  Touches: `crates/terminalai-core/src/launch.rs`, `crates/terminalai-core/src/capabilities.rs`, `crates/terminalai-core/tests/fixtures/launch/`, `crates/terminalai-probe`, `web/src/launcher.js`.
+  Acceptance: every advertised option has an agent/version fixture, unsupported or mode-restricted options are refused before spawn, the preview names the reason, and `verify-goldens` checks both emitted shape and installed-agent applicability where the operator supplies the binary.
+  Complexity: M
+
+- [ ] P1 — Make the first-run operator workflow measurable and teachable
+  Category: usability
+  Where: launcher, empty states, explainer, project registration and session recovery.
+  Problem: the app is intentionally dense and its self-explanation is unvalidated; a new operator may still hesitate at project registration, launch configuration, status interpretation, or attention recovery.
+  Evidence: the implementation has first-run guidance and a row-to-terminal explainer, but unfamiliar-person acceptance is explicitly still open in `Roadmap_Blocked.md`.
+  Fix: add a guided first-run path with a safe demo/mock session, task-oriented empty states, a compact “what happens next” sequence, and a locally recorded usability checklist that does not collect user data.
+  Touches: `web/index.html`, `web/src/main.js`, `web/src/launcher.js`, `web/src/workspacePages.js`, `web/src/i18n/terminalai.ftl`, `web/tests/`.
+  Acceptance: a fresh profile can discover/register a project, launch a safe demo session, identify every attention state, recover focus after restart, and reach the real launcher without undocumented knowledge; the remaining human acceptance is recorded as external evidence.
+  Complexity: M
+
+- [ ] P1 — Isolate agent-team identity and prove hook delivery
+  Category: correctness
+  Where: `crates/terminalai-core/src/registry/ingest.rs`, `hooks.rs`, daemon hook transport and preflight.
+  Problem: teammate processes may inherit the lead's hook token, allowing a teammate event to mutate the lead row; “hooks installed” also does not prove that a hook reaches this daemon.
+  Evidence: `Roadmap_Blocked.md` records both the team-hook identity question and the missing live `--init-only` proof.
+  Fix: add an explicit per-agent-instance correlation field where the vendor exposes one, preserve unknown attribution instead of guessing, distinguish configured/observed/blocked preflight states, and add replay tests for lead/teammate interleavings.
+  Touches: `crates/terminalai-core/src/registry/ingest.rs`, `crates/terminalai-core/src/hooks.rs`, `crates/terminalai-daemon/src/http_hooks.rs`, `crates/terminalai-app/src/main.rs`.
+  Acceptance: a teammate event cannot change the wrong row, ambiguous events are visible as ambiguous, preflight never calls configuration alone “firing,” and the live vendor-dependent result remains explicitly blocked until an operator-owned team run exists.
+  Complexity: M
+
+- [ ] P2 — Add synthetic fleet-scale reliability and resource gates
+  Category: performance and resilience
+  Where: core registry, daemon persistence, probe harness and release verification.
+  Problem: the project documents historical CPU/memory measurements and a thirty-session target, but does not continuously enforce event-storm, restart, corruption, or 30–100-session resource budgets.
+  Evidence: `Roadmap_Blocked.md` identifies the load and memory measurements as historical evidence rather than a current gate.
+  Fix: create deterministic synthetic sessions and event streams, measure RSS/CPU/startup/latency, inject daemon restarts and store corruption, and assert bounded logs, scrollback, queues and DOM work.
+  Touches: `crates/terminalai-core/src/registry`, `crates/terminalai-daemon`, `crates/terminalai-probe`, `web/tests/`, `scripts/`.
+  Acceptance: CI reports stable 30-session and stress profiles, enforces documented budgets, proves recovery after daemon restart/store quarantine, and fails on unbounded memory or event backlog.
+  Complexity: L
+
+- [ ] P2 — Finish shell maintainability and replace brittle source contracts
+  Category: maintainability
+  Where: `crates/terminalai-app/src/main.rs`, `web/src/main.js`, `web/src/styles.css`, `web/tests/appSource.mjs`.
+  Problem: the frontend shell is below its decomposition target, but the Tauri app entry remains about 2,888 lines and source-slicing tests require compatibility anchors that make safe refactors harder.
+  Evidence: `main.rs` still combines commands, lifecycle, toast delivery and preflight; `appSource.mjs` has already needed source-boundary accommodations during the frontend split.
+  Fix: extract app command groups and lifecycle services, split CSS into stable component layers/tokens, and migrate source-grep assertions toward exported pure functions, DOM fixtures and protocol tests.
+  Touches: `crates/terminalai-app/src/main.rs`, `crates/terminalai-app/src/`, `web/src/main.js`, `web/src/styles.css`, `web/tests/`.
+  Acceptance: no entry module owns unrelated feature families, tests assert behavior at module boundaries rather than string position, and the existing Rust/frontend/chrome gates remain unchanged and green.
+  Complexity: L
+
+- [ ] P2 — Make distribution and cross-target verification repeatable
+  Category: release engineering
+  Where: installer scripts, GitHub release workflow, winget metadata and cross-target checks.
+  Problem: a successful local build is not yet a frictionless release path for users, and Windows-only verification leaves Unix cfg branches and published installer metadata outside the regular gate.
+  Evidence: `Roadmap_Blocked.md` tracks the outward-facing winget/checksum steps and the need for cross-host closure of non-Windows branches.
+  Fix: automate release artifact manifests and SHA-256 checks, publish a ready-to-submit winget manifest, run Linux/macOS compile/test jobs for cfg branches, and keep the unsigned installer policy explicit.
+  Touches: `.github/workflows/`, `scripts/verify-installer.ps1`, `scripts/verify-reproducible.ps1`, `scripts/check-cross-targets.ps1`, release metadata.
+  Acceptance: one tagged release produces reproducible NSIS/MSI artifacts, hashes, upgrade evidence and submission-ready metadata; cross-target CI compiles/tests the non-Windows branches and reports unsupported runtime checks honestly.
+  Complexity: M
+
 ## Audit Findings — 2026-08-07
 
 Fourth audit pass, against `cc53821` / v0.15.0 with a green baseline of 585 Rust (0 failed), 305
