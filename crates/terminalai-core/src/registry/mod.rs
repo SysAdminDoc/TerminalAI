@@ -318,6 +318,26 @@ impl SessionRegistry {
         self.inner.is_poisoned()
     }
 
+    /// Poison the state lock deliberately, so a crate that depends on this one
+    /// can exercise its own recovery path.
+    ///
+    /// Feature-gated and absent from every shipped build: the daemon refuses
+    /// stateful requests against a poisoned registry, and that refusal is
+    /// unreachable from outside this crate because the mutex is private. The
+    /// alternative — leaving it untested — is exactly what the daemon's
+    /// `panic = "abort"` guard exists to prevent.
+    #[cfg(feature = "poison-recovery-tests")]
+    pub fn poison_state_lock(&self) {
+        let inner = Arc::clone(&self.inner);
+        let _ = std::thread::spawn(move || {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _state = lock_state(&inner);
+                panic!("poison the registry lock on purpose");
+            }));
+        })
+        .join();
+    }
+
     pub fn new() -> Self {
         Self::with_admission(AdmissionConfig::default())
     }

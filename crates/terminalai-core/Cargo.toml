@@ -8,6 +8,12 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[features]
+default = []
+# Exposes `SessionRegistry::poison_state_lock`, which only a dependent crate's
+# tests have any use for. Never enabled by a shipped build.
+poison-recovery-tests = []
+
 [dependencies]
 portable-pty.workspace = true
 serde.workspace = true

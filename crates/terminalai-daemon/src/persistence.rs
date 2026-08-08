@@ -284,6 +284,13 @@ mod tests {
             std::process::id(),
             NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed)
         ));
+        // Windows reuses process ids, and these directories are deliberately
+        // left behind for post-mortem reading — so a later run can inherit a
+        // previous one's shape. The store-health test in particular ends with a
+        // `blocker` *directory* where its next run needs to write a `blocker`
+        // *file*, which fails with "access is denied" for reasons that have
+        // nothing to do with the code under test.
+        let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("test dir");
         dir
     }

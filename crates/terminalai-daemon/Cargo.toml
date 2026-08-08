@@ -33,5 +33,10 @@ widestring.workspace = true
 dirs.workspace = true
 getrandom.workspace = true
 
+[dev-dependencies]
+# The daemon refuses stateful requests against a poisoned registry; the mutex is
+# private to the core, so only this feature makes that refusal reachable here.
+terminalai-core = { workspace = true, features = ["poison-recovery-tests"] }
+
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true

@@ -5,6 +5,42 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Added
+
+- The daemon's control plane is tested arm by arm. A coverage run on 2026-08-04 named
+  `terminalai-daemon/src/lib.rs` (58.31% of lines) and `logging.rs` (31.29%) as the two modules
+  whose figures were not explained by being entry points; re-running it named the reason, which was
+  not a number: of roughly forty request variants, six had ever been dispatched in a test. The gaps
+  that mattered were the ones the registry cannot cover because the rule lives in the dispatcher —
+  the payload and fan-out caps on `EnqueuePrompt` and `Broadcast`, the byte ceiling a search reports
+  having actually used, the megabyte-and-hour conversions `SetAdmission` performs in both
+  directions, the live-rows-only filter that decides what a saved layout contains, and the rule that
+  a worktree path is returned only to the hook that asked for one. Every id-taking request is now
+  checked to refuse a session that is not there and to name it: an arm answering `Ok` for a missing
+  row tells the window the action worked. Each new test was verified by applying the mutation it
+  exists to catch and watching it fail. `lib.rs` is at 70.49% and `logging.rs` at 80.75%; what
+  remains uncovered there is the transport, the Windows console handler and the arms that shell out
+  to a real agent binary.
+
+- `SessionRegistry::poison_state_lock`, behind the core's `poison-recovery-tests` feature and absent
+  from every shipped build. The daemon refuses stateful requests against a poisoned registry and
+  answers the rest, which is the behaviour its `panic = "abort"` compile guard exists to keep real —
+  and it was unreachable from the daemon's own tests because the mutex is private to the core.
+
+- The diagnostics panel's inputs are pinned: a record carries the fields of its own span scope and
+  no other, the message is not duplicated into the field list, every field type arrives as a
+  readable string, a viewer that closed is unsubscribed, and one that merely fell behind is not.
+  The last pair are opposite failures — a leaked channel per closed window, or a GUI that goes
+  silent for good and looks like a daemon that stopped logging.
+
+### Fixed
+
+- The store-health test no longer fails on a machine that has run it before. It ends by creating a
+  `blocker` directory where its next run needs to write a `blocker` file, the scratch directory is
+  named after the process id, and Windows reuses those — so the test failed with "access is denied"
+  for reasons unrelated to the code under test, roughly whenever a pid came round again. The scratch
+  directory is now cleared on the way in.
+
 ## [0.20.0] — 2026-08-07
 
 ### Added

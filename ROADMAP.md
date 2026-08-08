@@ -80,10 +80,3 @@ additions; where they touch, the note says so.
 
 ### P3
 
-- [ ] P3 — Close the coverage gaps the first `llvm-cov` run named
-  Why: coverage was run once on 2026-08-04 (72.15% regions, 71.28% lines workspace-wide) to find untested arms rather than to chase a number, and it named two modules whose low figures are not explained by being entry points.
-  Evidence: `crates/terminalai-daemon/src/lib.rs` is at **58.07%** line coverage — the control plane, where every request arm and every framing error lives — and `crates/terminalai-daemon/src/logging.rs` at **31.29%**. `terminalai-daemon/src/main.rs` (0%) and `terminalai-probe/src/main.rs` (12%) are process entry points and a CLI harness, and are not the target. Re-run with `pwsh`-free `RUSTC=<managed>/bin/rustc.exe cargo-llvm-cov llvm-cov --workspace --summary-only`; note the suite only runs under coverage because `lease_command_uses_the_allowlist_without_putting_connection_in_argv` now ignores the profiling runtime's own `__LLVM_PROFILE*` variables.
-  Touches: `crates/terminalai-daemon/src/lib.rs`, `crates/terminalai-daemon/src/logging.rs`, `crates/terminalai-daemon/tests/`
-  Acceptance: the uncovered request arms and error branches in the daemon's control plane are either covered or individually recorded as unreachable with a reason. The number itself is not the goal and must not become one.
-  Complexity: M
-

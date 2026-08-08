@@ -257,4 +257,154 @@ mod tests {
             Some("257")
         );
     }
+
+    /// A hub wired to a real subscriber, so the layer is exercised by `tracing`
+    /// rather than by hand. Scoped with `with_default` — the daemon's own
+    /// `init_logging` sets a global subscriber, and a test that did the same
+    /// could only ever run first.
+    fn record(emit: impl FnOnce()) -> Vec<LogEntry> {
+        let hub = LogHub::default();
+        let receiver = hub.subscribe();
+        let subscriber = tracing_subscriber::registry().with(HubLayer { hub: hub.clone() });
+        tracing::subscriber::with_default(subscriber, emit);
+        receiver.try_iter().collect()
+    }
+
+    #[test]
+    fn a_record_carries_the_session_span_that_produced_it() {
+        // The whole reason the layer walks the span scope: without it every
+        // line in a fourteen-session fleet reads as whole-daemon noise, and the
+        // question being asked is almost always about one session.
+        let entries = record(|| {
+            let outer = tracing::info_span!("session", session_id = "s0007", agent = "claude");
+            let _outer = outer.enter();
+            let inner = tracing::info_span!("launch", attempt = 2);
+            let _inner = inner.enter();
+            tracing::warn!(exit_code = 1, "agent exited");
+        });
+
+        assert_eq!(entries.len(), 1, "one event, one record");
+        let entry = &entries[0];
+        assert_eq!(entry.message, "agent exited");
+        assert_eq!(entry.level, "WARN");
+        assert_eq!(entry.fields.get("session_id").map(String::as_str), Some("s0007"));
+        assert_eq!(entry.fields.get("agent").map(String::as_str), Some("claude"));
+        assert_eq!(entry.fields.get("attempt").map(String::as_str), Some("2"));
+        assert_eq!(entry.fields.get("exit_code").map(String::as_str), Some("1"));
+        // The message is the message, not a field as well. It is rendered on
+        // its own line in the diagnostics panel, and a duplicate copy in the
+        // field list is noise on every record the daemon writes.
+        assert!(
+            !entry.fields.contains_key("message"),
+            "the message was duplicated into the fields: {:?}",
+            entry.fields
+        );
+    }
+
+    #[test]
+    fn a_record_outside_any_span_carries_no_borrowed_fields() {
+        // The counterpart to the test above: span fields must come from the
+        // event's own scope, not from whatever span happened to be open last.
+        let entries = record(|| {
+            {
+                let span = tracing::info_span!("session", session_id = "s0001");
+                let _entered = span.enter();
+                tracing::info!("inside");
+            }
+            tracing::info!("outside");
+        });
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].fields.get("session_id").map(String::as_str), Some("s0001"));
+        assert!(
+            entries[1].fields.is_empty(),
+            "a record outside the span borrowed its fields: {:?}",
+            entries[1].fields
+        );
+    }
+
+    #[test]
+    fn every_field_type_reaches_the_panel_as_a_readable_string() {
+        // The GUI renders strings. Each of these arrives through a different
+        // visitor method, and one that is missing does not fail loudly — the
+        // field simply never appears on the record.
+        let entries = record(|| {
+            tracing::info!(
+                count = 3u64,
+                delta = -4i64,
+                ratio = 1.5f64,
+                enabled = true,
+                name = "claude",
+                path = ?std::path::PathBuf::from("repo"),
+                "typed"
+            );
+        });
+
+        let fields = &entries[0].fields;
+        assert_eq!(fields.get("count").map(String::as_str), Some("3"));
+        assert_eq!(fields.get("delta").map(String::as_str), Some("-4"));
+        assert_eq!(fields.get("ratio").map(String::as_str), Some("1.5"));
+        assert_eq!(fields.get("enabled").map(String::as_str), Some("true"));
+        assert_eq!(fields.get("name").map(String::as_str), Some("claude"));
+        // Debug-formatted values arrive quoted; the panel shows the value, not
+        // the quoting.
+        assert_eq!(fields.get("path").map(String::as_str), Some("repo"));
+    }
+
+    #[test]
+    fn a_closed_viewer_is_dropped_and_a_slow_one_is_kept() {
+        // Two different failures. A GUI that closed and is never forgotten
+        // leaks a channel per window for the life of the daemon; a GUI that is
+        // merely behind and gets unsubscribed goes silent for good, which looks
+        // exactly like a daemon that stopped logging.
+        let hub = LogHub::default();
+        let closed = hub.subscribe();
+        let slow = hub.subscribe();
+        assert_eq!(subscriber_count(&hub), 2);
+
+        drop(closed);
+        hub.push(entry("first"));
+        assert_eq!(
+            subscriber_count(&hub),
+            1,
+            "a closed viewer was kept and its channel with it"
+        );
+
+        // Fill the slow viewer's channel well past its capacity without reading.
+        for index in 0..(MAX_LOG_ENTRIES * 2) {
+            hub.push(entry(&index.to_string()));
+        }
+        assert_eq!(
+            subscriber_count(&hub),
+            1,
+            "a viewer that fell behind was unsubscribed instead of throttled"
+        );
+
+        // And it still receives what is pushed once it catches up.
+        let backlog: Vec<_> = slow.try_iter().collect();
+        assert_eq!(backlog.len(), MAX_LOG_ENTRIES, "the queue is bounded");
+        hub.push(entry("after"));
+        assert_eq!(
+            slow.try_iter().last().map(|entry| entry.message),
+            Some("after".to_owned())
+        );
+    }
+
+    fn subscriber_count(hub: &LogHub) -> usize {
+        hub.inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .subscribers
+            .len()
+    }
+
+    fn entry(message: &str) -> LogEntry {
+        LogEntry {
+            at: SystemTime::UNIX_EPOCH,
+            level: "INFO".into(),
+            target: "test".into(),
+            message: message.to_owned(),
+            fields: BTreeMap::new(),
+        }
+    }
 }

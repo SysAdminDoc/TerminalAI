@@ -1555,21 +1555,14 @@ fn dispatch_with_endpoint(
             },
         },
         Request::Hook { event, hook_token } => {
-            let wants_placement = matches!(event.signal, terminalai_core::HookSignal::WorktreeCreate);
+            let signal = event.signal.clone();
             let matched = registry.apply_hook_matching(
                 event,
                 hook_token.as_deref(),
                 std::time::SystemTime::now(),
             );
             Response::Hook {
-                // Answered only for the hook that asked. Every other event is
-                // fire-and-forget and must stay that way: an adapter that
-                // printed a path on an ordinary event would be handing the
-                // agent a directive it never requested.
-                worktree_path: matched
-                    .as_ref()
-                    .filter(|_| wants_placement)
-                    .and_then(|id| registry.worktree_placement(id)),
+                worktree_path: placement_answer(&signal, matched.as_ref(), registry),
                 matched: matched.is_some(),
             }
         }
@@ -1815,6 +1808,23 @@ fn dispatch_with_endpoint(
             },
         },
     }
+}
+
+/// Which hook, if any, is answered with a worktree path.
+///
+/// Answered only for the hook that asked. Every other event is fire-and-forget
+/// and must stay that way: an adapter that printed a path on an ordinary event
+/// would be handing the agent a directive it never requested. An event that
+/// matched no row is answered with nothing at all — placement is a fact about a
+/// supervised session, and an unauthenticated hook must not learn one.
+fn placement_answer(
+    signal: &terminalai_core::HookSignal,
+    matched: Option<&SessionId>,
+    registry: &SessionRegistry,
+) -> Option<PathBuf> {
+    matched
+        .filter(|_| matches!(signal, terminalai_core::HookSignal::WorktreeCreate))
+        .and_then(|id| registry.worktree_placement(id))
 }
 
 fn request_requires_registry(request: &Request) -> bool {
@@ -2740,5 +2750,505 @@ mod tests {
             after <= baseline + 2,
             "connection threads leaked: baseline={baseline}, after={after}"
         );
+    }
+
+    /// A registry holding rows restored from a store, which is the only way to
+    /// put a session in front of the dispatcher without spawning a process.
+    fn registry_with(sessions: Vec<StoredSession>) -> SessionRegistry {
+        SessionRegistry::from_store(SessionStoreSnapshot {
+            magic: SESSION_STORE_MAGIC.to_owned(),
+            schema_version: SESSION_STORE_SCHEMA_VERSION,
+            spend: Vec::new(),
+            sessions,
+            archives: Vec::new(),
+            extra: Default::default(),
+        })
+    }
+
+    fn stored_session(id: u64, cwd: &std::path::Path) -> StoredSession {
+        let spec = terminalai_core::launch::spec_for(Agent::Claude, cwd);
+        StoredSession {
+            session: Session::new(SessionId::new(id), &spec),
+            spec,
+            command: ResolvedCommand {
+                program: std::path::PathBuf::from("claude.exe"),
+                args: Vec::new(),
+                cwd: cwd.to_path_buf(),
+            },
+            scrollback: Vec::new(),
+            queue: Default::default(),
+        }
+    }
+
+    #[test]
+    fn a_poisoned_registry_refuses_state_and_still_answers_the_rest() {
+        // The refusal itself is only reachable from here with the core's
+        // test-only poison hook: the mutex is private, and leaving this branch
+        // unexercised is what the crate's `panic = "abort"` guard exists to
+        // prevent. What matters is that the refusal is narrow — a client whose
+        // request needs no state must still get an answer, or a poisoned
+        // registry takes the whole control plane down with it.
+        let registry = SessionRegistry::new();
+        registry.poison_state_lock();
+        assert!(registry.is_poisoned());
+
+        assert!(matches!(
+            dispatch(Request::Snapshot, &registry),
+            Response::Error { ref message } if message.contains("poisoned")
+        ));
+        assert!(matches!(dispatch(Request::Ping, &registry), Response::Pong));
+        assert!(matches!(
+            dispatch(Request::Close, &registry),
+            Response::Ok
+        ));
+        assert!(matches!(
+            dispatch(Request::Shutdown, &registry),
+            Response::Ok
+        ));
+        // Handled by the connection before dispatch ever sees them, so reaching
+        // this far is itself the error being reported.
+        assert!(matches!(
+            dispatch(
+                Request::Hello {
+                    protocol: PROTOCOL_VERSION,
+                    client_pid: 1,
+                },
+                &registry
+            ),
+            Response::Error { ref message } if message.contains("already completed")
+        ));
+        assert!(matches!(
+            dispatch(Request::Subscribe, &registry),
+            Response::Error { ref message } if message.contains("handled by the connection")
+        ));
+    }
+
+    #[test]
+    fn the_requests_that_survive_a_poisoned_registry_are_the_stateless_ones() {
+        // The allowlist decides which requests skip the refusal above. A new
+        // stateful variant added to it would reach the registry with a poisoned
+        // lock; a stateless one left out of it becomes unanswerable for the rest
+        // of the daemon's life.
+        for request in [
+            Request::Ping,
+            Request::Close,
+            Request::Shutdown,
+            Request::Subscribe,
+            Request::HookEndpoint,
+            Request::Hello {
+                protocol: PROTOCOL_VERSION,
+                client_pid: 1,
+            },
+            Request::Resolve {
+                agent: Agent::Claude,
+                configured_path: None,
+            },
+        ] {
+            assert!(
+                !request_requires_registry(&request),
+                "{request:?} must remain answerable while the registry is poisoned"
+            );
+        }
+        for request in [
+            Request::Snapshot,
+            Request::SessionHistory,
+            Request::FleetSpecs,
+            Request::AdmissionConfig,
+            Request::Focus { id: None },
+            Request::Kill {
+                id: SessionId::new(1),
+            },
+            Request::AgentEvent {
+                event: AppServerEvent::Unknown {
+                    method: "thread/unknown".into(),
+                    params: serde_json::Value::Null,
+                }
+                .into(),
+            },
+        ] {
+            assert!(
+                request_requires_registry(&request),
+                "{request:?} touches the registry and must be refused while it is poisoned"
+            );
+        }
+    }
+
+    #[test]
+    fn a_hook_is_answered_with_a_path_only_when_it_asked_for_one() {
+        // An adapter writes whatever the daemon returns back to the agent, so a
+        // path on an ordinary event hands the agent a directive it never asked
+        // for. `WorktreeCreate` is the one hook that requested placement, and
+        // the fixture is built so that every other signal *would* be answered
+        // if the rule were dropped -- the row exists, the root is configured,
+        // and the placement is derivable.
+        let root = std::env::temp_dir().join(format!(
+            "terminalai-hook-placement-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let repo = root.join("repo");
+        fs::create_dir_all(&repo).expect("repo dir");
+        let output = std::process::Command::new("git")
+            .args(["init", "--quiet", "--initial-branch=main"])
+            .current_dir(&repo)
+            .output()
+            .expect("run git");
+        assert!(output.status.success(), "git init failed");
+        let repo = repo.canonicalize().expect("canonical repo");
+
+        let id = SessionId::new(31);
+        let registry = registry_with(vec![stored_session(31, &repo)]);
+        registry.set_worktree_root(root.join("worktrees"));
+
+        let placement = placement_answer(
+            &terminalai_core::HookSignal::WorktreeCreate,
+            Some(&id),
+            &registry,
+        )
+        .expect("a worktree hook is answered with a path");
+        assert!(
+            placement.starts_with(root.join("worktrees")),
+            "placement escaped the configured root: {}",
+            placement.display()
+        );
+
+        for signal in [
+            terminalai_core::HookSignal::SessionStart,
+            terminalai_core::HookSignal::PreToolUse,
+            terminalai_core::HookSignal::CwdChanged,
+            terminalai_core::HookSignal::Stop,
+            terminalai_core::HookSignal::Unknown {
+                event: "SomethingNew".into(),
+            },
+        ] {
+            assert_eq!(
+                placement_answer(&signal, Some(&id), &registry),
+                None,
+                "{signal:?} was handed a path it never asked for"
+            );
+        }
+
+        // A hook that matched no row is told nothing, even though it asked:
+        // where a checkout would be placed is a fact about a supervised
+        // session, and an unauthenticated event must not learn one.
+        assert_eq!(
+            placement_answer(
+                &terminalai_core::HookSignal::WorktreeCreate,
+                None,
+                &registry
+            ),
+            None,
+            "an unmatched hook was answered with a placement"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn oversized_queued_prompts_and_broadcasts_are_refused_whole() {
+        // Same reasoning as the write cap: half a prompt reaching an agent is
+        // worse than none, because the agent acts on the fragment.
+        let registry = SessionRegistry::new();
+        let too_long = "x".repeat(MAX_WRITE_BYTES + 1);
+        assert!(matches!(
+            dispatch(
+                Request::EnqueuePrompt {
+                    id: SessionId::new(1),
+                    text: too_long.clone(),
+                },
+                &registry
+            ),
+            Response::Error { ref message } if message.contains("exceeds the")
+        ));
+        assert!(matches!(
+            dispatch(
+                Request::Broadcast {
+                    ids: vec![SessionId::new(1)],
+                    data: too_long,
+                },
+                &registry
+            ),
+            Response::Error { ref message } if message.contains("exceeds the")
+        ));
+        // The second broadcast limit is the fan-out, not the payload: one small
+        // prompt aimed at every id a client cares to name is a fleet-wide write.
+        let response = dispatch(
+            Request::Broadcast {
+                ids: (0..=MAX_BROADCAST_TARGETS as u64).map(SessionId::new).collect(),
+                data: "hello".into(),
+            },
+            &registry,
+        );
+        assert!(matches!(
+            response,
+            Response::Error { ref message } if message.contains("exceeds the")
+        ));
+        // And a broadcast inside both limits is answered per session rather than
+        // with one verdict for the whole fan-out.
+        let response = dispatch(
+            Request::Broadcast {
+                ids: vec![SessionId::new(1), SessionId::new(2)],
+                data: "hello".into(),
+            },
+            &registry,
+        );
+        let Response::Broadcast { results } = response else {
+            panic!("expected a broadcast response");
+        };
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn a_search_reports_the_byte_ceiling_it_actually_used() {
+        // Clamped rather than refused, and the clamp is reported: a client that
+        // asked for more than a frame can carry otherwise reads a partial search
+        // as an exhaustive one.
+        let response = dispatch(
+            Request::SearchScrollback {
+                query: terminalai_core::search::SearchQuery {
+                    needle: "needle".into(),
+                    case_sensitive: false,
+                },
+                max_bytes: u64::MAX,
+            },
+            &SessionRegistry::new(),
+        );
+        assert!(matches!(
+            response,
+            Response::SearchResults { searched_bytes, .. } if searched_bytes == MAX_HISTORY_BYTES
+        ));
+
+        // A needle short enough to match everything costs a fleet-wide disk read
+        // to say so, so it is refused with a reason the client can act on.
+        assert!(matches!(
+            dispatch(
+                Request::SearchScrollback {
+                    query: terminalai_core::search::SearchQuery {
+                        needle: String::new(),
+                        case_sensitive: false,
+                    },
+                    max_bytes: 1024,
+                },
+                &SessionRegistry::new()
+            ),
+            Response::Error { .. }
+        ));
+    }
+
+    #[test]
+    fn a_saved_layout_describes_live_rows_only() {
+        // A restored fleet is not running. Its specs are still valid, but a
+        // layout describes a working spread, and restoring a dozen sessions the
+        // operator had already finished with is the opposite of useful.
+        let cwd = std::env::temp_dir();
+        let registry = registry_with(vec![stored_session(41, &cwd), stored_session(42, &cwd)]);
+        let Response::Snapshot { sessions, .. } = dispatch(Request::Snapshot, &registry) else {
+            panic!("expected a snapshot");
+        };
+        assert_eq!(sessions.len(), 2, "the rows themselves are still tracked");
+        assert!(
+            sessions.iter().all(|session| !session.status.is_live()),
+            "a restored row must not report as live"
+        );
+
+        let Response::FleetSpecs { specs } = dispatch(Request::FleetSpecs, &registry) else {
+            panic!("expected fleet specs");
+        };
+        assert!(
+            specs.is_empty(),
+            "a layout captured rows that are not running: {specs:?}"
+        );
+    }
+
+    #[test]
+    fn admission_is_echoed_back_in_the_units_it_was_set_in() {
+        // The dialog sends megabytes and hours; the core stores bytes and a
+        // duration. Both conversions happen here, and a round trip is the only
+        // place the pair can be shown to agree.
+        let registry = SessionRegistry::new();
+        let response = dispatch(
+            Request::SetAdmission {
+                max_live_sessions: 7,
+                default_budget_usd: Some(2.5),
+                spend_ceiling_usd: Some(40.0),
+                spend_window_hours: Some(6.0),
+                memory_budget_mb: Some(8192),
+                session_memory_cap_mb: Some(512),
+                max_processes_per_session: Some(24),
+            },
+            &registry,
+        );
+        let Response::Admission { admission } = response else {
+            panic!("expected an admission response");
+        };
+        assert_eq!(admission.max_live_sessions, 7);
+        assert_eq!(admission.memory_budget_mb, Some(8192));
+        assert_eq!(admission.session_memory_cap_mb, Some(512));
+        assert_eq!(admission.max_processes_per_session, Some(24));
+        assert!((admission.spend_window_hours - 6.0).abs() < f64::EPSILON);
+        // Stored, not merely echoed: reading it back through a separate request
+        // is what distinguishes applying the policy from reporting the argument.
+        let Response::Admission { admission } = dispatch(Request::AdmissionConfig, &registry) else {
+            panic!("expected an admission response");
+        };
+        assert_eq!(admission.max_live_sessions, 7);
+        assert_eq!(admission.spend_ceiling_usd, Some(40.0));
+
+        // A window of zero or a NaN is not a window. Dropping it leaves the
+        // configured default standing rather than a ceiling measured over no
+        // time at all, which would refuse every launch.
+        for hours in [Some(0.0), Some(f64::NAN), Some(-1.0)] {
+            let Response::Admission { admission } = dispatch(
+                Request::SetAdmission {
+                    max_live_sessions: 7,
+                    default_budget_usd: None,
+                    spend_ceiling_usd: Some(40.0),
+                    spend_window_hours: hours,
+                    memory_budget_mb: None,
+                    session_memory_cap_mb: None,
+                    max_processes_per_session: None,
+                },
+                &registry,
+            ) else {
+                panic!("expected an admission response");
+            };
+            assert!(
+                admission.spend_window_hours > 0.0,
+                "a meaningless window ({hours:?}) became the live one"
+            );
+        }
+    }
+
+    #[test]
+    fn a_landing_names_the_tree_the_session_actually_holds() {
+        // The refusal has to say which directory the row owns, because the
+        // operator's next move is to re-run the landing against that one.
+        let cwd = std::env::temp_dir().join("terminalai-owns-source");
+        fs::create_dir_all(&cwd).expect("session cwd");
+        let registry = registry_with(vec![stored_session(51, &cwd)]);
+        let elsewhere = std::env::temp_dir().join("terminalai-not-this-session");
+        fs::create_dir_all(&elsewhere).expect("other dir");
+
+        let detail = owns_source(&registry, &SessionId::new(51), &elsewhere)
+            .expect_err("an unrelated directory must not pass the ownership check");
+        assert!(
+            detail.contains(&cwd.display().to_string()),
+            "the refusal did not name the session's own tree: {detail}"
+        );
+
+        let _ = fs::remove_dir_all(&elsewhere);
+    }
+
+    #[test]
+    fn every_request_that_names_a_session_refuses_one_that_is_not_there() {
+        // A request answered with `Ok` for a row that does not exist tells the
+        // window the action worked. The operator sees no error, the fleet does
+        // not change, and the next thing they do is repeat it. Each of these is
+        // a separate arm, so the guarantee has to be checked arm by arm.
+        let registry = SessionRegistry::new();
+        let id = || SessionId::new(404);
+        let requests = vec![
+            Request::MarkReviewed { id: id() },
+            Request::MarkRead { id: id() },
+            Request::TogglePin { id: id() },
+            Request::Kill { id: id() },
+            Request::Focus { id: Some(id()) },
+            Request::Write {
+                id: id(),
+                data: "hello".into(),
+            },
+            Request::Resize {
+                id: id(),
+                rows: 24,
+                cols: 80,
+                pixel_width: 0,
+                pixel_height: 0,
+            },
+            Request::QueuedPrompts { id: id() },
+            Request::EnqueuePrompt {
+                id: id(),
+                text: "hello".into(),
+            },
+            Request::EditQueuedPrompt {
+                id: id(),
+                prompt: 1,
+                text: "hello".into(),
+            },
+            Request::RemoveQueuedPrompt {
+                id: id(),
+                prompt: 1,
+            },
+            Request::ReorderQueuedPrompt {
+                id: id(),
+                prompt: 1,
+                to: 0,
+            },
+            Request::PauseQueue { id: id() },
+            Request::ResumeQueue { id: id() },
+            Request::Scrollback { id: id() },
+            Request::ScrollbackHistory {
+                id: id(),
+                max_bytes: 1024,
+            },
+            Request::GridSnapshot { id: id() },
+            Request::Reattach { id: id() },
+            Request::Revive { id: id() },
+            Request::Archive { id: id() },
+            Request::Status { id: id() },
+        ];
+        for request in requests {
+            let label = format!("{request:?}");
+            let response = dispatch(request, &registry);
+            let Response::Error { message } = response else {
+                panic!("{label} was answered with {response:?} for a session that does not exist");
+            };
+            assert!(
+                message.contains("404"),
+                "{label} refused without naming the session: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_read_only_request_is_answered_in_its_own_shape() {
+        // These arms are one-line delegations, which is exactly why they are
+        // worth pinning: a client matches on the response kind, and an arm
+        // wired to the neighbouring reader answers plausibly and wrongly.
+        let registry = SessionRegistry::new();
+        assert!(matches!(
+            dispatch(Request::ReviewSnapshot, &registry),
+            Response::ReviewSnapshot { .. }
+        ));
+        assert!(matches!(
+            dispatch(Request::SessionHistory, &registry),
+            Response::SessionHistory { .. }
+        ));
+        assert!(matches!(
+            dispatch(Request::StaleWorktrees, &registry),
+            Response::StaleWorktrees { .. }
+        ));
+        assert!(matches!(
+            dispatch(Request::ExternalSessions, &registry),
+            Response::ExternalSessions { .. }
+        ));
+        assert!(matches!(
+            dispatch(Request::FleetSpecs, &registry),
+            Response::FleetSpecs { .. }
+        ));
+        assert!(matches!(
+            dispatch(Request::AdmissionConfig, &registry),
+            Response::Admission { .. }
+        ));
+    }
+
+    #[test]
+    fn the_hook_endpoint_says_it_is_unavailable_rather_than_inventing_one() {
+        // The HTTP listener is optional. A client that got silence here would
+        // wait; a client told the endpoint is absent falls back to the pipe.
+        assert!(matches!(
+            dispatch(Request::HookEndpoint, &SessionRegistry::new()),
+            Response::Error { ref message } if message.contains("unavailable")
+        ));
     }
 }
