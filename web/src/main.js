@@ -52,6 +52,7 @@ import { createSettingsPage } from "./settingsPage.js";
 import { createSessionDemo } from "./sessionDemo.js";
 import { createTerminalHeader } from "./terminalHeader.js";
 import { createSessionState } from "./sessionState.js";
+import { createTerminalLayout, DEFAULT_COLS, DEFAULT_ROWS } from "./terminalLayout.js";
 import {
   createFirstRunDemoSessions,
   demoStatusCount,
@@ -1185,54 +1186,13 @@ function setReviewMode(active) {
 
 // Queue behavior lives in `queuePanel.js`; the shell keeps only its row bindings.
 // Focused terminal history and find controls live in `terminalHistory.js`.
-const DEFAULT_COLS = 120;
-const DEFAULT_ROWS = 40;
-/// Agent TUIs hard-wrap and do not reflow, so a resize arriving mid-drag
-/// corrupts the very output the supervisor parses for status. Coalesce.
-const RESIZE_DEBOUNCE_MS = 180;
+const terminalLayout = createTerminalLayout({
+  $,
+  invoke,
+  state,
+});
+const { fitTerminal, scheduleFit } = terminalLayout;
 
-function terminalSizeLabel(cols, rows) {
-  $("terminal-grid").textContent = `GRID  ${cols} × ${rows}`;
-}
-
-/// Fit the grid to the pane and tell the pty, at most once per settled resize.
-function fitTerminal({ notify = true } = {}) {
-  if (!state.terminal || !state.fitAddon) return;
-  const host = $("terminal-host");
-  if (!host || host.clientWidth <= 0 || host.clientHeight <= 0) return;
-  let size;
-  try {
-    size = state.fitAddon.proposeDimensions();
-  } catch {
-    return;
-  }
-  if (!size || !Number.isFinite(size.cols) || !Number.isFinite(size.rows)) return;
-  const cols = Math.max(20, Math.floor(size.cols));
-  const rows = Math.max(5, Math.floor(size.rows));
-  if (state.terminal.cols !== cols || state.terminal.rows !== rows) {
-    state.terminal.resize(cols, rows);
-  }
-  terminalSizeLabel(cols, rows);
-  if (!notify || !state.focused) return;
-  // The same renderer geometry must be sent once per session. A global
-  // `cols x rows` signature would suppress the first resize after switching
-  // from one session to another, leaving the new pty at its 120x40 default.
-  const signature = `${state.focused}:${cols}x${rows}`;
-  if (state.lastSentSize === signature) return;
-  state.lastSentSize = signature;
-  invoke("resize_session", { id: state.focused, rows, cols }).catch(() => {
-    // A resize the daemon refuses is not worth a toast; the next one retries.
-    state.lastSentSize = null;
-  });
-}
-
-function scheduleFit() {
-  if (state.resizeTimer) clearTimeout(state.resizeTimer);
-  state.resizeTimer = setTimeout(() => {
-    state.resizeTimer = null;
-    fitTerminal();
-  }, RESIZE_DEBOUNCE_MS);
-}
 
 const terminalHeader = createTerminalHeader({
   $,

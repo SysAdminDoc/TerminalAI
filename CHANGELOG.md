@@ -32,6 +32,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Extracted daemon-driven session reconciliation, attention toasts, and coalesced accessible
   status announcements into the injectable `web/src/sessionState.js` module so snapshot replay
   and live events share one UI-state lifecycle.
+- Extracted focused-terminal measurement, debounced resizing, and per-session geometry delivery
+  into the injectable `web/src/terminalLayout.js` module while retaining the adaptive grid and
+  default-size contracts.
 - Extracted snapshot refresh serialization, event replay, preflight outage routing, and focused
   terminal reattachment into the injectable `web/src/snapshotCoordinator.js` module; operational
   panels use a late-bound loader so the boundary remains acyclic.
