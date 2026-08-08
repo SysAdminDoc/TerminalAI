@@ -7,6 +7,10 @@ import { appRustSource } from "./appRustSource.mjs";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const main = appSource();
+const settings = readFileSync(
+  new URL("../src/settingsPage.js", import.meta.url),
+  "utf8",
+).replace(/\r\n/g, "\n");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 const app = appRustSource();
 const daemon = readFileSync(
@@ -34,8 +38,8 @@ test("every daemon-wide limit is editable rather than environment-only", () => {
 test("an empty field means no limit, not a limit of zero", () => {
   // Zero would ask the daemon for a ceiling of nothing; the two facts must not
   // agree by accident.
-  assert.match(main, /function optionalNumber\(id\)/);
-  assert.match(main, /if \(!raw\) return null;/);
+  assert.match(settings, /function optionalNumber\(id\)/);
+  assert.match(settings, /if \(!raw\) return null;/);
 });
 
 test("applying settings does not require restarting the daemon", () => {
@@ -51,7 +55,7 @@ test("applying settings does not require restarting the daemon", () => {
 test("the dialog says when a value came from the boot environment", () => {
   assert.match(daemon, /const ADMISSION_ENVIRONMENT: &\[&str\]/);
   assert.match(daemon, /pub from_environment: Vec<String>/);
-  assert.match(main, /settings-from-environment/);
+  assert.match(settings, /settings-from-environment/);
   assert.match(html, /id="settings-environment-note"/);
   assert.ok(/^settings-from-environment = /m.test(ftl));
 });

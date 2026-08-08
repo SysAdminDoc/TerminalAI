@@ -29,6 +29,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Extracted snapshot refresh serialization, event replay, preflight outage routing, and focused
   terminal reattachment into the injectable `web/src/snapshotCoordinator.js` module; operational
   panels use a late-bound loader so the boundary remains acyclic.
+- Extracted admission settings loading, validation, usage cards, and save/refresh behavior into
+  the injectable `web/src/settingsPage.js` module; settings source contracts now follow that
+  page boundary.
 - Extracted URL validation, agent and hook readiness, daemon checks, and Start-Menu repair into
   `crates/terminalai-app/src/preflight.rs` while keeping the existing Tauri command surface and
   app-level behavior tests green.
