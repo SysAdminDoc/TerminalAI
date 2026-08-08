@@ -40,6 +40,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   history boundary so row controls no longer rely on an unbound closure.
 - Extracted urgency-aware grouping, structured status/agent filters, and group-chip rendering
   into the injectable `web/src/fleetGrouping.js` module; filter contracts now read that boundary.
+- Extracted fleet list reconciliation, empty/loading states, and interaction-safe priority ordering
+  into the injectable `web/src/fleetList.js` module; list affordance and visual-state contracts now
+  read the owning coordinator.
 - Extracted snapshot refresh serialization, event replay, preflight outage routing, and focused
   terminal reattachment into the injectable `web/src/snapshotCoordinator.js` module; operational
   panels use a late-bound loader so the boundary remains acyclic.

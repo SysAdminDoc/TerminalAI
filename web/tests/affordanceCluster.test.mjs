@@ -6,12 +6,22 @@ import { cssSource } from "./cssSource.mjs";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const main = appSource();
+const fleetList = readFileSync(
+  new URL("../src/fleetList.js", import.meta.url),
+  "utf8",
+).replace(/\r\n/g, "\n");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 const styles = cssSource();
 
 test("the Wide control changes its tooltip with the action it will take", () => {
-  const render = main.slice(main.indexOf("function renderRows"), main.indexOf("\nfunction renderSnapshotLoading"));
-  assert.match(render, /const wideTitle = state\.wideMode \? "button-hide-model-effort-cost" : "button-show-model-effort-cost";/);
+  const render = fleetList.slice(
+    fleetList.indexOf("function renderRows"),
+    fleetList.indexOf("\n  function renderSnapshotLoading"),
+  );
+  assert.match(
+    render,
+    /const wideTitle = state\.wideMode\s*\?\s*"button-hide-model-effort-cost"\s*:\s*"button-show-model-effort-cost";/,
+  );
   assert.match(render, /wideToggle\.setAttribute\("data-i18n-title", wideTitle\);/);
   assert.match(ftl, /^button-hide-model-effort-cost = Hide model, effort, and cost$/m);
   assert.match(html, /id="wide-toggle"[^>]*data-i18n-title="button-show-model-effort-cost"/);
