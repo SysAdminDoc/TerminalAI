@@ -219,6 +219,37 @@ work-dirty-detail = { $count } uncommitted { $count ->
    *[other] changes
   }
 work-tree-unknown = Git could not read this tree
+work-repeat = Repeat this run
+work-repeat-off = Don't repeat
+work-repeat-hours = Every { $hours } hours
+work-repeat-days = Every { $days } days
+work-schedule-pause = Hold schedule
+work-schedule-resume = Resume schedule
+work-schedule-paused = Schedule held
+work-schedule-due = Next run due now
+work-schedule-next-minutes = Next run in { $minutes } { $minutes ->
+    [one] minute
+   *[other] minutes
+  }
+work-schedule-next-hours = Next run in { $hours } { $hours ->
+    [one] hour
+   *[other] hours
+  }
+work-schedule-next-days = Next run in { $days } { $days ->
+    [one] day
+   *[other] days
+  }
+work-schedule-last-started = last run started { $count } { $count ->
+    [one] project
+   *[other] projects
+  }
+work-schedule-last-skipped = last run skipped: { $reason }
+work-schedule-missed = { $count } { $count ->
+    [one] occurrence
+   *[other] occurrences
+  } were missed while nothing was running to start them
+work-schedule-set = Repeating this run
+work-schedule-cleared = Schedule removed
 label-queue = Prompt queue for this session
 action-queue = Queue prompts for { $name }
 queue-count-title = { $count } queued for { $name }

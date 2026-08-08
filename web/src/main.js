@@ -35,6 +35,7 @@ import { systemTimeMs } from "./time.js";
 import "./styles.css";
 import { createRowRenderer } from "./rowMarkup.js";
 import { createTerminalPane } from "./terminalPane.js";
+import { REPEAT_CHOICES, scheduleStatus } from "./workSchedule.js";
 import { renderWindowShares } from "./quotaWindow.js";
 
 const WDIO_BUILD = import.meta.env.VITE_TERMINALAI_WDIO === "1";
@@ -245,6 +246,7 @@ const state = {
   storedPromptsError: null,
   activeStoredPrompt: null,
   workRun: null,
+  workSchedule: null,
   reviewError: null,
   announcementQueue: new Map(),
   announcementTimer: null,
@@ -2194,6 +2196,98 @@ async function refreshWorkRun() {
   renderWorkRun();
 }
 
+/** The cadence dropdown, built once from the choices the backend accepts. */
+function fillRepeatChoices() {
+  const select = $("work-repeat-select");
+  if (select.options.length) return;
+  const off = document.createElement("option");
+  off.value = "";
+  off.textContent = t("work-repeat-off");
+  select.append(off);
+  for (const choice of REPEAT_CHOICES) {
+    const option = document.createElement("option");
+    option.value = String(choice.seconds);
+    option.textContent = t(choice.key, choice.args);
+    select.append(option);
+  }
+}
+
+/**
+ * What the standing schedule is about to do, and what its last firing did.
+ *
+ * Including the firings that did nothing: a schedule the operator was not
+ * present for is only worth having if it can say what happened while they were
+ * away, and one that reports only its successes is the same as one that reports
+ * nothing.
+ */
+function renderWorkSchedule() {
+  fillRepeatChoices();
+  const schedule = state.workSchedule;
+  const select = $("work-repeat-select");
+  const wanted = schedule ? String(schedule.interval_seconds) : "";
+  // Only when it differs: assigning on every render would fight the operator
+  // mid-choice on a re-render triggered by an unrelated session.
+  if (select.value !== wanted) select.value = wanted;
+  $("work-schedule-pause-button").hidden = !schedule || schedule.paused;
+  $("work-schedule-resume-button").hidden = !schedule || !schedule.paused;
+  const line = $("work-schedule-status");
+  const parts = scheduleStatus(schedule, Date.now());
+  line.hidden = !parts?.length;
+  line.textContent = (parts ?? []).map((part) => t(part.key, part.args)).join(" · ");
+}
+
+async function refreshWorkSchedule() {
+  try {
+    state.workSchedule = await invoke("work_schedule");
+  } catch (error) {
+    state.workSchedule = null;
+    showToast(String(error));
+  }
+  renderWorkSchedule();
+}
+
+/**
+ * Stand up, replace or remove the repeating run.
+ *
+ * The projects are the ones currently listed, exactly as the run button uses
+ * them: the filter above the table is how the operator says which they mean,
+ * and a schedule that quietly targeted a different set than the button beside
+ * it would be the worst kind of surprise to leave running unattended.
+ */
+async function setWorkSchedule() {
+  const seconds = Number($("work-repeat-select").value);
+  try {
+    if (!seconds) {
+      await invoke("clear_work_schedule");
+      state.workSchedule = null;
+      showToast(t("work-schedule-cleared"), "success");
+    } else {
+      const prompt = $("work-prompt-select").value;
+      if (!prompt) return;
+      state.workSchedule = await invoke("set_work_schedule", {
+        prompt,
+        projects: listedProjects().map((item) => item.path),
+        intervalSeconds: seconds,
+      });
+      showToast(t("work-schedule-set"), "success");
+    }
+  } catch (error) {
+    showToast(String(error));
+    await refreshWorkSchedule();
+    return;
+  }
+  renderWorkSchedule();
+}
+
+async function setWorkSchedulePaused(paused) {
+  try {
+    state.workSchedule = await invoke("set_work_schedule_paused", { paused });
+  } catch (error) {
+    showToast(String(error));
+  }
+  renderWorkSchedule();
+}
+
 function renderPromptLibrary() {
   const list = $("stored-prompt-list");
   if (state.storedPromptsError) {
@@ -2353,13 +2447,17 @@ function openPromptLibrary() {
  * above the table is how the operator says which they mean, and a button that
  * ignored it would launch agents in repositories they had just filtered out.
  */
+function listedProjects() {
+  const openOnly = $("projects-open-only").checked;
+  return openOnly
+    ? state.scannedProjects.filter((item) => hasOpenWork(item.roadmap))
+    : state.scannedProjects;
+}
+
 async function startWorkRun() {
   const prompt = $("work-prompt-select").value;
   if (!prompt) return;
-  const openOnly = $("projects-open-only").checked;
-  const listed = openOnly
-    ? state.scannedProjects.filter((item) => hasOpenWork(item.roadmap))
-    : state.scannedProjects;
+  const listed = listedProjects();
   if (!listed.length) {
     showToast(t("projects-none-matching"));
     return;
@@ -2653,6 +2751,7 @@ async function openProjects() {
   renderProjects();
   await Promise.all([loadProjectRoots(), loadStoredPrompts()]);
   await refreshWorkRun();
+  await refreshWorkSchedule();
 }
 
 /** The queue button's glyph: the count when there is one, an outline when not. */
@@ -3865,6 +3964,9 @@ function bindEvents() {
   $("work-start-button").addEventListener("click", () => void startWorkRun());
   $("work-pause-button").addEventListener("click", () => void setWorkRunPaused(true));
   $("work-resume-button").addEventListener("click", () => void setWorkRunPaused(false));
+  $("work-repeat-select").addEventListener("change", () => void setWorkSchedule());
+  $("work-schedule-pause-button").addEventListener("click", () => void setWorkSchedulePaused(true));
+  $("work-schedule-resume-button").addEventListener("click", () => void setWorkSchedulePaused(false));
   $("work-clear-button").addEventListener("click", async () => {
     try {
       await invoke("clear_work_run");

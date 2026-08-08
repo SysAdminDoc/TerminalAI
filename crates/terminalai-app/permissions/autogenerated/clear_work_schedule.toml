@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-clear-work-schedule"
+description = "Enables the clear_work_schedule command without any pre-configured scope."
+commands.allow = ["clear_work_schedule"]
+
+[[permission]]
+identifier = "deny-clear-work-schedule"
+description = "Denies the clear_work_schedule command without any pre-configured scope."
+commands.deny = ["clear_work_schedule"]

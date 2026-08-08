@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-work-schedule-paused"
+description = "Enables the set_work_schedule_paused command without any pre-configured scope."
+commands.allow = ["set_work_schedule_paused"]
+
+[[permission]]
+identifier = "deny-set-work-schedule-paused"
+description = "Denies the set_work_schedule_paused command without any pre-configured scope."
+commands.deny = ["set_work_schedule_paused"]

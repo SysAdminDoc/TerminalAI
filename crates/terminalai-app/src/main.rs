@@ -8,6 +8,7 @@ mod toast;
 mod work;
 mod workingset;
 
+use terminalai_core::schedule::{FiringResult, ScheduleFiring, WorkSchedule};
 use terminalai_core::work_queue::{EntryState, WorkQueue};
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -16,7 +17,7 @@ use std::process::Command;
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use std::{io, io::Read};
 
 use preset::{Preset, PresetStore};
@@ -133,6 +134,7 @@ struct AppState {
     project_roots: projects::ProjectRoots,
     prompts: work::PromptLibrary,
     work_run_store: work::WorkRunStore,
+    work_schedule_store: work::WorkScheduleStore,
     working_sets: workingset::WorkingSetStore,
     output_channels: OutputChannels,
 }
@@ -1067,6 +1069,62 @@ fn clear_work_run(state: State<'_, AppState>) -> Result<(), String> {
     state.work_run_store.set(None)
 }
 
+#[tauri::command]
+fn work_schedule(state: State<'_, AppState>) -> Result<Option<WorkSchedule>, String> {
+    state.work_schedule_store.get()
+}
+
+/// Stand up a repeating run of one stored prompt over one set of projects.
+///
+/// The projects are recorded, not re-derived at firing time: a schedule that
+/// re-ran the project filter would quietly change what it targets as
+/// repositories are cloned, and the operator would have no way to see it had.
+/// The prompt is recorded by *name* for the opposite reason — an edited prompt
+/// should take effect, and a deleted one should fail loudly.
+#[tauri::command]
+async fn set_work_schedule(
+    prompt: String,
+    projects: Vec<PathBuf>,
+    interval_seconds: u64,
+    state: State<'_, AppState>,
+) -> Result<Option<WorkSchedule>, String> {
+    let prompts = state.prompts.clone();
+    let store = state.work_schedule_store.clone();
+    run_blocking("set_work_schedule", move || {
+        if prompts.get(&prompt)?.is_none() {
+            return Err(format!("no stored prompt named {prompt}"));
+        }
+        let schedule = WorkSchedule::new(
+            &prompt,
+            projects,
+            Duration::from_secs(interval_seconds),
+            SystemTime::now(),
+        )
+        .map_err(|error| error.to_string())?;
+        store.set(Some(schedule))?;
+        store.get()
+    })
+    .await
+}
+
+/// Hold the schedule where it is. It keeps its next-due time, so resuming does
+/// not fire for everything that came due while it was held.
+#[tauri::command]
+fn set_work_schedule_paused(
+    paused: bool,
+    state: State<'_, AppState>,
+) -> Result<Option<WorkSchedule>, String> {
+    state
+        .work_schedule_store
+        .update(|schedule| schedule.paused = paused)?;
+    state.work_schedule_store.get()
+}
+
+#[tauri::command]
+fn clear_work_schedule(state: State<'_, AppState>) -> Result<(), String> {
+    state.work_schedule_store.set(None)
+}
+
 /// Start as many of the run's projects as the fleet has room for.
 ///
 /// Admission is the fleet's decision, not the queue's: this asks for one slot at
@@ -1205,6 +1263,86 @@ fn drive_work_run_with(
             other => return Err(format!("unexpected queue response: {other:?}")),
         }
     }
+}
+
+/// Start the standing schedule's run if one is due, and write down what
+/// happened either way.
+///
+/// Every refusal the on-demand path enforces applies here because this *is*
+/// the on-demand path: dirty trees are flagged, admission is the fleet's, the
+/// spend ceiling and the expired-credential hold are read from the same
+/// snapshot. Nothing here decides whether a project may run.
+fn fire_due_schedule(
+    client: &DaemonClient,
+    work_schedule_store: &work::WorkScheduleStore,
+    work_run_store: &work::WorkRunStore,
+    prompts: &work::PromptLibrary,
+    now: SystemTime,
+) {
+    let due = match work_schedule_store.get() {
+        Ok(Some(schedule)) if schedule.is_due(now) => schedule,
+        Ok(_) => return,
+        Err(error) => {
+            eprintln!("TerminalAI: could not read the work schedule: {error}");
+            return;
+        }
+    };
+    // Moved past first, whatever happens next: a firing that failed and left the
+    // schedule due would be retried every minute for as long as the cause lasts.
+    let missed = match work_schedule_store.update(|schedule| schedule.advance_past(now)) {
+        Ok(Some(missed)) => missed,
+        Ok(None) => return,
+        Err(error) => {
+            eprintln!("TerminalAI: could not advance the work schedule: {error}");
+            return;
+        }
+    };
+    let result = match scheduled_firing(&due, client, work_run_store, prompts) {
+        Ok(result) => result,
+        Err(reason) => FiringResult::Skipped { reason },
+    };
+    if let Err(error) = work_schedule_store.update(|schedule| {
+        schedule.record(ScheduleFiring {
+            at: now,
+            result: result.clone(),
+            missed,
+        })
+    }) {
+        eprintln!("TerminalAI: could not record the scheduled run: {error}");
+    }
+}
+
+/// Why this firing must not start a run yet, if it must not.
+///
+/// Starting a run replaces the one before it. A schedule that fired while forty
+/// projects were still working would destroy the report the operator was going
+/// to read, and put a second agent on the first one's uncommitted edits. A
+/// finished run is not in the way — it is a report, and the next firing is
+/// exactly when replacing it is right.
+fn previous_run_blocking(existing: Option<&WorkQueue>) -> Option<String> {
+    let existing = existing?;
+    (!existing.is_finished()).then(|| "the previous run was still going".to_owned())
+}
+
+/// Decide whether this firing may start a run, and start it if so.
+fn scheduled_firing(
+    schedule: &WorkSchedule,
+    client: &DaemonClient,
+    work_run_store: &work::WorkRunStore,
+    prompts: &work::PromptLibrary,
+) -> Result<FiringResult, String> {
+    if let Some(reason) = previous_run_blocking(work_run_store.get()?.as_ref()) {
+        return Ok(FiringResult::Skipped { reason });
+    }
+    let projects = schedule.projects.len();
+    start_work_run_with(
+        schedule.prompt.clone(),
+        schedule.projects.clone(),
+        client.clone(),
+        work_run_store.clone(),
+        prompts.clone(),
+    )?;
+    Ok(FiringResult::Started { projects })
 }
 
 fn finish_work_run_session(
@@ -1899,6 +2037,7 @@ fn install_daemon_client(
         &client,
         state.output_channels.clone(),
         state.work_run_store.clone(),
+        state.work_schedule_store.clone(),
         state.prompts.clone(),
     );
     *state
@@ -1910,12 +2049,17 @@ fn install_daemon_client(
 
 const OUTPUT_BATCH_INTERVAL: Duration = Duration::from_millis(12);
 const LOG_BATCH_INTERVAL: Duration = Duration::from_millis(100);
+/// How often a standing schedule is asked whether it is due. Coarse on purpose:
+/// the shortest cadence a schedule may have is fifteen minutes, so a check per
+/// minute is already an order of magnitude finer than anything it can express.
+const SCHEDULE_CHECK_INTERVAL: Duration = Duration::from_secs(60);
 
 fn bridge_daemon_events(
     app: &tauri::AppHandle,
     client: &DaemonClient,
     output_channels: OutputChannels,
     work_run_store: work::WorkRunStore,
+    work_schedule_store: work::WorkScheduleStore,
     prompts: work::PromptLibrary,
 ) {
     let initial_sessions = client
@@ -1931,6 +2075,7 @@ fn bridge_daemon_events(
     let receiver = client.events();
     let app = app.clone();
     let work_run_client = client.clone();
+    let schedule_client = client.clone();
     // Toast clicks arrive on a WinRT thread; the listener moves that work onto
     // a thread the Tauri runtime knows about.
     let (toast_activations, toast_clicks) = std::sync::mpsc::channel();
@@ -1956,11 +2101,23 @@ fn bridge_daemon_events(
             let mut pending_logs = VecDeque::<LogEntry>::new();
             let mut next_output_flush = Instant::now() + OUTPUT_BATCH_INTERVAL;
             let mut next_log_flush = Instant::now() + LOG_BATCH_INTERVAL;
+            let mut next_schedule_check = Instant::now() + SCHEDULE_CHECK_INTERVAL;
             loop {
                 let now = Instant::now();
+                if now >= next_schedule_check {
+                    next_schedule_check = now + SCHEDULE_CHECK_INTERVAL;
+                    fire_due_schedule(
+                        &schedule_client,
+                        &work_schedule_store,
+                        &work_run_store,
+                        &prompts,
+                        SystemTime::now(),
+                    );
+                }
                 let timeout = next_output_flush
                     .saturating_duration_since(now)
-                    .min(next_log_flush.saturating_duration_since(now));
+                    .min(next_log_flush.saturating_duration_since(now))
+                    .min(next_schedule_check.saturating_duration_since(now));
                 let received = receiver
                     .lock()
                     .ok()
@@ -2406,6 +2563,10 @@ fn run_app() -> Result<(), String> {
             skip_work_project,
             set_work_run_paused,
             clear_work_run,
+            work_schedule,
+            set_work_schedule,
+            set_work_schedule_paused,
+            clear_work_schedule,
             list_project_roots,
             add_project_root,
             remove_project_root,
@@ -2445,6 +2606,9 @@ fn run_app() -> Result<(), String> {
             let work_run_store = work::WorkRunStore::load_default().map_err(|error| {
                 Box::new(std::io::Error::other(error)) as Box<dyn std::error::Error>
             })?;
+            let work_schedule_store = work::WorkScheduleStore::load_default().map_err(|error| {
+                Box::new(std::io::Error::other(error)) as Box<dyn std::error::Error>
+            })?;
             let working_sets = workingset::WorkingSetStore::load_default().map_err(|error| {
                 Box::new(std::io::Error::other(error)) as Box<dyn std::error::Error>
             })?;
@@ -2455,6 +2619,7 @@ fn run_app() -> Result<(), String> {
                     client,
                     output_channels.clone(),
                     work_run_store.clone(),
+                    work_schedule_store.clone(),
                     prompts.clone(),
                 );
             }
@@ -2464,6 +2629,7 @@ fn run_app() -> Result<(), String> {
                 project_roots,
                 prompts,
                 work_run_store,
+                work_schedule_store,
                 working_sets,
                 output_channels,
             });
@@ -2681,6 +2847,37 @@ mod tests {
         assert!(!cleaned.contains("\"type\": \"http\""));
         assert!(cleaned.contains(terminalai_core::MANAGED_MARKER));
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn a_schedule_does_not_fire_over_a_run_that_is_still_going() {
+        // Starting a run replaces the previous one. Firing on top of forty
+        // working projects would destroy the report the operator was going to
+        // read and put a second agent on the first one's uncommitted edits.
+        assert_eq!(
+            previous_run_blocking(None),
+            None,
+            "a schedule with no run behind it must fire"
+        );
+
+        let mut queue = WorkQueue::new(
+            "Drain the roadmap",
+            &[("shop".into(), PathBuf::from("/repos/shop"))],
+        )
+        .expect("queue");
+        assert!(
+            previous_run_blocking(Some(&queue)).is_some(),
+            "a pending run was overwritten by a firing"
+        );
+        queue
+            .set_state(Path::new("/repos/shop"), EntryState::Skipped)
+            .expect("state");
+        assert!(queue.is_finished());
+        assert_eq!(
+            previous_run_blocking(Some(&queue)),
+            None,
+            "a finished run is a report, and replacing it is what the next firing is for"
+        );
     }
 
     #[test]

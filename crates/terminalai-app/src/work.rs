@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use terminalai_core::atomic_file::write_atomic;
+use terminalai_core::schedule::WorkSchedule;
 use terminalai_core::work_queue::WorkQueue;
 
 /// Cap on stored prompts.
@@ -263,6 +264,84 @@ impl WorkRunStore {
     }
 }
 
+/// The standing schedule, if the operator set one.
+///
+/// Its own file rather than a field on the run: the run is replaced every time
+/// one starts, and a schedule that vanished with the run it started would only
+/// ever fire once. Persisted for the same reason the run is — a schedule that
+/// did not survive a restart would be a promise this tool cannot keep.
+#[derive(Clone)]
+pub struct WorkScheduleStore {
+    path: PathBuf,
+    schedule: Arc<Mutex<Option<WorkSchedule>>>,
+}
+
+impl WorkScheduleStore {
+    pub fn load_default() -> Result<Self, String> {
+        let base = dirs::data_local_dir()
+            .or_else(dirs::data_dir)
+            .ok_or_else(|| "could not determine the local application-data directory".to_string())?;
+        Self::load_from(base.join("TerminalAI").join("work-schedule.json"))
+    }
+
+    pub fn load_from(path: PathBuf) -> Result<Self, String> {
+        let schedule = if path.is_file() {
+            let contents =
+                fs::read_to_string(&path).map_err(|error| format!("read work schedule: {error}"))?;
+            // A schedule that cannot be parsed is dropped rather than fatal: it
+            // is a convenience, and refusing to start the window over one would
+            // be worse than losing it.
+            serde_json::from_str(&contents).unwrap_or_default()
+        } else {
+            None
+        };
+        Ok(Self {
+            path,
+            schedule: Arc::new(Mutex::new(schedule)),
+        })
+    }
+
+    pub fn get(&self) -> Result<Option<WorkSchedule>, String> {
+        self.lock().map(|schedule| schedule.clone())
+    }
+
+    pub fn set(&self, schedule: Option<WorkSchedule>) -> Result<(), String> {
+        let mut held = self.lock()?;
+        *held = schedule;
+        self.persist(&held)
+    }
+
+    /// Change the stored schedule in place, persisting whatever the edit left.
+    pub fn update<T>(&self, edit: impl FnOnce(&mut WorkSchedule) -> T) -> Result<Option<T>, String> {
+        let mut held = self.lock()?;
+        let Some(schedule) = held.as_mut() else {
+            return Ok(None);
+        };
+        let result = edit(schedule);
+        self.persist(&held)?;
+        Ok(Some(result))
+    }
+
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Option<WorkSchedule>>, String> {
+        self.schedule
+            .lock()
+            .map_err(|_| "work schedule lock is poisoned".to_string())
+    }
+
+    fn persist(&self, schedule: &Option<WorkSchedule>) -> Result<(), String> {
+        let parent = self
+            .path
+            .parent()
+            .ok_or_else(|| "work schedule path has no parent".to_string())?;
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("create work schedule directory: {error}"))?;
+        let json = serde_json::to_vec_pretty(schedule)
+            .map_err(|error| format!("encode work schedule: {error}"))?;
+        write_atomic(&self.path, &json, true)
+            .map_err(|error| format!("write work schedule: {error}"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,5 +527,55 @@ mod tests {
         let dir = scratch();
         let store = WorkRunStore::load_from(dir.0.join("work-run.json")).expect("store");
         assert_eq!(store.update(|queue| queue.entries.len()).expect("update"), None);
+    }
+
+    fn a_schedule() -> WorkSchedule {
+        WorkSchedule::new(
+            "Drain the roadmap",
+            vec![PathBuf::from("/repos/shop")],
+            std::time::Duration::from_secs(4 * 3600),
+            std::time::SystemTime::now(),
+        )
+        .expect("schedule")
+    }
+
+    #[test]
+    fn a_schedule_survives_a_restart_with_its_record_intact() {
+        // The whole promise: a schedule that did not outlive the window is not
+        // a schedule, and its history is the only account of what ran while the
+        // operator was away.
+        let dir = scratch();
+        let path = dir.0.join("work-schedule.json");
+        let store = WorkScheduleStore::load_from(path.clone()).expect("store");
+        let mut schedule = a_schedule();
+        schedule.record(terminalai_core::schedule::ScheduleFiring {
+            at: std::time::SystemTime::now(),
+            result: terminalai_core::schedule::FiringResult::Started { projects: 3 },
+            missed: 2,
+        });
+        store.set(Some(schedule.clone())).expect("set");
+
+        let reopened = WorkScheduleStore::load_from(path).expect("reopen");
+        assert_eq!(reopened.get().expect("get"), Some(schedule));
+    }
+
+    #[test]
+    fn a_schedule_file_that_cannot_be_read_is_dropped_rather_than_fatal() {
+        // It is a convenience. Refusing to open the window over one would cost
+        // the operator the whole fleet for the sake of a repeating run.
+        let dir = scratch();
+        let path = dir.0.join("work-schedule.json");
+        fs::write(&path, b"{ not json at all").expect("write");
+        let store = WorkScheduleStore::load_from(path).expect("store");
+        assert_eq!(store.get().expect("get"), None);
+    }
+
+    #[test]
+    fn updating_a_schedule_that_does_not_exist_creates_nothing() {
+        let dir = scratch();
+        let store =
+            WorkScheduleStore::load_from(dir.0.join("work-schedule.json")).expect("store");
+        assert_eq!(store.update(|schedule| schedule.paused = true).expect("update"), None);
+        assert_eq!(store.get().expect("get"), None);
     }
 }

@@ -7,6 +7,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- A work run can repeat on a cadence. The queue already ran one stored prompt across many projects
+  on demand, refusing dirty trees, asking the fleet for one slot at a time and recording every
+  outcome; a schedule decides only *when* to start one, and a scheduled firing goes through that
+  same path — so every refusal it enforces applies without being restated, and there is no second
+  launch path to keep in step.
+
+  Three rules carry the design. **A machine that was asleep does not wake up owing eight runs**:
+  missed occurrences are skipped rather than queued, because firing them in a burst would put the
+  same prompt into the same repositories several times over, each landing on the last one's
+  uncommitted work — and the count of what was missed is reported instead. **A firing never
+  interrupts the run before it**, because starting a run replaces the previous one, and a schedule
+  that fired over forty working projects would destroy the report the operator was going to read.
+  **Every firing is written down, including the ones that did nothing** — a schedule the operator was
+  not present for is only worth having if it can say what it did while they were away.
+
+  The cadence is an interval rather than a wall-clock time of day: `std` has no local-time facility,
+  and "every 24 hours" is one dependency cheaper than "at 02:00 local", which drifts by an hour twice
+  a year regardless. The projects are recorded when the schedule is set, so an unattended run cannot
+  quietly change what it targets as repositories are cloned; the prompt is recorded by name, so
+  editing it takes effect and deleting it fails loudly.
+
 - Agents that say how far along they are now drive the taskbar progress bar. The report is ConEmu's
   `OSC 9;4` sequence, which Windows Terminal and the xterm.js progress addon also understand, and it
   is decoded **in the core** rather than in the focused pane's renderer — there is one renderer and

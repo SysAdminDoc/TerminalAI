@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-work-schedule"
+description = "Enables the work_schedule command without any pre-configured scope."
+commands.allow = ["work_schedule"]
+
+[[permission]]
+identifier = "deny-work-schedule"
+description = "Denies the work_schedule command without any pre-configured scope."
+commands.deny = ["work_schedule"]

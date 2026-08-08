@@ -40,6 +40,7 @@ pub mod registry;
 pub mod restart;
 pub mod review;
 pub mod roadmap;
+pub mod schedule;
 pub mod scrollback;
 pub mod search;
 pub mod session;
@@ -100,6 +101,10 @@ pub use registry::{
 };
 pub use progress::{
     fleet_progress, FleetProgress, ProgressReport, ProgressScanner, ProgressStatus, TaskProgress,
+};
+pub use schedule::{
+    FiringResult, ScheduleError, ScheduleFiring, WorkSchedule, MAX_HISTORY as MAX_SCHEDULE_HISTORY,
+    MAX_INTERVAL as MAX_SCHEDULE_INTERVAL, MIN_INTERVAL as MIN_SCHEDULE_INTERVAL,
 };
 pub use review::{collect_review, ReviewItem, MAX_REVIEW_DIFF_BYTES, REVIEW_REPOSITORY_TIMEOUT};
 pub use session::{

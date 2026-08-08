@@ -119,8 +119,14 @@ async function assertScreenshot(name) {
 
 describe("TerminalAI desktop surface", () => {
   it("renders fleet, launcher, review, diagnostics, loading, empty, error, and daemon-unreachable states", async () => {
-    await browser.pause(3000);
-    assert.equal(await browser.$("#fleet-loading").isDisplayed(), true, "startup must expose loading state before mocks release it");
+    // Waited for rather than sampled at a fixed instant: WebView2's first paint
+    // on a cold private desktop takes longer than any pause worth hard-coding,
+    // and the window deliberately holds this state until the mocks are in
+    // place, so there is nothing to race with once it appears.
+    await browser.$("#fleet-loading").waitForDisplayed({
+      timeout: 30000,
+      timeoutMsg: "startup must expose loading state before mocks release it",
+    });
 
     const fleetMock = await mockCommand("fleet_snapshot", fleet());
     await mockCommand("preflight_report", readyPreflight);
@@ -153,6 +159,44 @@ describe("TerminalAI desktop surface", () => {
     assert.match(await browser.$("#diagnostics-host").getText(), /WHY THIS STATE/);
     await assertScreenshot("diagnostics.png");
     await dispatchClick("#diagnostics-toggle");
+
+    // The repeating work run, driven in the real WebView: a schedule is the one
+    // feature the operator is not present for, so the window has to say what it
+    // is about to do without being asked.
+    await mockCommand("scan_projects", [{
+      name: "demo-api",
+      path: session.cwd,
+      modified: systemTime(600),
+      roadmap: { open_items: 3, checked_items: 1, modified: systemTime(600), path: `${session.cwd}\ROADMAP.md` },
+    }]);
+    await mockCommand("list_project_roots", ["C:\Users\test\repos"]);
+    await mockCommand("list_stored_prompts", [{ name: "Drain the roadmap", text: "Work the roadmap.", source: null }]);
+    await mockCommand("work_run", null);
+    await mockCommand("work_schedule", null);
+    const scheduleMock = await mockCommand("set_work_schedule", {
+      prompt: "Drain the roadmap",
+      projects: [session.cwd],
+      interval_seconds: 14400,
+      next_due: systemTime(-4 * 3600),
+      paused: false,
+      history: [{ at: systemTime(60), result: { kind: "skipped", reason: "the previous run was still going" }, missed: 2 }],
+    });
+    await dispatchClick("#projects-toggle");
+    await browser.$("#projects-dialog[open]").waitForDisplayed();
+    await browser.tauri.execute(() => {
+      const select = document.querySelector("#work-repeat-select");
+      select.value = "14400";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await browser.$("#work-schedule-status").waitForDisplayed();
+    const scheduleLine = await browser.$("#work-schedule-status").getText();
+    assert.match(scheduleLine, /Next run in 4 hours/);
+    assert.match(scheduleLine, /the previous run was still going/, "a firing that did nothing must still be reported");
+    assert.match(scheduleLine, /2 occurrences were missed/);
+    assert.equal(await browser.$("#work-schedule-pause-button").isDisplayed(), true);
+    assert.equal(scheduleMock.calls.length, 1, "the cadence control did not reach the backend");
+    await assertScreenshot("work-schedule.png");
+    await dispatchClick("#close-projects-button");
 
     await fleetMock.mockReturnValue(fleet([]));
     await dispatchClick("#refresh-button");

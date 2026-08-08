@@ -115,9 +115,13 @@ test("every entry state has a plain-language label", () => {
 test("the run targets the projects actually listed, not every known one", () => {
   // The filter above the table is how the operator says which they mean; a
   // button that ignored it would launch agents in repositories they had just
-  // filtered out.
-  assert.match(start, /const openOnly = \$\("projects-open-only"\)\.checked;/);
-  assert.match(start, /openOnly\s*\n?\s*\? state\.scannedProjects\.filter\(\(item\) => hasOpenWork\(item\.roadmap\)\)/);
+  // filtered out. One definition, because the schedule beside the button must
+  // not quietly target a different set than the button does.
+  const listed = main.slice(main.indexOf("function listedProjects()"));
+  const body = listed.slice(0, listed.indexOf("\n}"));
+  assert.match(body, /const openOnly = \$\("projects-open-only"\)\.checked;/);
+  assert.match(body, /openOnly\s*\n?\s*\? state\.scannedProjects\.filter\(\(item\) => hasOpenWork\(item\.roadmap\)\)/);
+  assert.match(start, /const listed = listedProjects\(\);/);
   assert.match(start, /projects: listed\.map\(\(item\) => item\.path\)/);
 });
 

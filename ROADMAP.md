@@ -2,6 +2,18 @@
 
 Single task tracker for this repo. Newest phase at the top; completed items are removed.
 
+## Verification Gaps — 2026-08-08
+
+- [ ] P2 — The WebdriverIO end-to-end gate never reaches the app's own frontend
+  Category: verification
+  Where: `web/scripts/run-e2e.mjs`, `web/tests/ui.e2e.mjs`, `crates/terminalai-app/tauri.conf.json`
+  Problem: `npm --prefix web run test:e2e` fails at its first assertion — `#fleet-loading` is never displayed — and it fails identically on an unmodified tree, so it is a standing red gate rather than a regression. Probed inside the running window, `document.body` is `<body style="font-family: system-ui, sans-serif; font-size: 75%">` with no app markup at all, and the service logs `Tauri plugin not available` on every poll, which is what a frontend that never loaded looks like from the outside. This is the only harness that drives the real WebView2 window, so every dialog behaviour is currently verified in jsdom and in the Chromium audit but never in the shipping shell.
+  Evidence: two runs on 2026-08-08, one with the working tree stashed, both failing at `ui.e2e.mjs` on the same assertion; 30 s of `waitForDisplayed` does not change it, so it is not first-paint timing. The harness builds with `cargo build --release --workspace --features terminalai-app/wdio`, and this repo's own notes say the app exe that command produces is a dev shell (`CLAUDE.md`, Build & verify) — a dev shell points WebView2 at `devUrl` (`http://127.0.0.1:5173`), which nothing is serving during the run. That is the first thing to test.
+  Fix: establish what the launched exe is actually loading (embedded `frontendDist` or `devUrl`), then either build it the way a shipped binary is built or serve the frontend the dev shell expects. `web/tests/ui.e2e.mjs` already carries an unrun scenario for the repeating work run that will exercise the schedule controls once the harness reaches the app.
+  Acceptance: `npm --prefix web run test:e2e` passes on a clean tree and its screenshots show the real fleet, and the first assertion fails loudly if the window ever comes up without the app again.
+  Confidence: Verified (the failure and its independence from this session's changes; the dev-shell cause is the leading hypothesis, not yet proven)
+  Effort: M
+
 ## Audit Findings — 2026-08-07
 
 Fourth audit pass, against `cc53821` / v0.15.0 with a green baseline of 585 Rust (0 failed), 305
@@ -50,13 +62,6 @@ item above; where the two touch, the note says so.
 ### P1
 
 ### P2
-
-- [ ] P3 — Scheduled work runs
-  Why: the work queue already runs one stored prompt across many projects on demand; running it on a schedule is the natural extension, and it is the one automation feature the larger field ships that fits this tool's shape.
-  Evidence: `crates/terminalai-core/src/work_queue.rs` and `crates/terminalai-app/src/work.rs` implement the on-demand run including dirty-tree refusal and restart survival. superset ships Automations for exactly this — https://docs.superset.sh/automations
-  Touches: `crates/terminalai-core/src/work_queue.rs`, `crates/terminalai-daemon/src/lib.rs`, `crates/terminalai-app/src/work.rs`, `web/src/main.js`
-  Acceptance: a work run can be scheduled and survives a daemon restart; a scheduled run inherits every existing refusal (dirty tree, admission, spend ceiling) rather than bypassing them, and reports what it did while the operator was away.
-  Complexity: M
 
 ## Research-Driven Additions — 2026-08-04
 
