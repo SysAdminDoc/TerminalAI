@@ -102,6 +102,25 @@ impl SessionRegistry {
     pub fn poll_transcripts(&self, home: &std::path::Path) -> usize {
         // Snapshot the work under the lock, then read files without holding it:
         // a slow disk must not stall status ingestion.
+        // Read on the same wakeup as the transcripts, from the same home. A
+        // team directory exists only while its team does, and it is a few bytes
+        // — a second timer for it would cost more than the read.
+        let team_reads: Vec<(SessionId, Option<String>)> = {
+            let state = lock_state(&self.inner);
+            state
+                .entries
+                .values()
+                .filter(|entry| entry.session.status.is_live())
+                .filter(|entry| entry.session.agent == crate::Agent::Claude)
+                .filter_map(|entry| {
+                    entry
+                        .spec
+                        .session_id
+                        .as_ref()
+                        .map(|id| (entry.session.id.clone(), Some(id.clone())))
+                })
+                .collect()
+        };
         let targets: Vec<(
             SessionId,
             crate::Agent,
@@ -153,6 +172,14 @@ impl SessionRegistry {
                 })
                 .collect::<Vec<_>>()
         };
+
+        // Outside the lock: this reads files.
+        let teams: Vec<(SessionId, Option<Vec<String>>)> = team_reads
+            .into_iter()
+            .filter_map(|(id, session_id)| {
+                session_id.map(|session_id| (id, crate::teams::teammates(home, &session_id)))
+            })
+            .collect();
 
         let mut updated = Vec::new();
         let mut spend_deltas: Vec<(String, f64)> = Vec::new();
@@ -253,6 +280,20 @@ impl SessionRegistry {
                 }
                 if changed {
                     updated.push(entry.session.clone());
+                }
+            }
+            // A team that ended takes its directory with it, so this clears
+            // as well as sets — a row that stopped being a lead must stop
+            // naming the teammates it used to have.
+            for (id, names) in teams {
+                let Some(entry) = state.entries.get_mut(&id) else {
+                    continue;
+                };
+                if entry.session.teammates != names {
+                    entry.session.teammates = names;
+                    if !updated.iter().any(|session: &Session| session.id == id) {
+                        updated.push(entry.session.clone());
+                    }
                 }
             }
             if !spend_deltas.is_empty() {
@@ -407,6 +448,75 @@ mod tests {
             assert_eq!(session.queue_paused, None);
         }
         assert_eq!(registry.admission_snapshot().budget_exhausted_sessions, 0);
+    }
+
+    #[test]
+    fn a_lead_names_its_teammates_and_a_row_with_no_team_names_nobody() {
+        // The density argument only holds if a row's cost is legible, and since
+        // agent teams a row can be a lead plus several separate agent
+        // instances shown as one line.
+        let home = scratch("teams");
+        let cwd = Path::new("/repos/shop");
+        let registry = SessionRegistry::new();
+        let lead = SessionId::new(1);
+        let solo = SessionId::new(2);
+        budgeted_row(&registry, &lead, cwd, None);
+        budgeted_row(&registry, &solo, cwd, None);
+        let native = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+        {
+            let mut state = lock_state(&registry.inner);
+            state.entries.get_mut(&lead).expect("row").spec.session_id = Some(native.to_owned());
+            state.entries.get_mut(&solo).expect("row").spec.session_id =
+                Some("11111111-2222-4333-8444-555555555555".to_owned());
+        }
+        let config = crate::teams::team_config_path(&home.0, native).expect("path");
+        std::fs::create_dir_all(config.parent().expect("parent")).expect("dirs");
+        std::fs::write(&config, r#"{"members":[{"name":"reviewer"},{"name":"tester"}]}"#)
+            .expect("team file");
+
+        registry.poll_transcripts(&home.0);
+        let sessions = registry.snapshot();
+        let lead_row = sessions.iter().find(|s| s.id == lead).expect("lead");
+        let solo_row = sessions.iter().find(|s| s.id == solo).expect("solo");
+        assert_eq!(
+            lead_row.teammates,
+            Some(vec!["reviewer".to_owned(), "tester".to_owned()])
+        );
+        assert_eq!(
+            solo_row.teammates, None,
+            "a session with no team must report nothing, not zero"
+        );
+
+        // A team directory goes when the team does, and the row has to follow.
+        std::fs::remove_dir_all(config.parent().expect("parent")).expect("team ends");
+        registry.poll_transcripts(&home.0);
+        assert_eq!(
+            registry
+                .snapshot()
+                .iter()
+                .find(|s| s.id == lead)
+                .expect("lead")
+                .teammates,
+            None,
+            "the row still names teammates from a team that has ended"
+        );
+    }
+
+    #[test]
+    fn a_row_with_no_assigned_session_id_is_never_attributed_a_team() {
+        // The id is the only thing tying a row to a team directory. Without one
+        // there is no honest way to look, and guessing would attribute somebody
+        // else's team to this row.
+        let home = scratch("no-id");
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        budgeted_row(&registry, &id, Path::new("/repos/shop"), None);
+        {
+            let mut state = lock_state(&registry.inner);
+            state.entries.get_mut(&id).expect("row").spec.session_id = None;
+        }
+        registry.poll_transcripts(&home.0);
+        assert_eq!(registry.snapshot()[0].teammates, None);
     }
 
     #[test]

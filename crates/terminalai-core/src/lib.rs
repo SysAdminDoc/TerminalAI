@@ -47,6 +47,7 @@ pub mod session;
 pub mod spend;
 pub mod tail;
 pub mod store;
+pub mod teams;
 pub mod template;
 pub mod transcript;
 pub mod waiting;

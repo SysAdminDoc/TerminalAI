@@ -1417,6 +1417,32 @@ function updateFleetRow(row, session, position = 1, setSize = 1, rovingId = stat
   costCell.textContent = cost(session.cost_usd);
   costCell.classList.toggle("row-budget-spent", Boolean(session.budget_exhausted));
   costCell.title = costTitle(session);
+  // Conditional markup, so this cell is created and removed rather than written
+  // to — the same shape the unread dot uses above. A row that becomes a team
+  // lead mid-session gains the cell without being rebuilt, and one whose team
+  // ends loses it rather than keeping the last names it had.
+  const teamNames = Array.isArray(session.teammates) ? session.teammates : [];
+  const existingTeam = wideMeta.querySelector("[data-row-team]");
+  if (teamNames.length === 0) {
+    existingTeam?.closest("span")?.remove();
+  } else {
+    const joined = teamNames.join(", ");
+    const detail = t("team-explained", { names: joined, count: teamNames.length });
+    if (existingTeam) {
+      existingTeam.textContent = joined;
+      existingTeam.title = detail;
+    } else {
+      const cell = document.createElement("span");
+      const caption = document.createElement("small");
+      caption.textContent = "TEAM";
+      const value = document.createElement("b");
+      value.dataset.rowTeam = "";
+      value.textContent = joined;
+      value.title = detail;
+      cell.append(caption, value);
+      wideMeta.append(cell);
+    }
+  }
   const memoryCell = wideMeta.querySelector("[data-row-memory]");
   memoryCell.textContent = memory(session.memory_bytes);
   memoryCell.classList.toggle("row-memory-limited", Boolean(session.memory_limited));

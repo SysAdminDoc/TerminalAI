@@ -52,7 +52,7 @@ const DEPS = {
   memoryTitle: (session) => `across ${session.memory_processes ?? "?"} processes`,
   ports: (list) => (list ?? []).join(", "),
   queueGlyph: (session) => (session.queued_prompts ? `Q${session.queued_prompts}` : "·"),
-  t: (key) => key,
+  t: (key, args) => (args ? `${key}:${JSON.stringify(args)}` : key),
   toolProgress: (progress) => (progress ? `${progress.completed}/${progress.total}` : "—"),
 };
 

@@ -432,6 +432,10 @@ spend-no-ceiling = No fleet spend ceiling is set.
 cost-explained = Spent so far, derived from this session's own transcript
 cost-budget-of = Spent so far, against this session's { $budget } cap
 cost-budget-spent = The { $budget } cap is spent — this session keeps running but is no longer given queued or broadcast work
+team-explained = This row is a team lead: { $count ->
+    [one] one teammate
+   *[other] { $count } teammates
+  } running as separate agents inside it — { $names }
 memory-explained = Private commit across this session's { $processes ->
     [one] one process
    *[other] { $processes } processes

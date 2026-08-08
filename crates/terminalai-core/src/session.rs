@@ -368,6 +368,15 @@ pub struct Session {
     pub task_progress: Option<crate::progress::TaskProgress>,
     /// Native session id, once the agent reports one. Enables resume and fork.
     pub resume_id: Option<String>,
+    /// The teammates this session's agent team names, when it has one.
+    ///
+    /// Since agent teams, one supervised row can be a lead plus several
+    /// *separate* agent instances. `None` is the ordinary case — teams are
+    /// opt-in — and it means "no team or nothing readable", never "a team of
+    /// nobody". The process *count* the row shows comes from the job object and
+    /// is a measurement; this is the names, read from the team's own file.
+    #[serde(default)]
+    pub teammates: Option<Vec<String>>,
     pub started_at: SystemTime,
     /// Retained as the raw-I/O status clock for existing clients. Supervision
     /// transitions use `state_since`.
@@ -511,6 +520,7 @@ impl Session {
             tool_progress: None,
             task_progress: None,
             resume_id: None,
+            teammates: None,
             started_at: now,
             status_since: now,
             cost_usd: None,

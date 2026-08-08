@@ -37,6 +37,22 @@ export function createRowRenderer(deps) {
     toolProgress,
   } = deps;
 
+  /// Who else is inside this row, when the row is more than one agent.
+  ///
+  /// Rendered only when there is a team. Almost every session has none — agent
+  /// teams is opt-in — and a cell reading "—" on every row in the fleet would
+  /// cost the density the row exists for while saying nothing.
+  function teamCell(session) {
+    const names = Array.isArray(session.teammates) ? session.teammates : [];
+    if (names.length === 0) return "";
+    const joined = names.join(", ");
+    return (
+      `<span><small>TEAM</small><b data-row-team title="` +
+      `${escapeHtml(t("team-explained", { names: joined, count: names.length }))}">` +
+      `${escapeHtml(joined)}</b></span>`
+    );
+  }
+
   return function renderRow(session) {
     const meta = STATUS_META[session.status] ?? STATUS_META.exited;
     const label = lifecycleLabel(session);
@@ -145,7 +161,7 @@ export function createRowRenderer(deps) {
       `">${escapeHtml(memory(session.memory_bytes))}</b></span><span><small>CTX</small><b ` +
       `data-row-context${contextTone ? ` class="${escapeHtml(contextTone)}"` : ""} title="` +
       `${escapeHtml(contextText(session))}">${escapeHtml(contextValue(session))}` +
-      `</b></span></div>`;
+      `</b></span>${teamCell(session)}</div>`;
 
     const reply =
       `<div class="row-reply"${replyHidden}><input data-reply type="text" maxlength="500" ` +

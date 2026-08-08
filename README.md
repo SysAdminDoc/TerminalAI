@@ -36,7 +36,9 @@ measurements on 2026-08-02 showed roughly 509 MB RSS for Claude Code and 322 MB 
 live process; real work should stay within the machine's memory budget, typically two or three
 parallel agents. What the daemon does with an idle session is demote it rather than unload it:
 every process in an unfocused, unpinned session's job drops to Windows EcoQoS and low memory
-priority, and focusing or pinning restores it. Hibernating a session and rehydrating it on demand
+priority, and focusing or pinning restores it. A row that leads an agent team names its teammates,
+because one row can be a lead plus several separate agent instances and density is only a virtue
+while a row's cost stays legible. Hibernating a session and rehydrating it on demand
 is not implemented — it is parked pending live evidence that `--resume` restores enough context to
 make it transparent.
 

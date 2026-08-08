@@ -67,3 +67,37 @@ test("the update path sets every cost and memory attribute the full render sets"
     assert.match(patch, expected);
   }
 });
+
+test("a row that is a team lead names its teammates, and a solo row shows no team cell", () => {
+  // The density argument only holds if a row's cost is legible. Since agent
+  // teams a row can be a lead plus several separate agent instances, and the
+  // fleet shows that as one line.
+  const lead = renderFixtureRow({ teammates: ["reviewer", "tester"] });
+  assert.match(lead, /<small>TEAM<\/small><b data-row-team title="[^"]*">reviewer, tester<\/b>/);
+
+  // Absent rather than an em dash: teams are opt-in, so a cell on every row
+  // would cost the density it exists to justify while saying nothing.
+  for (const solo of [{}, { teammates: [] }, { teammates: null }]) {
+    assert.doesNotMatch(renderFixtureRow(solo), /data-row-team/, JSON.stringify(solo));
+  }
+});
+
+test("teammate names reaching the row are escaped", () => {
+  // Read from somebody else's file, so the names are not this tool's to trust.
+  const row = renderFixtureRow({ teammates: ['<img src=x onerror="alert(1)">'] });
+  assert.doesNotMatch(row, /<img/);
+  assert.match(row, /&lt;img/);
+});
+
+test("the update path creates and removes the team cell rather than assuming it", () => {
+  // Conditional markup: a row that gains a team mid-session has no cell to
+  // write into, and one whose team ends must lose the names it had.
+  const source = appSource();
+  const patch = source.slice(
+    source.indexOf("const teamNames ="),
+    source.indexOf("const memoryCell = wideMeta.querySelector"),
+  );
+  assert.notEqual(patch.length, 0, "the update path moved; this test is reading nothing");
+  assert.match(patch, /existingTeam\?\.closest\("span"\)\?\.remove\(\)/);
+  assert.match(patch, /wideMeta\.append\(cell\)/);
+});

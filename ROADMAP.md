@@ -89,13 +89,6 @@ where an item depends on another in this section, its Why says which.
 
 ### P1
 
-- [ ] P1 — Say how many agents a row really is
-  Why: since agent teams, one supervised session can be a lead plus N separate Claude Code instances, and the fleet shows it as one row with one status — the density thesis only holds if a row's cost is legible.
-  Evidence: https://code.claude.com/docs/en/agent-teams — the team config lives at `~/.claude/teams/{team-name}/config.json` with a `members` array of name and agent id, the team name is `session-` plus the first eight characters of the session id, and the directory is removed when the session ends. The id to derive the path from is `spec.session_id` (`crates/terminalai-core/src/launch.rs:243`), which this tool assigns at launch — not `session.resume_id`, which is populated later from an ingested hook (`registry/ingest.rs:187`) and is absent until the session reports one. `SubagentStart`/`SubagentStop` are already managed (`hook_config.rs`) but only flip Working/Thinking (`registry/ingest.rs:242`, `:250`). No competitor surveyed reports team composition per session.
-  Touches: `crates/terminalai-core/src/external.rs` or a sibling reader, `crates/terminalai-core/src/session.rs`, `crates/terminalai-core/src/registry/sampling.rs`, `web/src/rowMarkup.js`, `web/src/i18n/terminalai.ftl`
-  Acceptance: a row that is a team lead names its teammates in the wide row; a session with no team, no assigned session id, or an unreadable team file reports nothing rather than "1" or "0"; a team directory left behind by a session that has ended is not attributed to a live row. The *count* of processes belongs to the job-memory item above — this one adds names, not a second number.
-  Complexity: M
-
 ### P2
 
 - [ ] P2 — Find out whether a teammate's hooks arrive as the lead's

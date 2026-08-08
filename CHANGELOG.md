@@ -22,6 +22,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   it to a mode this argv is not in is reported as accepted-but-ignored. It found `--fallback-model`
   on its first run.
 
+- A row that leads an agent team names its teammates. Since agent teams, one supervised session can
+  be a lead plus several *separate* agent instances, and the fleet showed that as one row with one
+  status — defensible only while the operator can see what the row actually holds. The team's own
+  configuration is read on the transcript timer, from the session id this tool assigned at launch
+  rather than the one a hook reports later, and the names appear as a wide-row cell that exists only
+  when there is a team: no team, no assigned id, an unreadable file, a shape this build does not
+  recognise and an empty member list all render nothing, because "no team" and "a team of nobody"
+  would otherwise read identically. A team directory that goes away takes the cell with it. The
+  *count* of processes a row holds stays a measurement from the job object; this is the names.
+
 ### Fixed
 
 - A worktree the agent removed stops being named by its row. `WorktreeCreate` was managed and
