@@ -10,16 +10,6 @@ the packaged Windows application, real agent versions, and an unfamiliar operato
 Items stay here while their implementation is actionable. Operator-owned or vendor-owned evidence
 remains cross-referenced in `Roadmap_Blocked.md` and is not claimed by a local test.
 
-- [ ] P2 — Add synthetic fleet-scale reliability and resource gates
-  Category: performance and resilience
-  Where: core registry, daemon persistence, probe harness and release verification.
-  Problem: the project documents historical CPU/memory measurements and a thirty-session target, but does not continuously enforce event-storm, restart, corruption, or 30–100-session resource budgets.
-  Evidence: `Roadmap_Blocked.md` identifies the load and memory measurements as historical evidence rather than a current gate.
-  Fix: create deterministic synthetic sessions and event streams, measure RSS/CPU/startup/latency, inject daemon restarts and store corruption, and assert bounded logs, scrollback, queues and DOM work.
-  Touches: `crates/terminalai-core/src/registry`, `crates/terminalai-daemon`, `crates/terminalai-probe`, `web/tests/`, `scripts/`.
-  Acceptance: CI reports stable 30-session and stress profiles, enforces documented budgets, proves recovery after daemon restart/store quarantine, and fails on unbounded memory or event backlog.
-  Complexity: L
-
 - [ ] P2 — Finish shell maintainability and replace brittle source contracts
   Category: maintainability
   Where: `crates/terminalai-app/src/main.rs`, `web/src/main.js`, `web/src/styles.css`, `web/tests/appSource.mjs`.

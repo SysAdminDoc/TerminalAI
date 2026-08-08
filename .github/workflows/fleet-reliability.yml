@@ -1,0 +1,31 @@
+name: Fleet reliability
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  fleet-reliability:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        sessions: [30, 100]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Exercise daemon persistence and quarantine recovery
+        run: cargo test -p terminalai-daemon --lib persistence::tests
+
+      - name: Run deterministic 30/100-session resource gate
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/verify-fleet-stress.ps1 -Sessions ${{ matrix.sessions }}

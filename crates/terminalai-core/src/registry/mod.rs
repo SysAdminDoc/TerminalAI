@@ -41,6 +41,7 @@ mod output;
 mod prompt_queue;
 mod provisioning;
 mod sampling;
+pub mod stress;
 #[cfg(test)]
 mod testing;
 

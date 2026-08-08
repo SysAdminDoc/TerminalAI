@@ -141,8 +141,8 @@ Working today (`terminalai-probe`, headless):
   blocks on to reach another, origin mode against the conformance corpus, the working-directory
   change that invalidates a row's folder and branch, and the DPI and restart declarations made
   against the real Windows APIs, the admission limits read from the operator's configuration, and
-  the quota window attributed to the sessions that consumed it; 772 with the opt-in app-server
-  transport enabled, plus 398 frontend tests (`npm --prefix web test`) and a real browser pass over
+  the quota window attributed to the sessions that consumed it; 774 with the opt-in app-server
+  transport enabled, plus 402 frontend tests (`npm --prefix web test`) and a real browser pass over
   every dialog, menu and disclosure across a populated fleet in both row densities
   (`npm --prefix web run test:chrome`)
 
@@ -406,6 +406,10 @@ cargo tauri build --ci --no-sign --bundles nsis,msi -- --manifest-path Cargo.tom
 pwsh -NoProfile -File scripts/check-cross-targets.ps1
 pwsh -NoProfile -File scripts/verify-installer.ps1
 
+# Run the deterministic 30-session reliability/resource gate. It uses an
+# injected domain, so it starts no real agent and creates no window.
+pwsh -NoProfile -File scripts/verify-fleet-stress.ps1
+
 # Open every dialog, both overflow menus and the launcher disclosure in a real
 # browser, at 1440px and 1100px in both colour schemes, and fail if anything
 # overflows its container or any composited contrast falls below WCAG AA. This
@@ -494,6 +498,11 @@ terminalai-probe exec cmd.exe /c "echo hello"
 # Measure console churn and marker input latency on Windows (the default is 8 sessions).
 terminalai-probe hygiene --sessions 8 --json --output .\hygiene.json
 
+# Exercise the 30-session registry profile: bounded hooks, snapshots,
+# scrollback, subscriber backlog and store recovery, plus process RSS/CPU on
+# Windows. Use --json for CI and --output to save the report.
+terminalai-probe fleet-stress --sessions 30 --events-per-session 64 --json --output .\fleet-stress.json
+
 # Deliver one Claude/Codex hook payload without a browser-reachable listener.
 echo '{"session_id":"...","hook_event_name":"Notification","notification_type":"permission_prompt"}' |
   terminalai-probe hook claude
@@ -543,6 +552,11 @@ churn count, so host cleanup races can make it exceed the requested session coun
 |---|---:|---:|---:|---:|
 | TerminalAI supervised ConPTY | 0 enumerable windows | 0.1565 | 0.1694 | 0.1810 |
 | Normal `CREATE_NEW_CONSOLE` launch | 10 `conhost.exe` hosts | 0.2281 | 0.2632 | 56.3870 |
+
+The deterministic registry gate was run on 2026-08-08 with 30 injected sessions and 1,920 hook
+events: 2,934 ms synthetic startup, 0.022 ms hook p95, 0.902 ms snapshot p95, 5.2 MiB working-set
+growth, a full 256-event subscriber queue, and 30/30 store recovery. This is a repeatable control
+plane/resource check; it does not claim a live authenticated agent or provider measurement.
 
 `shutdown` asks the daemon to tear down its owned sessions and exit cleanly. The daemon also
 handles Windows console-close and shutdown signals. Protocol compatibility is negotiated on the

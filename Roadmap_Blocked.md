@@ -184,7 +184,11 @@ The catch-all testing row was audited on Windows 11 26100 and removed from `ROAD
 - **Real load and memory claims:** the frontend contract suite still covers the declared 28px row,
   measured-window documentation, and 29-row target, but no fresh browser measurement or live-agent
   RSS/load run was performed in this pass. The 2026-08-02/2026-08-03 measurements remain historical
-  evidence rather than a new load result.
+  evidence rather than a new live-agent load result. A deterministic injected-domain gate landed
+  2026-08-08: `scripts/verify-fleet-stress.ps1` runs 30 synthetic sessions and 1,920 hook events,
+  enforces startup/latency/RSS/working-set budgets, and proves bounded scrollback, subscriber
+  backlog, store round-trip and malformed-store rejection. It is evidence for the registry and
+  daemon paths, not a substitute for an operator-owned authenticated-agent measurement.
 - **Agent-level round trip:** no authenticated Claude or Codex session exists on this machine, so
   launching a real prompt, hook, capability probe, or app-server conversation would be speculative.
   Close this residual with an operator-owned authenticated run using the isolated UI path.

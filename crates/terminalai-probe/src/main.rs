@@ -157,6 +157,11 @@ const COMMANDS: &[Subcommand] = &[
         run: |args| cmd_cpu_idle(&args[1..]),
     },
     Subcommand {
+        name: "fleet-stress",
+        synopsis: "terminalai-probe fleet-stress [--sessions <n>] [--events-per-session <n>] [--json] [--output <path>]",
+        run: |args| cmd_fleet_stress(&args[1..]),
+    },
+    Subcommand {
         name: "hygiene",
         synopsis: "terminalai-probe hygiene  [--sessions <n>] [--json] [--output <path>]",
         run: |args| cmd_hygiene(&args[1..]),
@@ -1897,6 +1902,180 @@ fn process_cpu_time() -> Option<Duration> {
     {
         None
     }
+}
+
+#[derive(Debug, Serialize)]
+struct FleetStressOutput {
+    profile: terminalai_core::registry::stress::FleetStressReport,
+    resources: FleetStressResources,
+}
+
+#[derive(Debug, Serialize)]
+struct FleetStressResources {
+    cpu_ms: Option<f64>,
+    working_set_before_bytes: Option<u64>,
+    working_set_after_bytes: Option<u64>,
+    working_set_delta_bytes: Option<u64>,
+    cpu_budget_ms: f64,
+    working_set_delta_budget_bytes: u64,
+    cpu_under_budget: Option<bool>,
+    working_set_under_budget: Option<bool>,
+    /// False on targets where this process cannot read its own resource
+    /// counters. The logical registry gates still run there; Windows release
+    /// verification requires this to be true.
+    enforced: bool,
+    all_pass: bool,
+}
+
+const FLEET_STRESS_CPU_BUDGET: Duration = Duration::from_secs(15);
+const FLEET_STRESS_WORKING_SET_BUDGET: u64 = 256 * 1024 * 1024;
+
+fn cmd_fleet_stress(args: &[String]) -> i32 {
+    let (machine, args) = without_json(args);
+    let mut sessions = terminalai_core::registry::stress::DEFAULT_SESSIONS;
+    let mut events_per_session = terminalai_core::registry::stress::DEFAULT_EVENTS_PER_SESSION;
+    let mut output = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--sessions" => {
+                index += 1;
+                sessions = match args.get(index).and_then(|value| value.parse().ok()) {
+                    Some(value) => value,
+                    None => {
+                        eprintln!("--sessions needs a number");
+                        return 1;
+                    }
+                };
+            }
+            "--events-per-session" => {
+                index += 1;
+                events_per_session = match args.get(index).and_then(|value| value.parse().ok()) {
+                    Some(value) => value,
+                    None => {
+                        eprintln!("--events-per-session needs a number");
+                        return 1;
+                    }
+                };
+            }
+            "--output" => {
+                index += 1;
+                output = match args.get(index) {
+                    Some(value) => Some(PathBuf::from(value)),
+                    None => {
+                        eprintln!("--output needs a path");
+                        return 1;
+                    }
+                };
+            }
+            other => {
+                eprintln!("unknown option: {other}");
+                return 1;
+            }
+        }
+        index += 1;
+    }
+
+    let cpu_before = process_cpu_time();
+    let working_set_before = process_working_set_bytes();
+    let profile = match terminalai_core::registry::stress::run(sessions, events_per_session) {
+        Ok(report) => report,
+        Err(error) => {
+            eprintln!("fleet stress failed: {error}");
+            return 3;
+        }
+    };
+    let cpu_ms = cpu_before
+        .zip(process_cpu_time())
+        .map(|(before, after)| after.saturating_sub(before).as_secs_f64() * 1000.0);
+    let working_set_after = process_working_set_bytes();
+    let working_set_delta = working_set_before.zip(working_set_after).map(|(before, after)| {
+        after.saturating_sub(before)
+    });
+    let cpu_under_budget = cpu_ms.map(|value| value <= FLEET_STRESS_CPU_BUDGET.as_secs_f64() * 1000.0);
+    let working_set_under_budget = working_set_delta.map(|value| value <= FLEET_STRESS_WORKING_SET_BUDGET);
+    let enforced = cpu_under_budget.is_some() && working_set_under_budget.is_some();
+    let resources = FleetStressResources {
+        cpu_ms,
+        working_set_before_bytes: working_set_before,
+        working_set_after_bytes: working_set_after,
+        working_set_delta_bytes: working_set_delta,
+        cpu_budget_ms: FLEET_STRESS_CPU_BUDGET.as_secs_f64() * 1000.0,
+        working_set_delta_budget_bytes: FLEET_STRESS_WORKING_SET_BUDGET,
+        cpu_under_budget,
+        working_set_under_budget,
+        enforced,
+        all_pass: cpu_under_budget.unwrap_or(true) && working_set_under_budget.unwrap_or(true),
+    };
+    let result = FleetStressOutput { profile, resources };
+    let json = match serde_json::to_string_pretty(&result) {
+        Ok(json) => json,
+        Err(error) => {
+            eprintln!("could not encode fleet stress report: {error}");
+            return 1;
+        }
+    };
+    if let Some(path) = output {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                eprintln!("could not create fleet stress output directory: {error}");
+                return 1;
+            }
+        }
+        if let Err(error) = std::fs::write(&path, &json) {
+            eprintln!("could not write fleet stress report {}: {error}", path.display());
+            return 1;
+        }
+    }
+    if machine {
+        println!("{json}");
+    } else {
+        println!(
+            "fleet-stress: {} sessions, {} events, startup {:.1} ms, hook p95 {:.3} ms, snapshot p95 {:.3} ms",
+            result.profile.sessions,
+            result.profile.events,
+            result.profile.startup_ms,
+            result.profile.hooks.p95_ms,
+            result.profile.snapshots.p95_ms,
+        );
+        println!(
+            "gates: logical={} resources={} enforced={}",
+            result.profile.gates.all_pass, result.resources.all_pass, result.resources.enforced
+        );
+    }
+    if result.profile.gates.all_pass && result.resources.all_pass {
+        0
+    } else {
+        3
+    }
+}
+
+fn process_working_set_bytes() -> Option<u64> {
+    #[cfg(windows)]
+    {
+        use std::mem::size_of;
+        use windows_sys::Win32::System::ProcessStatus::{
+            GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+        };
+        use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+        let mut counters: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
+        counters.cb = size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+        let ok = unsafe {
+            GetProcessMemoryInfo(
+                GetCurrentProcess(),
+                &mut counters,
+                size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+            )
+        };
+        if ok != 0 {
+            return Some(counters.WorkingSetSize as u64);
+        }
+    }
+    None
 }
 
 fn cmd_build(args: &[String], run: bool) -> i32 {

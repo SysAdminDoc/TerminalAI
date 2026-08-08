@@ -20,6 +20,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   that match multiple live rows are surfaced as ambiguous and refused instead of mutating whichever
   row happens to be first; preflight now distinguishes “installed, not yet proven” from “installed
   and firing”.
+- Added the headless `terminalai-probe fleet-stress` gate and
+  `scripts/verify-fleet-stress.ps1`: a deterministic 30-session profile that reports startup,
+  hook/snapshot latency, CPU/RSS, bounded queues and scrollback, plus store recovery evidence.
 
 ## [0.23.0] — 2026-08-08
 
