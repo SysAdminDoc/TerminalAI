@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- A session's memory is measured over the job its cap is enforced over. `JOB_OBJECT_LIMIT_JOB_MEMORY`
+  applies to every process in a session's job; the figure the row showed, and the one admission spent
+  against, came from `GetProcessMemoryInfo` on the supervised pid alone. Since agent teams that is not
+  a rounding error — teammates are separate Claude Code instances and up to twenty subagents run at
+  once — so a team could be killed by its own limit while the row read "not limited" and the
+  projection said there was room for another session.
+
+  The job is now enumerated and its private commit summed, live rather than peak: the cap is enforced
+  live, and a peak reading would mark a session limited forever after one spike with no way back
+  down. The row reports how many processes the figure covers, and a domain that owns no job says so
+  rather than implying a tree of one. The background execution policy follows the same list, so an
+  unfocused team no longer keeps every teammate at foreground priority.
+
 - The per-session spend cap is enforced instead of being handed to an agent that ignores it. The
   launcher's budget field became `--max-budget-usd` in an interactive argv, and Claude Code
   documents that flag as working under `--print` only — so a control that promised a cap bound

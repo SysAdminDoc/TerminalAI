@@ -18,36 +18,63 @@ impl SessionRegistry {
             let state = lock_state(&self.inner);
             state.admission.session_memory_cap_bytes
         };
-        let sampled: Vec<(SessionId, Option<u64>)> = {
+        // The session handles are cloned out under the lock and read outside it:
+        // one job of a dozen processes is a dozen `OpenProcess` calls, and the
+        // registry's lock is on the path of every keystroke.
+        let targets: Vec<(SessionId, Option<u32>, Arc<dyn crate::domain::AgentSession>)> = {
             let state = lock_state(&self.inner);
             state
                 .entries
                 .iter()
-                .filter(|(_, entry)| entry.pty.is_some())
                 .filter_map(|(id, entry)| {
                     entry
-                        .session
-                        .pid
-                        .map(|pid| (id.clone(), crate::process_tree::private_bytes(pid)))
+                        .pty
+                        .as_ref()
+                        .map(|pty| (id.clone(), entry.session.pid, Arc::clone(pty)))
                 })
                 .collect()
         };
+        let sampled: Vec<(SessionId, Option<crate::process_tree::JobUsage>)> = targets
+            .into_iter()
+            .map(|(id, pid, pty)| {
+                // The job is the unit the per-session cap is enforced over, so
+                // it is the unit that gets measured. A domain that owns no local
+                // job falls back to the supervised process and says so by
+                // reporting no process count, rather than claiming a figure
+                // covers a tree it never looked at.
+                let usage = pty.memory_usage().or_else(|| {
+                    pid.and_then(crate::process_tree::private_bytes).map(|bytes| {
+                        crate::process_tree::JobUsage {
+                            private_bytes: bytes,
+                            processes: 0,
+                        }
+                    })
+                });
+                (id, usage)
+            })
+            .collect();
         let mut updated = Vec::new();
         {
             let mut state = lock_state(&self.inner);
-            for (id, bytes) in sampled {
+            for (id, usage) in sampled {
                 let Some(entry) = state.entries.get_mut(&id) else {
                     continue;
                 };
                 // A reading that could not be taken leaves the previous figure
                 // in place: an unreadable handle is a momentary condition, and
                 // blanking the row would read as the session using nothing.
-                let Some(bytes) = bytes else { continue };
+                let Some(usage) = usage else { continue };
+                let bytes = usage.private_bytes;
+                // Zero is the fallback's way of saying it did not count, which
+                // is not the same as a job holding no processes.
+                let processes = (usage.processes > 0).then_some(usage.processes);
                 let limited = cap.is_some_and(|cap| bytes >= cap);
                 if entry.session.memory_bytes != Some(bytes)
+                    || entry.session.memory_processes != processes
                     || entry.session.memory_limited != limited
                 {
                     entry.session.memory_bytes = Some(bytes);
+                    entry.session.memory_processes = processes;
                     entry.session.memory_limited = limited;
                     updated.push(entry.session.clone());
                 }

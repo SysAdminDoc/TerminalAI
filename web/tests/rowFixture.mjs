@@ -33,6 +33,7 @@ const DEPS = {
   contextText: (session) => contextTitle(session, (key, args) => (args ? `${key}:${JSON.stringify(args)}` : key)),
   contextValue: contextLabel,
   cost: (value) => (value == null ? "—" : `$${value}`),
+  costTitle: (session) => (session.budget_usd == null ? "spent so far" : `against $${session.budget_usd}`),
   dwell: () => "3m",
   escapeHtml: (value) =>
     String(value ?? "")
@@ -48,6 +49,7 @@ const DEPS = {
   lifecycleLabel: (session) => session.status,
   lifecycleTone: (_session, meta) => meta.tone,
   memory: (bytes) => (bytes == null ? "—" : `${bytes}B`),
+  memoryTitle: (session) => `across ${session.memory_processes ?? "?"} processes`,
   ports: (list) => (list ?? []).join(", "),
   queueGlyph: (session) => (session.queued_prompts ? `Q${session.queued_prompts}` : "·"),
   t: (key) => key,

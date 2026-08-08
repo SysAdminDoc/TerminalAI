@@ -43,6 +43,15 @@ pub trait AgentSession: Send + Sync {
     /// Tell a local session that the focused terminal renderer is consuming
     /// its output. Remote domains may leave this as a no-op.
     fn set_renderer_attached(&self, _attached: bool) {}
+    /// Private commit across every process this session owns, and how many
+    /// processes that is.
+    ///
+    /// `None` means this domain cannot answer — a remote one holds no local job
+    /// — and the caller falls back to reading the single supervised process,
+    /// reporting no count rather than claiming the figure covers one process.
+    fn memory_usage(&self) -> Option<crate::process_tree::JobUsage> {
+        None
+    }
 }
 
 /// Creates and supervises sessions in one execution domain.
@@ -112,6 +121,10 @@ impl AgentSession for PtySession {
 
     fn set_renderer_attached(&self, attached: bool) {
         PtySession::set_renderer_attached(self, attached);
+    }
+
+    fn memory_usage(&self) -> Option<crate::process_tree::JobUsage> {
+        PtySession::memory_usage(self)
     }
 }
 

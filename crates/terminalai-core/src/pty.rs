@@ -345,21 +345,46 @@ impl PtySession {
         self.running.load(Ordering::SeqCst)
     }
 
-    /// Mark the root process as background work or restore its normal policy.
+    /// Mark this session's processes as background work, or restore their
+    /// normal policy.
     ///
-    /// The registry calls this whenever focus or pin state changes. The job
-    /// object still owns descendant cleanup; this policy controls scheduling
-    /// and memory pressure for the supervised process boundary.
+    /// The registry calls this whenever focus or pin state changes. Applied
+    /// across the whole job rather than to the root alone: since agent teams, a
+    /// supervised session can be a lead plus several separate agent instances,
+    /// and demoting only the lead leaves every teammate running at foreground
+    /// priority while the operator is looking at something else. The job still
+    /// owns descendant cleanup; this is only scheduling and memory pressure.
     pub fn set_background(&self, background: bool) -> Result<(), PtyError> {
         #[cfg(windows)]
         {
-            let pid = self.pid().ok_or(PtyError::Gone)?;
-            crate::process_tree::set_background_priority(pid, background)
-                .map_err(PtyError::Priority)?;
+            // The root has to still be there. Without this a session that
+            // exited would report a policy failure as a missing process, which
+            // is the more useful of the two messages.
+            self.pid().ok_or(PtyError::Gone)?;
+            self.job.set_background(background).map_err(PtyError::Priority)?;
         }
         #[cfg(not(windows))]
         let _ = background;
         Ok(())
+    }
+
+    /// Private commit across every process in this session's job, with the
+    /// number of processes it covers.
+    ///
+    /// Read from the job, not from the supervised pid, because the job is what
+    /// the per-session cap is enforced over: `JOB_OBJECT_LIMIT_JOB_MEMORY`
+    /// applies to the whole tree, so measuring one process meant the row could
+    /// read "not limited" while the OS was already refusing the session's
+    /// allocations.
+    pub fn memory_usage(&self) -> Option<crate::process_tree::JobUsage> {
+        #[cfg(windows)]
+        {
+            self.job.usage()
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
     }
 
     /// Process identity for supervision and diagnostics. The child handle is

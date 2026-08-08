@@ -429,9 +429,13 @@ spend-window-hours = { $hours ->
 }
 spend-ceiling-blocking = The ceiling is reached, so nothing new is starting; running sessions are untouched.
 spend-no-ceiling = No fleet spend ceiling is set.
+cost-explained = Spent so far, derived from this session's own transcript
 cost-budget-of = Spent so far, against this session's { $budget } cap
 cost-budget-spent = The { $budget } cap is spent — this session keeps running but is no longer given queued or broadcast work
-memory-explained = Private commit for this session's process tree
+memory-explained = Private commit across this session's { $processes ->
+    [one] one process
+   *[other] { $processes } processes
+  }
 auth-expired = Agent sign-in expired
 settings-title = Fleet limits
 button-settings-short = Limits
@@ -447,7 +451,8 @@ settings-max-processes = Processes per session
 settings-saved = Fleet limits applied
 settings-from-environment = Started from { $names }; changing a value here overrides it until the daemon restarts.
 auth-expired-detail = { $agents } reported that it is not signed in. Queued work is held until you sign in again; running sessions are untouched.
-memory-limited-explained = This session reached its memory cap; its allocations are being refused
+memory-limited-explained = This session's job reached its memory cap; its allocations are being refused
+memory-unscoped-explained = Private commit for the supervised process; this session's domain owns no job, so any child processes are not counted
 spend-enforced-agents = A per-session budget is enforced by TerminalAI's own ledger for: { $agents } — a session that reaches its cap keeps running but stops being given queued or broadcast work. The agents' own budget flags bind in print mode only, so none is used.
 spend-enforced-none = No per-session budget is being enforced; the ceiling refuses new sessions only.
 announcement-one = { $name } needs you: { $status }.

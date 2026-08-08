@@ -450,6 +450,31 @@ function cost(value) {
   return value === "" ? "—" : formatCost(value);
 }
 
+/// What the cost is being measured against, when it is being measured against
+/// anything. A session launched with no cap says so rather than borrowing the
+/// wording of one that simply has not reached its cap yet.
+function costTitle(session) {
+  const budget = Number(session?.budget_usd);
+  if (!Number.isFinite(budget) || budget < 0) return t("cost-explained");
+  const key = session?.budget_exhausted ? "cost-budget-spent" : "cost-budget-of";
+  // The same formatter the figure itself uses. Two spellings of money on one
+  // row is how "$5" ends up sitting next to "$5.00" in the same sentence.
+  return t(key, { budget: formatCost(budget) });
+}
+
+/// What the memory figure covers.
+///
+/// The process count is the point: since agent teams, a row can be a lead plus
+/// several separate agent instances inside one job, and the cap the reading is
+/// compared against applies to all of them. A domain that owns no job reports
+/// no count, and this says that rather than implying a tree of one.
+function memoryTitle(session) {
+  if (session?.memory_limited) return t("memory-limited-explained");
+  const processes = Number(session?.memory_processes);
+  if (!Number.isInteger(processes) || processes < 1) return t("memory-unscoped-explained");
+  return t("memory-explained", { processes });
+}
+
 function reviewNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? Math.floor(number) : 0;
@@ -1385,11 +1410,17 @@ function updateFleetRow(row, session, position = 1, setSize = 1, rovingId = stat
   wideMeta.hidden = !state.wideMode;
   wideMeta.querySelector("[data-row-model]").textContent = model;
   wideMeta.querySelector("[data-row-effort]").textContent = effort;
-  wideMeta.querySelector("[data-row-cost]").textContent = cost(session.cost_usd);
+  // The incremental path has to move every attribute the full render sets, or a
+  // row that was patched rather than rebuilt keeps the previous session's
+  // tooltip and tone.
+  const costCell = wideMeta.querySelector("[data-row-cost]");
+  costCell.textContent = cost(session.cost_usd);
+  costCell.classList.toggle("row-budget-spent", Boolean(session.budget_exhausted));
+  costCell.title = costTitle(session);
   const memoryCell = wideMeta.querySelector("[data-row-memory]");
   memoryCell.textContent = memory(session.memory_bytes);
   memoryCell.classList.toggle("row-memory-limited", Boolean(session.memory_limited));
-  memoryCell.title = session.memory_limited ? t("memory-limited-explained") : t("memory-explained");
+  memoryCell.title = memoryTitle(session);
 
   // A question the agent will answer for itself has a deadline. Saying how much
   // of it is left is the difference between "answer this" and "answer this in
@@ -1486,6 +1517,7 @@ const renderRow = createRowRenderer({
   contextText: (session) => contextTitle(session, t),
   contextValue: contextLabel,
   cost,
+  costTitle,
   dwell,
   escapeHtml,
   folderLabel,
@@ -1496,6 +1528,7 @@ const renderRow = createRowRenderer({
   lifecycleLabel,
   lifecycleTone,
   memory,
+  memoryTitle,
   ports,
   queueGlyph,
   t,

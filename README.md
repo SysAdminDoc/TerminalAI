@@ -62,7 +62,11 @@ Working today (`terminalai-probe`, headless):
   hook events extend a per-session progress deadline, and three consecutive misses mark a session
   unresponsive without restarting it — only a proven-dead process is restarted
 - Background ConPTY sessions use Windows EcoQoS and low memory priority while neither focused nor
-  pinned; focus or pinning restores normal priority. Waiting-session counts appear as a numeric
+  pinned; focus or pinning restores normal priority. The policy is applied to every process in the
+  session's job, not only the one being supervised — since agent teams a row can be a lead plus
+  several separate agent instances, and demoting the lead alone would leave the rest at foreground
+  priority. Memory is read the same way, summed across the job the per-session cap is enforced
+  over, and the row says how many processes the figure covers. Waiting-session counts appear as a numeric
   Windows taskbar overlay.
 - Native Claude and Codex version checks run through the same sanitized environment allowlist as
   live sessions, including opt-in proxy variables without inheriting parent secrets

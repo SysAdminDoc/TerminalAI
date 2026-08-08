@@ -392,9 +392,19 @@ pub struct Session {
     /// nothing.
     #[serde(default)]
     pub memory_bytes: Option<u64>,
+    /// How many processes `memory_bytes` covers. `None` means the figure came
+    /// from a domain that owns no job object and could only be read from the
+    /// supervised process — which is worth saying, because since agent teams a
+    /// row can be a lead plus several separate agent instances and a
+    /// single-process reading of one would be badly wrong.
+    #[serde(default)]
+    pub memory_processes: Option<u32>,
     /// The session's private commit reached the per-session job cap, so its
     /// allocations are being refused. Reported rather than left to look like an
-    /// ordinary crash.
+    /// ordinary crash. Measured over the same job the cap is enforced over: the
+    /// cap is `JOB_OBJECT_LIMIT_JOB_MEMORY` across the whole tree, so comparing
+    /// one process against it used to let a team be killed by its own limit
+    /// while this flag was still false.
     #[serde(default)]
     pub memory_limited: bool,
     /// Token totals read from the transcript, alongside the cost they priced.
@@ -507,6 +517,7 @@ impl Session {
             budget_usd: spec.max_budget_usd,
             budget_exhausted: false,
             memory_bytes: None,
+            memory_processes: None,
             memory_limited: false,
             tokens: None,
             pending_approval: None,

@@ -43,8 +43,9 @@ use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
 #[cfg(windows)]
 use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+    AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob, JobObjectBasicProcessIdList,
+    JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+    TerminateJobObject, JOBOBJECT_BASIC_PROCESS_ID_LIST, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
     JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOB_OBJECT_LIMIT_JOB_MEMORY,
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
@@ -78,6 +79,27 @@ pub struct JobLimits {
     /// stops being able to spawn instead of exhausting the machine.
     pub active_processes: Option<u32>,
 }
+
+/// What a session's whole process tree is currently holding.
+///
+/// The pair travels together deliberately. A byte figure with no process count
+/// cannot be read: 900 MB across one process and 900 MB across a lead plus six
+/// teammates are different situations, and the row has to be able to say which
+/// one it is showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JobUsage {
+    /// Private commit summed over every process in the job.
+    pub private_bytes: u64,
+    /// How many processes that figure covers.
+    pub processes: u32,
+}
+
+/// Largest process list this will read back, so a runaway job cannot make the
+/// sampler allocate without bound. Well past `ActiveProcessLimit` in any
+/// configuration an operator would set, and a job over it is reported from the
+/// first slice rather than not reported at all.
+#[cfg(windows)]
+const MAX_JOB_PROCESSES: usize = 1024;
 
 #[cfg(windows)]
 impl ProcessJob {
@@ -166,6 +188,107 @@ impl ProcessJob {
             return Err("the process was not in the job after assignment".into());
         }
         Ok(())
+    }
+
+    /// Every process currently in this job.
+    ///
+    /// `None` means the question could not be answered, never that the job is
+    /// empty — the same rule `private_bytes` follows, and for the same reason.
+    pub(crate) fn process_ids(&self) -> Option<Vec<u32>> {
+        let job = self.handle.as_raw_handle() as HANDLE;
+        // The struct is variable-length: a header plus one `usize` per process,
+        // declared with a one-element array. Ask for room for a few, and grow
+        // to the ceiling once if the job turns out to be larger.
+        let mut capacity = 64usize;
+        loop {
+            let header = size_of::<JOBOBJECT_BASIC_PROCESS_ID_LIST>();
+            let bytes = header + capacity.saturating_sub(1) * size_of::<usize>();
+            let mut buffer = vec![0u8; bytes];
+            let ok = unsafe {
+                QueryInformationJobObject(
+                    job,
+                    JobObjectBasicProcessIdList,
+                    buffer.as_mut_ptr().cast(),
+                    bytes as u32,
+                    std::ptr::null_mut(),
+                )
+            } != 0;
+            // Safe: the buffer is at least one whole header, and every field
+            // read below is inside it.
+            let list = unsafe { &*(buffer.as_ptr() as *const JOBOBJECT_BASIC_PROCESS_ID_LIST) };
+            let listed = list.NumberOfProcessIdsInList as usize;
+            let assigned = list.NumberOfAssignedProcesses as usize;
+            if !ok {
+                // A partial answer is still an answer: the call fills what fits
+                // and reports how many there were. Only a call that produced
+                // nothing at all is a failure.
+                if listed == 0 {
+                    return None;
+                }
+            }
+            if ok && assigned > listed && capacity < MAX_JOB_PROCESSES {
+                capacity = (assigned.saturating_add(16)).min(MAX_JOB_PROCESSES);
+                continue;
+            }
+            let listed = listed.min(capacity);
+            let ids = unsafe { std::slice::from_raw_parts(list.ProcessIdList.as_ptr(), listed) };
+            return Some(ids.iter().map(|pid| *pid as u32).collect());
+        }
+    }
+
+    /// Private commit summed over the job, with the number of processes it
+    /// covers.
+    ///
+    /// **Live, not peak.** `JOBOBJECT_EXTENDED_LIMIT_INFORMATION` carries
+    /// `PeakJobMemoryUsed` for one cheap call, and it was rejected: the cap this
+    /// figure is compared against is enforced live, so a peak reading would mark
+    /// a session limited forever after one spike and could never come back down
+    /// — a row that cannot recover is worse than one that costs a handful of
+    /// syscalls per sampling interval. The peak is still the right figure for a
+    /// post-mortem, and this is not one.
+    pub(crate) fn usage(&self) -> Option<JobUsage> {
+        let ids = self.process_ids()?;
+        let mut total = 0u64;
+        let mut counted = 0u32;
+        for pid in &ids {
+            // A process that exited between the listing and the read is not a
+            // failure — the job simply shrank. It is left out of both figures so
+            // the count always describes what the bytes cover.
+            if let Some(bytes) = private_bytes(*pid) {
+                total = total.saturating_add(bytes);
+                counted = counted.saturating_add(1);
+            }
+        }
+        (counted > 0).then_some(JobUsage {
+            private_bytes: total,
+            processes: counted,
+        })
+    }
+
+    /// Apply Windows' background execution policy to every process in the job.
+    ///
+    /// The whole job, not just the root: since agent teams, a supervised session
+    /// can be a lead plus several separate agent instances, and demoting only
+    /// the lead leaves every teammate at foreground priority while the operator
+    /// is looking at something else. Errors are counted rather than returned one
+    /// by one — a teammate that exited mid-walk is not a failure — and the call
+    /// fails only when nothing could be reached at all.
+    pub(crate) fn set_background(&self, background: bool) -> Result<(), String> {
+        let Some(ids) = self.process_ids() else {
+            return Err("could not list the job's processes".into());
+        };
+        let mut applied = 0usize;
+        let mut last_error = None;
+        for pid in ids {
+            match set_background_priority(pid, background) {
+                Ok(()) => applied += 1,
+                Err(error) => last_error = Some(error),
+            }
+        }
+        if applied > 0 {
+            return Ok(());
+        }
+        Err(last_error.unwrap_or_else(|| "the job holds no reachable process".into()))
     }
 
     pub(crate) fn terminate(&self) -> Result<(), String> {
@@ -332,6 +455,101 @@ mod tests {
         );
         let _ = child.kill();
         let _ = child.wait();
+    }
+
+    /// Spawn a second process into the job and watch the single-process
+    /// reading come up short.
+    ///
+    /// This is the shape the fleet actually runs: since agent teams, one
+    /// supervised session is a lead plus separate agent instances, all inside
+    /// the job the per-session cap is enforced over. `private_bytes(pid)` sees
+    /// only the lead, so a team could be killed by its own
+    /// `JOB_OBJECT_LIMIT_JOB_MEMORY` while the row read "not limited".
+    #[test]
+    fn a_jobs_memory_covers_every_process_in_it_not_just_the_one_being_supervised() {
+        let job = ProcessJob::create(JobLimits::default()).expect("create job");
+        let mut children: Vec<std::process::Child> = (0..2)
+            .map(|_| {
+                Command::new("cmd.exe")
+                    .args(["/c", "pause"])
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .expect("spawn child")
+            })
+            .collect();
+        for child in &children {
+            job.adopt(child.as_raw_handle()).expect("adopt child");
+        }
+
+        let usage = job.usage().expect("a job holding two live processes reports usage");
+        assert_eq!(usage.processes, 2, "both processes are in the job");
+
+        let lead = private_bytes(children[0].id()).expect("the lead is readable");
+        let second = private_bytes(children[1].id()).expect("the teammate is readable");
+        assert!(
+            usage.private_bytes > lead,
+            "the job total {} is not above the lead's own {lead}, so this is still              the single-process reading",
+            usage.private_bytes
+        );
+        // Not an equality: both processes keep allocating between the two
+        // readings. What must hold is that the job total accounts for both.
+        assert!(
+            usage.private_bytes >= lead.max(second),
+            "job {} < the larger of {lead} and {second}",
+            usage.private_bytes
+        );
+
+        for child in &mut children {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
+    #[test]
+    fn an_empty_job_reports_nothing_rather_than_zero_bytes() {
+        // Zero is what a healthy idle session looks like, and "we could not
+        // measure this" must never render as that.
+        let job = ProcessJob::create(JobLimits::default()).expect("create job");
+        assert_eq!(job.process_ids().expect("an empty list is still an answer").len(), 0);
+        assert_eq!(job.usage(), None);
+    }
+
+    /// Every process in the job gets the background policy, not just the root.
+    ///
+    /// The failure this guards is silent by construction: demoting only the
+    /// lead leaves teammates at foreground priority, and nothing about the row
+    /// would look wrong.
+    #[test]
+    fn the_background_policy_reaches_every_process_in_the_job() {
+        let job = ProcessJob::create(JobLimits::default()).expect("create job");
+        let mut children: Vec<std::process::Child> = (0..2)
+            .map(|_| {
+                Command::new("cmd.exe")
+                    .args(["/c", "pause"])
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .expect("spawn child")
+            })
+            .collect();
+        for child in &children {
+            job.adopt(child.as_raw_handle()).expect("adopt child");
+        }
+        let ids = job.process_ids().expect("list");
+        assert_eq!(ids.len(), 2);
+        for child in &children {
+            assert!(ids.contains(&child.id()), "{} is not in the job", child.id());
+        }
+        job.set_background(true).expect("demote the whole job");
+        job.set_background(false).expect("restore the whole job");
+
+        for child in &mut children {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 
     #[test]
