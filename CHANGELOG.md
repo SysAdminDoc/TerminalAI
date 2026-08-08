@@ -41,6 +41,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Extracted the read-only external-session panel into `web/src/externalSessions.js`; its source
   assertions now follow the module and continue to enforce failed-lookup, agent-reported-state,
   and non-actionable-row behavior.
+- Extracted broadcast rendering, live selection synchronization, and refusal-aware sending into
+  `web/src/broadcastPanel.js`; the eligibility and protocol tests now follow the panel boundary
+  while event wiring remains in the shell coordinator.
 - Split the stylesheet into import-ordered `tokens`, `foundation`, `pages`, and `shell` layers;
   frontend style assertions now resolve the same assembled cascade through `web/tests/cssSource.mjs`.
 

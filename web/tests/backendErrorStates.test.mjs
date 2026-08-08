@@ -9,6 +9,10 @@ const reviewPage = readFileSync(
   new URL("../src/reviewPage.js", import.meta.url),
   "utf8",
 ).replace(/\r\n/g, "\n");
+const broadcastPanel = readFileSync(
+  new URL("../src/broadcastPanel.js", import.meta.url),
+  "utf8",
+).replace(/\r\n/g, "\n");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 const styles = cssSource();
 
@@ -102,9 +106,10 @@ test("every state-less dialog renders its own failure rather than nothing", () =
     // Sliced forward from the opener, not with a global indexOf: `sliceBetween`
     // finds the first closing brace in the whole file, which is above all of
     // these and would silently read nothing.
-    const from = main.indexOf(`function ${opener}() {`);
+    const source = opener === "openBroadcast" ? broadcastPanel : main;
+    const from = source.indexOf(`function ${opener}() {`);
     assert.notEqual(from, -1, `${opener} is gone; this test is reading nothing`);
-    const open = main.slice(from, main.indexOf("\n}\n", from));
+    const open = source.slice(from, source.indexOf("\n}\n", from));
     assert.ok(open.includes("renderGuarded("), `${opener} does not guard its render`);
     assert.ok(open.includes(container), `${opener} names no container`);
     assert.ok(open.includes(key), `${opener} has no message`);

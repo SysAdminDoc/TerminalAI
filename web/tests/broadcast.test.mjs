@@ -8,6 +8,10 @@ import { appSource } from "./appSource.mjs";
 import { appRustSource } from "./appRustSource.mjs";
 
 const main = appSource();
+const panel = readFileSync(
+  new URL("../src/broadcastPanel.js", import.meta.url),
+  "utf8",
+).replace(/\r\n/g, "\n");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 const app = appRustSource();
@@ -103,8 +107,8 @@ test("the summary reports delivered and refused separately", () => {
 
 test("the selection is re-checked at send time, not trusted from open time", () => {
   // A session can enter a permission prompt while the operator is typing.
-  const send = main.slice(main.indexOf("async function sendBroadcast"));
-  const body = send.slice(0, send.indexOf("\nfunction createOutputChannel"));
+  const send = panel.slice(panel.indexOf("async function sendBroadcast"));
+  const body = send;
   assert.match(body, /readBroadcastSelection\(\)\.filter\(\(id\) =>\s*isEligible\(/);
 });
 
@@ -112,26 +116,26 @@ test("a partial refusal keeps the operator's live broadcast selection", () => {
   // The dialog is re-rendered after a refusal so current eligibility and
   // labels are fresh. That render must read the boxes the operator left
   // checked, not the selection captured when the dialog opened.
-  const sync = main.slice(main.indexOf("function syncBroadcastSelection"));
+  const sync = panel.slice(panel.indexOf("function syncBroadcastSelection"));
   assert.match(sync.slice(0, 180), /state\.broadcastSelection = readBroadcastSelection\(\)/);
   assert.match(
     main,
     /\$\("broadcast-list"\)\.addEventListener\("change", \(\) => syncBroadcastSelection\(\)\)/,
   );
-  const send = main.slice(main.indexOf("async function sendBroadcast"));
-  const refusal = send.slice(send.indexOf("} else {"), send.indexOf("\n  } catch"));
+  const send = panel.slice(panel.indexOf("async function sendBroadcast"));
+  const refusal = send.slice(send.indexOf("} else {"), send.indexOf("\n    } catch"));
   assert.match(refusal, /syncBroadcastSelection\(\);\s*renderBroadcast\(\)/);
 });
 
 test("both numbers are shown whenever anything was refused", () => {
-  const send = main.slice(main.indexOf("async function sendBroadcast"));
-  const body = send.slice(0, send.indexOf("\nfunction createOutputChannel"));
+  const send = panel.slice(panel.indexOf("async function sendBroadcast"));
+  const body = send;
   assert.match(body, /const \{ delivered, refused, total \} = summarize\(results\)/);
   assert.match(body, /refused\s*\?\s*`\$\{t\("broadcast-sent"/);
 });
 
 test("an empty prompt is refused before anything is sent", () => {
-  const send = main.slice(main.indexOf("async function sendBroadcast"));
+  const send = panel.slice(panel.indexOf("async function sendBroadcast"));
   assert.match(send.slice(0, 400), /if \(!text\) \{/);
   assert.ok(/^broadcast-empty-prompt = /m.test(ftl));
 });
@@ -151,8 +155,10 @@ test("the dialog is reachable and its controls are wired", () => {
 });
 
 test("session names reaching the target list are escaped", () => {
-  const render = main.slice(main.indexOf("function renderBroadcast"));
-  const body = render.slice(0, render.indexOf("\nfunction openBroadcast"));
+  const body = panel.slice(
+    panel.indexOf("function renderBroadcast"),
+    panel.indexOf("function openBroadcast"),
+  );
   assert.match(body, /escapeHtml\(session\.name\)/);
   assert.match(body, /escapeHtml\(session\.id\)/);
   assert.match(body, /escapeHtml\(t\(reason\)\)/);
