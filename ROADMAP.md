@@ -79,11 +79,4 @@ where an item depends on another in this section, its Why says which.
 
 ### P2
 
-- [ ] P2 — Split the daemon's control plane the way the registry was split
-  Why: `lib.rs` is the tree's largest Rust file and fuses the wire protocol, the dispatcher, the server, the client and the console handler in one scope — worth splitting before it reaches the size that forced the registry split, not after.
-  Evidence: `crates/terminalai-daemon/src/lib.rs` is 3,254 lines, of which roughly a third is its test module. It is not yet the 6,106 lines `CHANGELOG.md:524` records for `registry.rs` when that was decomposed, which is the point; the seams are already visible as `Request`/`Response`, `dispatch_with_endpoint`, `DaemonServer`, `DaemonClient`. The precedent, including the moved-code-unchanged discipline and the cross-language string-reading tests, is `crates/terminalai-core/src/registry/` and `web/tests/registrySource.mjs`.
-  Touches: `crates/terminalai-daemon/src/lib.rs` split into `protocol.rs` / `dispatch.rs` / `client.rs`, `web/tests/registrySource.mjs` if any test reads the file by name
-  Acceptance: `lib.rs` is under ~1,200 lines with the moved code unchanged, both suites pass without assertion edits, and the private items the dispatcher relies on stay private rather than being widened to make the split possible.
-  Complexity: L
-
 ### P3
