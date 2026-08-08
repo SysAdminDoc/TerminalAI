@@ -29,6 +29,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Extracted offline first-run demo state swapping and focused-terminal header/placeholder updates
   into the injectable `web/src/sessionDemo.js` and `web/src/terminalHeader.js` modules while
   retaining the existing demo isolation and terminal layout behavior.
+- Extracted daemon-driven session reconciliation, attention toasts, and coalesced accessible
+  status announcements into the injectable `web/src/sessionState.js` module so snapshot replay
+  and live events share one UI-state lifecycle.
 - Extracted snapshot refresh serialization, event replay, preflight outage routing, and focused
   terminal reattachment into the injectable `web/src/snapshotCoordinator.js` module; operational
   panels use a late-bound loader so the boundary remains acyclic.
