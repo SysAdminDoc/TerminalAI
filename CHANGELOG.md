@@ -74,6 +74,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   The last pair are opposite failures — a leaked channel per closed window, or a GUI that goes
   silent for good and looks like a daemon that stopped logging.
 
+### Changed
+
+- The work run — the prompt library, the run across many projects and the schedule that repeats it —
+  moved out of `main.js` into `workRunPanel.js`, the fourteenth module split from it, with the moved
+  code otherwise unchanged. `main.js` is at 3,685 lines. One thing the move taught: an extracted
+  module has to fit the 120-column limit while `main.js` is only held to a ratchet, so a seam drags
+  its long HTML templates into a limit they never had to meet — the fix is to split them by
+  concatenation, never to raise the ratchet.
+
 ### Fixed
 
 - The end-to-end harness built the app without `custom-protocol`, and `tauri`'s build script computes
