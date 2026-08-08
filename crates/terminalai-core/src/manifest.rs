@@ -61,7 +61,6 @@ pub enum Slot {
     SessionId,
     Cwd,
     AddDirs,
-    MaxBudgetUsd,
     WebSearch,
     AllowedTools,
     DisallowedTools,
@@ -89,7 +88,6 @@ impl Slot {
             Slot::SessionId => "--session-id",
             Slot::Cwd => "--cd",
             Slot::AddDirs => "--add-dir",
-            Slot::MaxBudgetUsd => "--max-budget-usd",
             Slot::WebSearch => "--search",
             Slot::AllowedTools => "--allowed-tools",
             Slot::DisallowedTools => "--disallowed-tools",
@@ -117,7 +115,6 @@ impl Slot {
             Slot::SessionId => "session-id",
             Slot::Cwd => "cwd",
             Slot::AddDirs => "add-dirs",
-            Slot::MaxBudgetUsd => "max-budget-usd",
             Slot::WebSearch => "web-search",
             Slot::AllowedTools => "allowed-tools",
             Slot::DisallowedTools => "disallowed-tools",
@@ -240,8 +237,6 @@ pub struct FlagTable {
     #[serde(default)]
     pub add_dirs: Option<Emit>,
     #[serde(default)]
-    pub max_budget_usd: Option<Emit>,
-    #[serde(default)]
     pub web_search: Option<Emit>,
     #[serde(default)]
     pub allowed_tools: Option<Emit>,
@@ -278,7 +273,6 @@ impl FlagTable {
             Slot::SessionId => self.session_id.is_some(),
             Slot::Cwd => self.cwd.is_some(),
             Slot::AddDirs => self.add_dirs.is_some(),
-            Slot::MaxBudgetUsd => self.max_budget_usd.is_some(),
             Slot::WebSearch => self.web_search.is_some(),
             Slot::AllowedTools => self.allowed_tools.is_some(),
             Slot::DisallowedTools => self.disallowed_tools.is_some(),
@@ -298,7 +292,7 @@ impl FlagTable {
 impl Slot {
     /// Every slot, in a fixed order, so a new one cannot be added to the flag
     /// table and forgotten by the checks that walk it.
-    pub const ALL: [Slot; 21] = [
+    pub const ALL: [Slot; 20] = [
         Slot::Model,
         Slot::Effort,
         Slot::Permission,
@@ -308,7 +302,6 @@ impl Slot {
         Slot::SessionId,
         Slot::Cwd,
         Slot::AddDirs,
-        Slot::MaxBudgetUsd,
         Slot::WebSearch,
         Slot::AllowedTools,
         Slot::DisallowedTools,
@@ -343,7 +336,6 @@ impl FlagTable {
             ("session-id", &self.session_id),
             ("cwd", &self.cwd),
             ("add-dirs", &self.add_dirs),
-            ("max-budget-usd", &self.max_budget_usd),
             ("web-search", &self.web_search),
             ("allowed-tools", &self.allowed_tools),
             ("disallowed-tools", &self.disallowed_tools),
@@ -896,7 +888,6 @@ mod tests {
             Slot::SessionId,
             Slot::Cwd,
             Slot::AddDirs,
-            Slot::MaxBudgetUsd,
             Slot::WebSearch,
             Slot::Resume,
         ] {

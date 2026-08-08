@@ -242,7 +242,15 @@ pub struct LaunchSpec {
     #[serde(default)]
     pub session_id: Option<String>,
     pub resume: Resume,
-    /// Claude only.
+    /// A per-session spend cap, enforced by this tool's own ledger.
+    ///
+    /// Deliberately *not* an argv flag. Claude Code's `--max-budget-usd`
+    /// documents itself as "only works with --print", and every session this
+    /// tool supervises is interactive — emitting it would render a control that
+    /// implies a cap and binds nothing, which is the one failure mode a spend
+    /// feature must not have. The cap is applied against the transcript-derived
+    /// cost in `registry::sampling`, which reads both agents' transcripts, so it
+    /// is agent-independent rather than Claude-only.
     pub max_budget_usd: Option<f64>,
     /// Codex only.
     pub web_search: bool,
@@ -521,11 +529,6 @@ impl LaunchSpec {
                         }
                     }
                 }
-                Slot::MaxBudgetUsd => emit_optional(
-                    &mut a,
-                    &flags.max_budget_usd,
-                    self.max_budget_usd.map(format_usd).as_deref(),
-                ),
                 Slot::WebSearch => emit_switch(&mut a, &flags.web_search, self.web_search),
                 Slot::AllowedTools => {
                     emit_each(&mut a, &flags.allowed_tools, &self.allowed_tools)
@@ -578,7 +581,6 @@ impl LaunchSpec {
             (Slot::Sandbox, self.sandbox.is_some()),
             (Slot::Profile, self.profile.is_some()),
             (Slot::AddDirs, !self.add_dirs.is_empty()),
-            (Slot::MaxBudgetUsd, self.max_budget_usd.is_some()),
             (Slot::WebSearch, self.web_search),
             (Slot::AllowedTools, !self.allowed_tools.is_empty()),
             (Slot::DisallowedTools, !self.disallowed_tools.is_empty()),
@@ -729,11 +731,6 @@ fn permission_mode<'a>(
 }
 
 /// `--max-budget-usd` wants a plain decimal, not scientific notation.
-fn format_usd(v: f64) -> String {
-    let s = format!("{v:.2}");
-    s.trim_end_matches('0').trim_end_matches('.').to_string()
-}
-
 /// Convenience for callers that only have a path.
 pub fn spec_for(agent: Agent, cwd: &Path) -> LaunchSpec {
     LaunchSpec {
@@ -785,9 +782,7 @@ mod tests {
                 "--permission-mode",
                 "plan",
                 "--name",
-                "api rewrite",
-                "--max-budget-usd",
-                "5"
+                "api rewrite"
             ]
         );
     }
@@ -967,10 +962,26 @@ mod tests {
     }
 
     #[test]
-    fn budget_is_plain_decimal() {
-        assert_eq!(format_usd(5.0), "5");
-        assert_eq!(format_usd(0.5), "0.5");
-        assert_eq!(format_usd(12.25), "12.25");
+    fn a_budget_never_reaches_the_argv_of_an_interactive_session() {
+        // `claude --help` on 2.1.170: "--max-budget-usd <amount>  Maximum dollar
+        // amount to spend on API calls (only works with --print)". Every session
+        // this tool supervises is interactive, so the flag would be accepted and
+        // ignored. The cap is kept as a field and enforced by the ledger; what
+        // must never happen again is it being spelled into a command line.
+        for agent in [Agent::Claude, Agent::Codex] {
+            let s = LaunchSpec {
+                max_budget_usd: Some(5.0),
+                ..spec(agent)
+            };
+            let c = s
+                .resolve(&binary(agent))
+                .unwrap_or_else(|error| panic!("{agent:?} accepts a ledger budget: {error}"));
+            assert!(
+                !c.args.iter().any(|arg| arg.contains("budget")),
+                "{agent:?} emitted {:?}",
+                c.args
+            );
+        }
     }
 
     #[test]

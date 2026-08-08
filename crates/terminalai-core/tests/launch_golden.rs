@@ -52,7 +52,10 @@ fn canonical_spec(agent: Agent, cwd: &Path) -> LaunchSpec {
         } else {
             Resume::Session("codex-thread-1".into())
         },
-        max_budget_usd: (agent == Agent::Claude).then_some(5.0),
+        // Set deliberately, and deliberately absent from every fixture: the
+        // cap is enforced by this tool's ledger, and `--max-budget-usd` only
+        // binds under `--print`. This is the golden that pins that decision.
+        max_budget_usd: Some(5.0),
         web_search: agent == Agent::Codex,
         // Claude-only passthrough. Codex expresses none of these — verified
         // against `codex --help` 0.146.0 — so setting them on a Codex spec

@@ -374,6 +374,19 @@ pub struct Session {
     pub status_since: SystemTime,
     /// Accumulated spend, when the agent reports it.
     pub cost_usd: Option<f64>,
+    /// The per-session spend cap this session was launched with, if any.
+    ///
+    /// Carried on the row rather than left in the launch spec because it is the
+    /// figure `cost_usd` is read against, and the operator has to be able to see
+    /// what the number in front of them is being measured against.
+    #[serde(default)]
+    pub budget_usd: Option<f64>,
+    /// The ledger's cost reached `budget_usd`, so this session is no longer
+    /// given work. Nothing is killed: the process stays, its queue is paused and
+    /// broadcasts skip it, which is the enforcement this tool can actually make
+    /// good on — the agent's own `--max-budget-usd` binds under `--print` only.
+    #[serde(default)]
+    pub budget_exhausted: bool,
     /// Private commit sampled from the session's process, in bytes. `None` means
     /// it has not been sampled or could not be read — never that it is using
     /// nothing.
@@ -491,6 +504,8 @@ impl Session {
             started_at: now,
             status_since: now,
             cost_usd: None,
+            budget_usd: spec.max_budget_usd,
+            budget_exhausted: false,
             memory_bytes: None,
             memory_limited: false,
             tokens: None,

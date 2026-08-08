@@ -5,6 +5,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Fixed
+
+- The per-session spend cap is enforced instead of being handed to an agent that ignores it. The
+  launcher's budget field became `--max-budget-usd` in an interactive argv, and Claude Code
+  documents that flag as working under `--print` only — so a control that promised a cap bound
+  nothing, and the header said in words that it did. Two settings rode on the same flag: the fleet's
+  `TERMINALAI_DEFAULT_BUDGET_USD` had no other delivery mechanism, and `budget_enforced_agents`
+  named Claude on the strength of it.
+
+  The flag is gone from the manifest, so no launch of either agent can emit it again, and the golden
+  fixture that used to pin it now pins its absence from a spec that still carries a budget. The cap
+  itself is kept and enforced where the money is actually counted: the transcript ledger, which
+  reads both agents. A session that reaches its cap keeps running and keeps its scrollback, and
+  stops being given work — its prompt queue pauses with a stated reason and broadcasts skip it,
+  while an explicit send still goes through, so an operator who decides to carry on can. The row's
+  cost turns red and names the figure it was measured against. `budget_enforced_agents` now names
+  every agent, because the enforcement is this tool's own rather than a claim about someone's flags.
+
 ## [0.21.0] — 2026-08-08
 
 ### Added

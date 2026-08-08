@@ -7,8 +7,8 @@
  * the refusals.
  *
  * The rule: a session receives a broadcast only if a process is behind it, it
- * is not waiting on a permission decision, and its focused pane is not holding
- * unsubmitted keyboard input. A permission prompt is a specific question with
+ * is not waiting on a permission decision, it has not spent its own budget, and
+ * its focused pane is not holding unsubmitted keyboard input. A permission prompt is a specific question with
  * a small set of valid answers, and typing a paragraph of prompt text at it
  * answers something — just not what the operator meant.
  */
@@ -25,6 +25,10 @@ const NOT_RUNNING = new Set(["exited", "queued"]);
 export function ineligibleReason(session) {
   if (!session) return "broadcast-skip-not-running";
   if (session.status === "needs-approval") return "broadcast-skip-approval";
+  // A fleet-wide prompt is exactly how a session that has already spent its cap
+  // gets handed more work without anyone deciding to. Sending to it explicitly
+  // still works.
+  if (session.budget_exhausted) return "broadcast-skip-budget";
   if (session.queue_paused === "focused_and_edited") return "broadcast-skip-focused-edited";
   if (NOT_RUNNING.has(session.status)) return "broadcast-skip-not-running";
   return null;

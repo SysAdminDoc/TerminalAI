@@ -2743,7 +2743,10 @@ function readSpec() {
     profile: agent === "codex" ? $("profile-input").value.trim() || null : null,
     add_dirs: [...state.extraDirs],
     resume,
-    max_budget_usd: agent === "claude" && budget ? Number(budget) : null,
+    // Both agents: the cap is enforced by this tool's ledger, which reads
+    // both agents' transcripts, rather than by a launcher flag only one of
+    // them has and neither honours outside print mode.
+    max_budget_usd: budget ? Number(budget) : null,
     web_search: agent === "codex" && $("search-input").checked,
     initial_prompt: $("prompt-input").value.trim() || null,
     extra_args: [],

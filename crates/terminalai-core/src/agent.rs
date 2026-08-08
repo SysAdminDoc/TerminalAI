@@ -37,6 +37,10 @@ pub enum Agent {
 }
 
 impl Agent {
+    /// Every family this tool supervises, so a check that has to cover all of
+    /// them cannot be written against a list that quietly falls behind.
+    pub const ALL: [Agent; 2] = [Agent::Claude, Agent::Codex];
+
     /// Everything about this family that is data: names, banners, npm layout
     /// and the flag spellings the launcher emits.
     pub fn manifest(self) -> &'static AgentManifest {

@@ -258,6 +258,8 @@ pub enum BroadcastRefusal {
     NeedsApproval,
     /// The operator is composing in the focused pane.
     FocusedAndEdited,
+    /// The session's ledger cost reached the budget it was launched with.
+    BudgetExhausted,
     /// The write itself failed.
     WriteFailed(String),
 }
@@ -273,6 +275,10 @@ impl std::fmt::Display for BroadcastRefusal {
             Self::FocusedAndEdited => write!(
                 formatter,
                 "focused and edited; defocus it or send explicitly"
+            ),
+            Self::BudgetExhausted => write!(
+                formatter,
+                "its session budget is spent; raise it or send explicitly"
             ),
             Self::WriteFailed(detail) => write!(formatter, "write failed: {detail}"),
         }
@@ -611,10 +617,21 @@ impl SessionRegistry {
                 .filter(|auth| auth.state == crate::auth::AuthState::Expired)
                 .cloned()
                 .collect(),
-            // Claude takes `--max-budget-usd`; Codex documents no equivalent, so
-            // saying "budget" without naming which agent it binds would claim an
-            // enforcement that does not exist for half the fleet.
-            budget_enforced_agents: vec![crate::agent::Agent::Claude.command_name().to_string()],
+            // Every agent, because the enforcement is this tool's own: the cap
+            // is read against transcript-derived cost, and both agents'
+            // transcripts are read. It used to be Claude alone, on the strength
+            // of `--max-budget-usd` — a flag the CLI documents as working only
+            // under `--print`, which no supervised session is, so that claim was
+            // never true. The ledger's version is.
+            budget_enforced_agents: crate::agent::Agent::ALL
+                .iter()
+                .map(|agent| agent.command_name().to_string())
+                .collect(),
+            budget_exhausted_sessions: state
+                .entries
+                .values()
+                .filter(|entry| entry.session.budget_exhausted)
+                .count(),
             rate_limited_sessions: state
                 .entries
                 .values()

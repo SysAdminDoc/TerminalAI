@@ -203,6 +203,10 @@ impl SessionRegistry {
             // something — just not what the operator meant, and possibly
             // "yes". These are answered one at a time, deliberately.
             SessionStatus::NeedsApproval => Some(BroadcastRefusal::NeedsApproval),
+            // A fleet-wide prompt is exactly how a session that has already
+            // spent its cap gets handed more work without anyone deciding to.
+            // Sending to it explicitly still works.
+            _ if entry.session.budget_exhausted => Some(BroadcastRefusal::BudgetExhausted),
             _ if state.focused.as_ref() == Some(id) && state.operator_edited.contains(id) => {
                 Some(BroadcastRefusal::FocusedAndEdited)
             }

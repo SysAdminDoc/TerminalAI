@@ -257,7 +257,7 @@
             <label class="field codex-only"><span>Config profile <em>optional</em></span><input id="profile-input" placeholder="work" /></label>
             <label class="field"><span>Resume</span><select id="resume-input"><option value="new">New session</option><option value="last">Resume last</option><option value="session">Resume by id</option><option value="fork">Fork by id</option></select></label>
             <label class="field resume-id-field"><span>Native session id</span><input id="resume-id-input" placeholder="session UUID" /></label>
-            <label class="field claude-only"><span>Spend cap <em>USD, optional</em></span><input id="budget-input" type="number" min="0" step="0.01" placeholder="No cap" /></label>
+            <label class="field"><span>Spend cap <em>USD, optional — held by TerminalAI, not the agent</em></span><input id="budget-input" type="number" min="0" step="0.01" placeholder="No cap" /></label>
             <label class="field codex-only check-field"><input id="search-input" type="checkbox" /><span>Enable web search</span></label>
             <div class="field field-wide"><span>Extra writable folders</span><div class="input-with-button"><input id="extra-dirs-input" readonly placeholder="None selected" /><button type="button" class="button button-quiet" id="pick-extra-button">Add folders</button></div></div>
             <label class="field field-wide project-template-field" hidden><span data-i18n="template-label">This project's templates <em>declared in the repository</em></span><select id="template-select"><option value="" data-i18n="template-none">Choose a template…</option></select></label>

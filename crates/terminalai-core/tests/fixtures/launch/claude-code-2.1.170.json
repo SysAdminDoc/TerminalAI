@@ -33,8 +33,6 @@
     "https://example.invalid/plugin.zip",
     "--fallback-model",
     "sonnet",
-    "--max-budget-usd",
-    "5",
     "--resume",
     "claude-session-1",
     "--fork-session",

@@ -35,6 +35,21 @@ export function createRowRenderer(deps) {
     toolProgress,
   } = deps;
 
+  /// What the cost is being measured against, when it is being measured
+  /// against anything. A session launched with no cap gets no title at all,
+  /// because "no budget" and "budget not reached" are different states and one
+  /// tooltip claiming both would be the thing worth saying that never gets said.
+  function budgetTitle(session) {
+    const budget = Number(session.budget_usd);
+    if (!Number.isFinite(budget) || budget < 0) return "";
+    const key = session.budget_exhausted ? "cost-budget-spent" : "cost-budget-of";
+    return ` title="${escapeHtml(t(key, { budget: formatBudget(budget) }))}"`;
+  }
+
+  function formatBudget(budget) {
+    return `$${budget.toFixed(2)}`;
+  }
+
   return function renderRow(session) {
     const meta = STATUS_META[session.status] ?? STATUS_META.exited;
     const label = lifecycleLabel(session);
@@ -134,7 +149,8 @@ export function createRowRenderer(deps) {
     const wideMeta =
       `<div class="row-wide-meta"${wideHidden}><span><small>MODEL</small><b data-row-model>` +
       `${escapeHtml(model)}</b></span><span><small>EFFORT</small><b data-row-effort>` +
-      `${escapeHtml(effort)}</b></span><span><small>COST</small><b data-row-cost>` +
+      `${escapeHtml(effort)}</b></span><span><small>COST</small><b data-row-cost` +
+      `${session.budget_exhausted ? ' class="row-budget-spent"' : ""}${budgetTitle(session)}>` +
       `${escapeHtml(cost(session.cost_usd))}</b></span><span><small>MEM</small><b ` +
       `data-row-memory${session.memory_limited ? ' class="row-memory-limited"' : ""} title="` +
       `${escapeHtml(session.memory_limited ? t("memory-limited-explained") : t("memory-explained"))}` +

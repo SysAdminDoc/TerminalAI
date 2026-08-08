@@ -17,8 +17,10 @@ pub const DEFAULT_SESSION_BUDGET_USD: f64 = 5.0;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AdmissionConfig {
     pub max_live_sessions: usize,
-    /// Applied to Claude launches that did not supply an explicit cap. Codex
-    /// has no equivalent launcher flag and therefore leaves this unused.
+    /// Applied to any launch that did not supply an explicit cap. Delivered as
+    /// the session's ledger budget, not as an agent flag: `--max-budget-usd`
+    /// binds under `--print` only, so a launcher that emitted it would be
+    /// setting a limit the agent ignores.
     pub default_budget_usd: Option<f64>,
     /// Fleet spend allowed inside `spend_window` before nothing new starts.
     /// `None` disables the ceiling; running sessions are never stopped by it.
@@ -403,11 +405,17 @@ pub struct AdmissionSnapshot {
     /// banner the operator cannot act on.
     #[serde(default)]
     pub expired_auth: Vec<crate::auth::AgentAuth>,
-    /// Agents whose own launcher can enforce a per-session budget. Codex has no
-    /// documented equivalent, so its sessions are admission-refused only and
-    /// the header has to say so rather than implying a hard stop.
+    /// Agents whose sessions carry an enforceable per-session budget. This is
+    /// TerminalAI's own enforcement — the cap is read against transcript-derived
+    /// cost and stops the session being given further work — so it covers every
+    /// agent whose transcript the ledger reads, which is all of them. It is
+    /// deliberately not a claim about the agent's own flags.
     #[serde(default)]
     pub budget_enforced_agents: Vec<String>,
+    /// Sessions whose ledger cost has reached their budget. Their queues are
+    /// paused and broadcasts skip them until the operator says otherwise.
+    #[serde(default)]
+    pub budget_exhausted_sessions: usize,
     /// Sessions a provider is currently refusing work. Surfaced in the header
     /// because a limited fleet otherwise reads as a busy one.
     #[serde(default)]

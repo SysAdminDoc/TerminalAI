@@ -169,8 +169,16 @@ Attention notifications are deduplicated per session and status, grouped by repo
 when the agent proceeds, and quiet during startup or the first seconds of a tool call.
 
 The daemon admits three live processes by default. Set `TERMINALAI_MAX_LIVE_SESSIONS` to change the
-cap and `TERMINALAI_DEFAULT_BUDGET_USD` to change the default Claude `--max-budget-usd` (or `none` to
-disable it).
+cap and `TERMINALAI_DEFAULT_BUDGET_USD` to change the per-session spend cap applied to launches that
+did not name one (or `none` to disable it).
+
+That cap is held by TerminalAI, not by the agent. Claude Code's `--max-budget-usd` documents itself
+as working under `--print` only, and every session supervised here is interactive, so the flag is
+never emitted — it would be accepted and ignored, which is the one failure mode a spend control must
+not have. Instead the cap is read against the transcript-derived ledger, which covers both agents: a
+session that reaches it keeps running and keeps its scrollback, and stops being given queued or
+broadcast work until the operator resumes it deliberately. The row's cost turns red and says what it
+was measured against.
 
 A per-session budget bounds one agent; nothing bounded the fleet, so twenty sessions each obeying a
 $5 cap could spend $100 with every individual limit reporting itself satisfied.
@@ -183,9 +191,8 @@ restarting the daemon does not clear the window.
 session budget, the spend ceiling and window, the fleet memory budget, the per-session memory cap
 and process count — and applies it without a restart. Environment variables remain the boot default,
 and the dialog names the ones it started from. `terminalai-probe limits [--max-live N]` drives the
-same two requests headlessly. Because only Claude takes a per-session
-`--max-budget-usd`, the header says which agents a budget actually binds rather than implying a hard
-stop the whole fleet does not have.
+same two requests headlessly. The header names which agents a per-session budget binds and says who
+enforces it, so the control never implies a hard stop nobody makes.
 
 The fleet header shows live/queued counts, how many sessions a provider is currently
 rate limiting, and when the soonest quota window reopens. Spend is derived from each session's
@@ -554,7 +561,7 @@ Verified flags, not guesses.
 | Resume last | `--continue` | `resume --last` |
 | Resume by id | `--resume <id>` | `resume <id>` |
 | Fork | `--resume <id> --fork-session` | `fork <id>` |
-| Spend cap | `--max-budget-usd` | — |
+| Spend cap | TerminalAI-side (ledger) | TerminalAI-side (ledger) |
 | Web search | — | `--search` |
 | Tools allowed / denied | `--allowed-tools` / `--disallowed-tools`, one occurrence per entry | — |
 | Extra settings | `--settings`, `--setting-sources` | — |

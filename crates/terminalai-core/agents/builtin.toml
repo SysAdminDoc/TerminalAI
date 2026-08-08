@@ -27,7 +27,10 @@ home-env = "CLAUDE_CONFIG_DIR"
 npm-path = ["@anthropic-ai", "claude-code", "bin"]
 probe = "claude-print-json"
 # Claude inherits the working directory from the process, so there is no `cwd`
-# slot: it is applied at spawn time rather than as a flag.
+# slot: it is applied at spawn time rather than as a flag. There is no
+# `max-budget-usd` slot either: `claude --help` restricts that flag to `--print`,
+# and nothing this tool launches is in print mode, so the cap is held in the
+# ledger instead of being spelled into an argv that ignores it.
 order = [
     "model",
     "effort",
@@ -44,7 +47,6 @@ order = [
     "plugin-dirs",
     "plugin-urls",
     "fallback-model",
-    "max-budget-usd",
     "resume",
 ]
 
@@ -54,7 +56,6 @@ effort = { flag = "--effort" }
 name = { flag = "--name" }
 session-id = { flag = "--session-id" }
 add-dirs = { flag = "--add-dir" }
-max-budget-usd = { flag = "--max-budget-usd" }
 # Verified against `claude --help` on 2.1.170. The list-valued options are
 # variadic there — `--allowed-tools <tools...>`, `--mcp-config <configs...>` —
 # and `--plugin-dir`/`--plugin-url` document repetition explicitly, so every

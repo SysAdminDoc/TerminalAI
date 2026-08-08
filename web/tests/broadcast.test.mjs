@@ -40,15 +40,23 @@ test("sessions with no process behind them are not targets", () => {
   assert.equal(ineligibleReason(undefined), "broadcast-skip-not-running");
 });
 
+/** The closing brace of `broadcast_eligibility` and of its `impl` block. */
+const BLOCK_END = ["", "    }", "}"].join("\n");
+
 test("the eligibility rule matches the daemon's, status for status", () => {
   // A UI that offers a session the daemon will refuse teaches the operator to
   // ignore refusals. The Rust side refuses needs-approval and anything with no
   // pty; queued and exited are the statuses that carry no process.
   const registry = registrySource();
-  const rule = registry.slice(registry.indexOf("fn broadcast_eligibility"));
-  assert.match(rule.slice(0, 1200), /SessionStatus::NeedsApproval => Some\(BroadcastRefusal::NeedsApproval\)/);
+  // To the end of the match block rather than a byte count: a fixed window
+  // silently stops covering the last arm the moment one is added, which is
+  // exactly what a cross-language agreement test must not do.
+  const start = registry.indexOf("fn broadcast_eligibility");
+  const rule = registry.slice(start, registry.indexOf(BLOCK_END, start));
+  assert.match(rule, /SessionStatus::NeedsApproval => Some\(BroadcastRefusal::NeedsApproval\)/);
+  assert.match(rule, /budget_exhausted => Some\(BroadcastRefusal::BudgetExhausted\)/);
   assert.match(rule, /operator_edited[\s\S]*BroadcastRefusal::FocusedAndEdited/);
-  assert.match(rule.slice(0, 1200), /entry\.pty\.is_none\(\) => Some\(BroadcastRefusal::NotRunning\)/);
+  assert.match(rule, /entry\.pty\.is_none\(\) => Some\(BroadcastRefusal::NotRunning\)/);
 });
 
 test("every reason a session is skipped has a string to render", () => {
@@ -56,6 +64,7 @@ test("every reason a session is skipped has a string to render", () => {
     ineligibleReason(session({ status: "needs-approval" })),
     ineligibleReason(session({ queue_paused: "focused_and_edited" })),
     ineligibleReason(session({ status: "exited" })),
+    ineligibleReason(session({ budget_exhausted: true })),
   ];
   for (const reason of reasons) {
     assert.ok(new RegExp(`^${reason} = `, "m").test(ftl), `${reason} has no string`);

@@ -3201,6 +3201,13 @@ button {
   color: var(--red);
 }
 
+/* A session whose ledger cost reached the cap it was launched with. Red for
+   the same reason the memory limit is: the row is still running, but it is no
+   longer being given work, and that has to be visible without opening it. */
+.row-budget-spent {
+  color: var(--red);
+}
+
 /* Context pressure. Only the two bands that ask for attention are coloured:
    a comfortable window is the ordinary case and painting it green would put a
    tone on every row in the fleet. A reading with no window gets no class at

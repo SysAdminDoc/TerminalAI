@@ -50,13 +50,20 @@ pub enum PauseReason {
     FocusedAndEdited,
     /// The operator paused it.
     Operator,
+    /// The session's ledger cost reached the per-session budget it was launched
+    /// with. Applied once, at the crossing, so an operator who decides to carry
+    /// on can resume — the row keeps saying the budget is spent either way.
+    BudgetExhausted,
 }
 
 impl PauseReason {
     /// True when the operator has to deal with the session before the queue can
     /// sensibly continue.
     pub fn needs_operator(self) -> bool {
-        matches!(self, Self::NeedsApproval | Self::AwaitingInput)
+        matches!(
+            self,
+            Self::NeedsApproval | Self::AwaitingInput | Self::BudgetExhausted
+        )
     }
 }
 

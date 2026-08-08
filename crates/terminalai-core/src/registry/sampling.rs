@@ -172,6 +172,37 @@ impl SessionRegistry {
                         entry.session.cost_usd = Some(update.cost_usd);
                         changed = true;
                     }
+                    // The per-session budget, enforced here because here is
+                    // where the money is counted. The agent's own flag cannot
+                    // do it — `--max-budget-usd` binds under `--print` only —
+                    // so a cap that is offered has to be kept by the ledger or
+                    // not offered at all.
+                    if let Some(budget) = entry.session.budget_usd {
+                        let spent = update.cost_usd >= budget;
+                        if spent && !entry.session.budget_exhausted {
+                            entry.session.budget_exhausted = true;
+                            // Paused once, at the crossing. An operator who
+                            // decides to carry on can resume; the row goes on
+                            // saying the budget is spent either way, so the
+                            // override is informed rather than silent.
+                            entry.queue.pause(crate::queue::PauseReason::BudgetExhausted);
+                            entry.session.queue_paused = entry.queue.paused();
+                            tracing::info!(
+                                session = %id,
+                                budget,
+                                cost = update.cost_usd,
+                                "session budget spent; its queue is paused and broadcasts skip it"
+                            );
+                            changed = true;
+                        } else if !spent && entry.session.budget_exhausted {
+                            // Only reachable if the cap is raised or the ledger
+                            // is rebuilt lower. Clearing the flag without
+                            // touching the pause leaves the operator's own
+                            // decision about the queue where they left it.
+                            entry.session.budget_exhausted = false;
+                            changed = true;
+                        }
+                    }
                     if entry.session.tokens != Some(update.totals) {
                         entry.session.tokens = Some(update.totals);
                         changed = true;
@@ -223,5 +254,147 @@ impl SessionRegistry {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .forget(&id.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::Agent;
+    use crate::registry::testing::*;
+    use std::io::Write;
+    use std::path::{Path, PathBuf};
+
+    /// A scratch home, removed when the test ends. Transcript discovery reads
+    /// real directories, so the only honest way to drive this path is to write
+    /// one.
+    struct Scratch(PathBuf);
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn scratch(name: &str) -> Scratch {
+        let dir = std::env::temp_dir().join(format!(
+            "terminalai-budget-{}-{name}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch");
+        Scratch(dir)
+    }
+
+    /// One priced assistant record, in the shape the JSONL actually carries.
+    fn write_claude_turn(home: &Path, cwd: &Path, request: &str, output_tokens: u64) {
+        let file = home
+            .join(".claude")
+            .join("projects")
+            .join(crate::tail::claude_project_slug(cwd))
+            .join("11111111-2222-3333-4444-555555555555.jsonl");
+        std::fs::create_dir_all(file.parent().expect("parent")).expect("dirs");
+        let mut handle = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&file)
+            .expect("open");
+        writeln!(
+            handle,
+            r#"{{"type":"assistant","sessionId":"11111111-2222-3333-4444-555555555555","requestId":"{request}","message":{{"role":"assistant","model":"claude-opus-4-20250514","content":[{{"type":"text","text":"done"}}],"usage":{{"input_tokens":1000,"output_tokens":{output_tokens}}}}}}}"#
+        )
+        .expect("write");
+        handle.flush().expect("flush");
+    }
+
+    /// A live row whose transcript will be found under `home`.
+    fn budgeted_row(registry: &SessionRegistry, id: &SessionId, cwd: &Path, budget: Option<f64>) {
+        live_entry(registry, id.clone(), Agent::Claude, None);
+        let mut state = lock_state(&registry.inner);
+        let entry = state.entries.get_mut(id).expect("row");
+        entry.session.cwd = cwd.to_path_buf();
+        entry.session.budget_usd = budget;
+        entry.spec.max_budget_usd = budget;
+    }
+
+    #[test]
+    fn a_session_that_spends_its_budget_stops_being_given_work() {
+        // The enforcement the launcher promises. It cannot be the agent's own
+        // `--max-budget-usd`: that flag binds under `--print`, and nothing
+        // supervised here is in print mode. So the ledger has to keep it, and
+        // this is the test that says it does.
+        let home = scratch("spent");
+        let cwd = Path::new("/repos/shop");
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        budgeted_row(&registry, &id, cwd, Some(0.01));
+        registry.enqueue_prompt(&id, "next task").expect("queued");
+
+        write_claude_turn(&home.0, cwd, "req-1", 500);
+        assert_eq!(registry.poll_transcripts(&home.0), 1, "the row changed");
+
+        let session = &registry.snapshot()[0];
+        assert!(
+            session.cost_usd.expect("priced") >= 0.01,
+            "the fixture has to actually exceed the cap: {:?}",
+            session.cost_usd
+        );
+        assert!(session.budget_exhausted, "the crossing is recorded");
+        assert_eq!(
+            session.queue_paused,
+            Some(crate::queue::PauseReason::BudgetExhausted),
+            "queued work stops going out"
+        );
+        assert_eq!(
+            registry.broadcast(std::slice::from_ref(&id), b"everyone carry on")[0].refusal,
+            Some(BroadcastRefusal::BudgetExhausted),
+            "and a fleet-wide prompt does not route around it"
+        );
+        assert_eq!(registry.admission_snapshot().budget_exhausted_sessions, 1);
+    }
+
+    #[test]
+    fn a_session_under_its_budget_is_left_alone_and_one_with_no_budget_is_never_stopped() {
+        // Both halves matter. A cap that trips early is a fleet that stops
+        // working for no stated reason, and a session launched with no cap must
+        // never acquire one from this code path.
+        let home = scratch("under");
+        let cwd = Path::new("/repos/shop");
+        let registry = SessionRegistry::new();
+        let capped = SessionId::new(1);
+        let uncapped = SessionId::new(2);
+        budgeted_row(&registry, &capped, cwd, Some(1_000.0));
+        budgeted_row(&registry, &uncapped, cwd, None);
+        registry.enqueue_prompt(&capped, "next task").expect("queued");
+
+        write_claude_turn(&home.0, cwd, "req-1", 500);
+        registry.poll_transcripts(&home.0);
+
+        for session in registry.snapshot() {
+            assert!(
+                session.cost_usd.is_some_and(|cost| cost > 0.0),
+                "both rows read the same transcript"
+            );
+            assert!(!session.budget_exhausted, "{:?} was stopped", session.id);
+            assert_eq!(session.queue_paused, None);
+        }
+        assert_eq!(registry.admission_snapshot().budget_exhausted_sessions, 0);
+    }
+
+    #[test]
+    fn every_agent_is_named_as_budget_enforced_because_the_ledger_reads_every_transcript() {
+        // This used to name Claude alone, on the strength of a flag that only
+        // works under `--print`. The claim the header makes and the enforcement
+        // that exists have to be the same claim.
+        let registry = SessionRegistry::new();
+        let enforced = registry.admission_snapshot().budget_enforced_agents;
+        for agent in Agent::ALL {
+            assert!(
+                enforced.iter().any(|name| name == agent.command_name()),
+                "{agent:?} missing from {enforced:?}"
+            );
+        }
+        assert_eq!(enforced.len(), Agent::ALL.len());
     }
 }
