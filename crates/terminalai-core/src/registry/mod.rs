@@ -21,7 +21,9 @@ use crate::lease;
 use crate::domain::{AgentDomain, AgentSession, DomainError, LocalPtyDomain};
 use crate::environment::{self, EnvironmentError, EnvironmentSpec};
 use crate::grid::{TerminalGrid, TerminalGridSnapshot};
-use crate::hooks::{HookEvent, HookNotification, HookSignal};
+use crate::hooks::{
+    HookAttribution, HookDeliveryState, HookDeliveryStatus, HookEvent, HookNotification, HookSignal,
+};
 use crate::launch::{is_valid_resume_id, LaunchError, LaunchSpec, ResolvedCommand, Resume};
 use crate::notification::{NotificationCenter, NotificationChange, NotificationEvent};
 use crate::pty::{PtySize, StopOutcome};
@@ -213,6 +215,9 @@ impl PartialOrd for RestartTask {
 
 struct Inner {
     state: Mutex<State>,
+    /// Counters proving valid hook traffic reached this daemon. Kept outside
+    /// the session state lock so preflight reads cannot contend with ingestion.
+    hook_delivery: HookDeliveryState,
     /// Transcript readers have their own lock because polling performs file
     /// reads and directory walks. The registry state lock must remain free so
     /// PTY output and hook ingestion cannot be back-pressured by a slow disk.
@@ -327,6 +332,18 @@ impl SessionRegistry {
         self.inner.is_poisoned()
     }
 
+    /// Return daemon-lifetime evidence that syntactically valid hooks reached
+    /// the registry. A fresh daemon starts unproven even when hook files are
+    /// configured; the first accepted event flips the corresponding agent to
+    /// observed.
+    pub fn hook_delivery_status(&self) -> HookDeliveryStatus {
+        self.inner.hook_delivery.snapshot()
+    }
+
+    fn observe_hook_delivery(&self, agent: crate::agent::Agent, attribution: &HookAttribution) {
+        self.inner.hook_delivery.observe(agent, attribution);
+    }
+
     /// Poison the state lock deliberately, so a crate that depends on this one
     /// can exercise its own recovery path.
     ///
@@ -382,6 +399,7 @@ impl SessionRegistry {
                 notifications: NotificationCenter::default(),
                 subscribers: Vec::new(),
             }),
+            hook_delivery: HookDeliveryState::default(),
             tails: Mutex::new(crate::tail::TranscriptTails::default()),
             domain,
             spool: Mutex::new(None),

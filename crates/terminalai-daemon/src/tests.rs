@@ -640,6 +640,7 @@ fn the_requests_that_survive_a_poisoned_registry_are_the_stateless_ones() {
         Request::Shutdown,
         Request::Subscribe,
         Request::HookEndpoint,
+        Request::HookStatus,
         Request::Hello {
             protocol: PROTOCOL_VERSION,
             client_pid: 1,
@@ -1060,4 +1061,16 @@ fn the_hook_endpoint_says_it_is_unavailable_rather_than_inventing_one() {
         dispatch(Request::HookEndpoint, &SessionRegistry::new()),
         Response::Error { ref message } if message.contains("unavailable")
     ));
+}
+
+#[test]
+fn hook_status_is_readable_before_any_hook_has_fired() {
+    let response = dispatch(Request::HookStatus, &SessionRegistry::new());
+    let Response::HookStatus { status } = response else {
+        panic!("unexpected response: {response:?}");
+    };
+    assert!(!status.claude.observed);
+    assert!(!status.codex.observed);
+    assert_eq!(status.claude.observed_events, 0);
+    assert_eq!(status.codex.observed_events, 0);
 }

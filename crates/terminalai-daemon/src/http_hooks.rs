@@ -540,7 +540,8 @@ mod tests {
 
     #[test]
     fn authenticated_http_hook_is_accepted_and_origin_is_rejected() {
-        let ingress = HookIngress::bind(SessionRegistry::new()).expect("listener");
+        let registry = SessionRegistry::new();
+        let ingress = HookIngress::bind(registry.clone()).expect("listener");
         let endpoint = ingress.endpoint();
         let authorization = format!("Bearer {}", endpoint.bearer_token);
         let accepted = response(
@@ -548,6 +549,8 @@ mod tests {
             request(&endpoint, &endpoint.host, &authorization, ""),
         );
         assert!(accepted.starts_with("HTTP/1.1 202 Accepted"), "{accepted}");
+        assert!(registry.hook_delivery_status().claude.observed);
+        assert_eq!(registry.hook_delivery_status().claude.unmatched_events, 1);
 
         let rejected = response(
             ingress.address(),

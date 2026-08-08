@@ -302,6 +302,14 @@ lead's `hook_token` — in which case the arms added on 2026-08-08 need somethin
 them — or they do not, and that is recorded in the ingest module docs so the question stops being
 reopened.
 
+Local protection landed 2026-08-08: `HookAttribution` now returns `Matched`, `Unknown`, or
+`Ambiguous`; an authenticated fallback with multiple candidates is refused and counted rather than
+mutating the first row. The replay tests
+`an_inherited_team_token_is_refused_when_two_rows_are_candidates` and
+`a_native_session_id_wins_over_an_inherited_token_candidate` cover the lead/teammate interleaving
+that can be proven without a real team. The vendor-specific question remains blocked because only a
+real team run can reveal whether a distinct instance identifier is present in the hook payload.
+
 Original item:
 
 - [ ] P2 — Find out whether a teammate's hooks arrive as the lead's
@@ -316,6 +324,13 @@ Original item:
 Blocked 2026-08-08 on the same upgrade as the two version-gated items above: `claude --init-only`
 does not exist on 2.1.170, and it is the only way to make a hook actually fire without starting a
 conversation. Cannot start until the operator upgrades.
+
+Local delivery accounting landed 2026-08-08. The daemon now counts valid hook events by agent and
+exposes matched, unmatched, and ambiguous totals over the control pipe; preflight reports
+“installed, not yet proven” until an event is observed and “installed and firing” only afterwards.
+The counters reset with a daemon restart, so stale configuration cannot become proof. The remaining
+blocker is still the operator-owned vendor trigger: the installed Claude 2.1.170 does not expose
+`--init-only`, so this machine cannot produce the real probe event required by the acceptance.
 
 Original item:
 

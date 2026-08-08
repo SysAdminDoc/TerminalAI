@@ -1559,9 +1559,13 @@ fn preflight_hooks() -> PreflightCheck {
             };
         }
     };
-    let endpoint = DaemonClient::connect_with_timeout(PREFLIGHT_DAEMON_TIMEOUT)
-        .ok()
+    let daemon = DaemonClient::connect_with_timeout(PREFLIGHT_DAEMON_TIMEOUT).ok();
+    let endpoint = daemon
+        .as_ref()
         .and_then(|client| client.hook_endpoint().ok());
+    let delivery = daemon
+        .as_ref()
+        .and_then(|client| client.hook_delivery_status().ok());
     let mut detected = Vec::new();
     let mut details = Vec::new();
     let mut healthy = true;
@@ -1574,20 +1578,38 @@ fn preflight_hooks() -> PreflightCheck {
                 if agent == Agent::Claude {
                     claude_installed = status.installed;
                 }
-                let state = if status.disabled {
-                    "disabled"
-                } else if status.stale {
-                    "stale"
-                } else if status.installed {
-                    "installed"
-                } else {
-                    "missing"
-                };
-                if state != "installed" {
+                let observed = delivery
+                    .as_ref()
+                    .is_some_and(|delivery| delivery.for_agent(agent).observed);
+                let state = preflight_hook_state(
+                    status.installed,
+                    status.disabled,
+                    status.stale,
+                    observed,
+                );
+                if state != "installed and firing" {
                     healthy = false;
                 }
                 detected.push(format!("{}: {state}", agent.command_name()));
-                details.push(format!("{} → {}", agent.command_name(), path.display()));
+                let evidence = delivery
+                    .as_ref()
+                    .map(|delivery| {
+                        let status = delivery.for_agent(agent);
+                        format!(
+                            "; observed events: {} (matched {}, ambiguous {}, unmatched {})",
+                            status.observed_events,
+                            status.matched_events,
+                            status.ambiguous_events,
+                            status.unmatched_events
+                        )
+                    })
+                    .unwrap_or_else(|| "; daemon delivery proof unavailable".into());
+                details.push(format!(
+                    "{} → {}{}",
+                    agent.command_name(),
+                    path.display(),
+                    evidence
+                ));
             }
             Err(error) => {
                 healthy = false;
@@ -1606,6 +1628,20 @@ fn preflight_hooks() -> PreflightCheck {
         detected: detected.join(" · "),
         detail: Some(details.join(" · ")),
         can_fix: true,
+    }
+}
+
+fn preflight_hook_state(installed: bool, disabled: bool, stale: bool, observed: bool) -> &'static str {
+    if disabled {
+        "disabled"
+    } else if stale {
+        "stale"
+    } else if !installed {
+        "missing"
+    } else if observed {
+        "installed and firing"
+    } else {
+        "installed, not yet proven"
     }
 }
 
@@ -2756,7 +2792,7 @@ mod tests {
 
     #[test]
     fn protocol_version_is_pinned_for_the_shell() {
-        assert_eq!(PROTOCOL_VERSION, 3);
+        assert_eq!(PROTOCOL_VERSION, 4);
     }
 
     #[test]
@@ -2797,6 +2833,21 @@ mod tests {
             .detail
             .expect("policy detail")
             .contains("disableAllHooks=true"));
+    }
+
+    #[test]
+    fn hook_preflight_does_not_equate_configuration_with_delivery() {
+        assert_eq!(
+            preflight_hook_state(true, false, false, false),
+            "installed, not yet proven"
+        );
+        assert_eq!(
+            preflight_hook_state(true, false, false, true),
+            "installed and firing"
+        );
+        assert_eq!(preflight_hook_state(false, false, false, true), "missing");
+        assert_eq!(preflight_hook_state(true, true, false, true), "disabled");
+        assert_eq!(preflight_hook_state(true, false, true, true), "stale");
     }
 
     #[test]

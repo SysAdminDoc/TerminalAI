@@ -16,6 +16,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Added a first-run checklist with local-only progress, task-oriented empty-state guidance, and a
   read-only safe demo that covers every fleet status without starting an agent or sending daemon
   commands. The packaged WebView2 gate now drives the demo and proves focus stays offline.
+- Added explicit hook attribution outcomes and daemon-lifetime delivery proof. Authenticated events
+  that match multiple live rows are surfaced as ambiguous and refused instead of mutating whichever
+  row happens to be first; preflight now distinguishes “installed, not yet proven” from “installed
+  and firing”.
 
 ## [0.23.0] — 2026-08-08
 

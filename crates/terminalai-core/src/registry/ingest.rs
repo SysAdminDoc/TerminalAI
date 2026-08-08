@@ -8,6 +8,21 @@
 
 use super::*;
 
+fn attribution_from_candidates(candidates: Vec<SessionId>) -> HookAttribution {
+    match candidates.as_slice() {
+        [] => HookAttribution::Unknown,
+        [id] => HookAttribution::Matched(id.clone()),
+        _ => HookAttribution::Ambiguous(candidates),
+    }
+}
+
+fn hook_authenticates(entry: &Entry, source: StatusSource, hook_token: Option<&str>) -> bool {
+    source == StatusSource::AppServer
+        || (hook_token.is_some()
+            && !entry.session.hook_token.is_empty()
+            && hook_token == Some(entry.session.hook_token.as_str()))
+}
+
 impl SessionRegistry {
     /// Apply a normalized Claude/Codex hook to the matching live session.
     ///
@@ -41,21 +56,22 @@ impl SessionRegistry {
         hook_token: Option<&str>,
         now: SystemTime,
     ) -> bool {
-        self.apply_hook_matching(event, hook_token, now).is_some()
+        self.apply_hook_matching(event, hook_token, now).is_matched()
     }
 
-    /// Apply a hook and report *which* session it reached.
+    /// Apply a hook and report how attribution resolved.
     ///
     /// The daemon needs the id to answer a hook that expects a reply —
     /// `WorktreeCreate` is answered with a path — and re-deriving it there would
     /// mean a second copy of the matching rule, including its token
-    /// authentication. One rule, two callers.
+    /// authentication. One rule, two callers. An ambiguous authenticated
+    /// fallback is deliberately returned without mutating any row.
     pub fn apply_hook_matching(
         &self,
         event: HookEvent,
         hook_token: Option<&str>,
         now: SystemTime,
-    ) -> Option<SessionId> {
+    ) -> HookAttribution {
         if let HookSignal::Unknown { event: hook_name } = &event.signal {
             tracing::warn!(
                 agent = ?event.agent,
@@ -64,7 +80,17 @@ impl SessionRegistry {
                 "unknown agent hook event observed"
             );
         }
-        self.apply_hook_from_at(event, StatusSource::Hook, hook_token, now)
+        let agent = event.agent;
+        let attribution = self.apply_hook_from_at(event, StatusSource::Hook, hook_token, now);
+        self.observe_hook_delivery(agent, &attribution);
+        if let HookAttribution::Ambiguous(candidates) = &attribution {
+            tracing::warn!(
+                agent = ?agent,
+                candidates = ?candidates,
+                "hook attribution is ambiguous; event was ignored"
+            );
+        }
+        attribution
     }
 
     /// Re-read the session's branch when it is worth re-reading.
@@ -125,7 +151,7 @@ impl SessionRegistry {
         source: StatusSource,
         hook_token: Option<&str>,
         now: SystemTime,
-    ) -> Option<SessionId> {
+    ) -> HookAttribution {
         // The pipe transport accepts an already-normalized event and therefore
         // bypasses `parse_hook`; enforce the same boundary for both transports.
         if event
@@ -135,53 +161,57 @@ impl SessionRegistry {
         {
             event.session_id = None;
         }
-        let id = {
+        let attribution = {
             let state = lock_state(&self.inner);
-            event
+            let exact = event
                 .session_id
                 .as_deref()
-                .and_then(|session_id| {
+                .map(|session_id| {
                     state
                         .entries
                         .iter()
-                        .find(|(_, entry)| {
+                        .filter(|(_, entry)| {
                             entry.session.agent == event.agent
-                                && (source == StatusSource::AppServer
-                                    || (hook_token.is_some()
-                                        && !entry.session.hook_token.is_empty()
-                                        && hook_token
-                                            == Some(entry.session.hook_token.as_str())))
+                                && hook_authenticates(entry, source, hook_token)
                                 && Some(session_id) == entry.session.resume_id.as_deref()
                         })
                         .map(|(id, _)| id.clone())
+                        .collect::<Vec<_>>()
                 })
-                .or_else(|| {
+                .unwrap_or_default();
+            if !exact.is_empty() {
+                attribution_from_candidates(exact)
+            } else {
+                attribution_from_candidates(
                     state
                         .entries
                         .iter()
-                        .find(|(_, entry)| {
+                        .filter(|(_, entry)| {
                             entry.session.agent == event.agent
-                                && (source == StatusSource::AppServer
-                                    || (hook_token.is_some()
-                                        && !entry.session.hook_token.is_empty()
-                                        && hook_token
-                                            == Some(entry.session.hook_token.as_str())))
+                                && hook_authenticates(entry, source, hook_token)
                                 && event.cwd.as_ref().is_none_or(|cwd| cwd == &entry.session.cwd)
                                 && (entry.session.resume_id.is_none()
                                     || event.session_id.is_none())
                                 && entry.session.status.is_live()
                         })
                         .map(|(id, _)| id.clone())
-                })
+                        .collect(),
+                )
+            }
         };
-        let id = id?;
+        let id = match attribution {
+            HookAttribution::Matched(id) => id,
+            other => return other,
+        };
 
         // Resolved before the lock is taken: this shells out to Git.
         let branch = self.refreshed_branch(&id, &event.signal);
 
         let (session, notifications) = {
             let mut state = lock_state(&self.inner);
-            let entry = state.entries.get_mut(&id)?;
+            let Some(entry) = state.entries.get_mut(&id) else {
+                return HookAttribution::Unknown;
+            };
             let previous_status = entry.session.status;
             let previous_state_since = entry.session.state_since;
             // Set inside the match, applied once the entry borrow is done: the
@@ -471,7 +501,7 @@ impl SessionRegistry {
         // The queue advances on exactly this signal — the reported status the
         // fleet row is drawn from — rather than on a timer.
         self.pump_queue(&id);
-        Some(id)
+        HookAttribution::Matched(id)
     }
 
     /// Apply either a legacy hook or an app-server event without making the
@@ -535,7 +565,7 @@ impl SessionRegistry {
             None,
             now,
         )
-        .is_some()
+        .is_matched()
     }
 
     /// Record a context reading against the Codex row carrying `native_id`.
@@ -973,6 +1003,125 @@ mod tests {
                 .find(|session| session.id == second)
                 .and_then(|session| session.resume_id.as_deref()),
             None
+        );
+    }
+
+    #[test]
+    fn an_inherited_team_token_is_refused_when_two_rows_are_candidates() {
+        let registry = SessionRegistry::new();
+        let first = SessionId::new(1);
+        let second = SessionId::new(2);
+        insert_session(&registry, &first, SessionStatus::Working);
+        insert_session(&registry, &second, SessionStatus::Working);
+        let inherited_token = {
+            let mut state = lock_state(&registry.inner);
+            let token = state
+                .entries
+                .get(&first)
+                .expect("first session")
+                .session
+                .hook_token
+                .clone();
+            state
+                .entries
+                .get_mut(&second)
+                .expect("second session")
+                .session
+                .hook_token = token.clone();
+            token
+        };
+
+        let attribution = registry.apply_hook_matching(
+            HookEvent {
+                agent: Agent::Claude,
+                session_id: None,
+                cwd: Some(PathBuf::from(".")),
+                signal: HookSignal::Notification {
+                    notification: HookNotification::AgentCompleted,
+                },
+                progress: None,
+                approval: None,
+            },
+            Some(&inherited_token),
+            SystemTime::UNIX_EPOCH + Duration::from_secs(10),
+        );
+
+        assert_eq!(
+            attribution,
+            HookAttribution::Ambiguous(vec![first.clone(), second.clone()])
+        );
+        assert!(registry
+            .snapshot()
+            .iter()
+            .all(|session| session.status == SessionStatus::Working));
+        let delivery = registry.hook_delivery_status();
+        assert!(delivery.claude.observed);
+        assert_eq!(delivery.claude.observed_events, 1);
+        assert_eq!(delivery.claude.ambiguous_events, 1);
+        assert_eq!(delivery.claude.matched_events, 0);
+    }
+
+    #[test]
+    fn a_native_session_id_wins_over_an_inherited_token_candidate() {
+        let registry = SessionRegistry::new();
+        let first = SessionId::new(1);
+        let second = SessionId::new(2);
+        insert_session(&registry, &first, SessionStatus::Working);
+        insert_session(&registry, &second, SessionStatus::Working);
+        let inherited_token = {
+            let mut state = lock_state(&registry.inner);
+            let token = state
+                .entries
+                .get(&first)
+                .expect("first session")
+                .session
+                .hook_token
+                .clone();
+            state
+                .entries
+                .get_mut(&second)
+                .expect("second session")
+                .session
+                .hook_token = token.clone();
+            state
+                .entries
+                .get_mut(&first)
+                .expect("first session")
+                .session
+                .resume_id = Some("lead-native".into());
+            token
+        };
+
+        let attribution = registry.apply_hook_matching(
+            HookEvent {
+                agent: Agent::Claude,
+                session_id: Some("lead-native".into()),
+                cwd: Some(PathBuf::from(".")),
+                signal: HookSignal::Stop,
+                progress: None,
+                approval: None,
+            },
+            Some(&inherited_token),
+            SystemTime::UNIX_EPOCH + Duration::from_secs(11),
+        );
+
+        assert_eq!(attribution, HookAttribution::Matched(first.clone()));
+        let sessions = registry.snapshot();
+        assert_eq!(
+            sessions
+                .iter()
+                .find(|session| session.id == first)
+                .expect("lead")
+                .status,
+            SessionStatus::Idle
+        );
+        assert_eq!(
+            sessions
+                .iter()
+                .find(|session| session.id == second)
+                .expect("teammate")
+                .status,
+            SessionStatus::Working
         );
     }
 

@@ -86,7 +86,8 @@ pub use hook_config::{
     HookStatus, HookTransport, ManagedHookPolicy, MANAGED_MARKER,
 };
 pub use hooks::{
-    parse_hook, parse_hook_in, HookEvent, HookNotification, HookParseError, HookSignal,
+    parse_hook, parse_hook_in, HookAgentDeliveryStatus, HookAttribution, HookDeliveryState,
+    HookDeliveryStatus, HookEvent, HookNotification, HookParseError, HookSignal,
 };
 pub use launch::{Effort, LaunchError, LaunchSpec, Permission, ResolvedCommand, Resume, Sandbox};
 pub use manifest::{AgentManifest, ManifestError, ProbeKind, Slot};

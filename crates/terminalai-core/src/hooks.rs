@@ -7,10 +7,104 @@
 //! authenticated local pipe.
 
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use crate::agent::Agent;
 use crate::launch::is_valid_resume_id;
 use crate::session::ToolProgress;
+
+/// The result of trying to attribute one normalized hook to a supervised row.
+///
+/// A token is an authentication secret, not a durable agent-instance identity:
+/// Claude Code teammates may inherit the lead's environment. When more than
+/// one live row satisfies the same authenticated fallback, refusing the event
+/// is safer than letting map order decide which row changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HookAttribution {
+    Matched(crate::session::SessionId),
+    Unknown,
+    Ambiguous(Vec<crate::session::SessionId>),
+}
+
+impl HookAttribution {
+    pub fn matched_id(&self) -> Option<&crate::session::SessionId> {
+        match self {
+            Self::Matched(id) => Some(id),
+            Self::Unknown | Self::Ambiguous(_) => None,
+        }
+    }
+
+    pub fn is_matched(&self) -> bool {
+        matches!(self, Self::Matched(_))
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HookAgentDeliveryStatus {
+    /// At least one syntactically valid hook reached the daemon in this
+    /// daemon lifetime. Configuration alone never sets this flag.
+    pub observed: bool,
+    pub observed_events: u64,
+    pub matched_events: u64,
+    pub ambiguous_events: u64,
+    pub unmatched_events: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HookDeliveryStatus {
+    pub claude: HookAgentDeliveryStatus,
+    pub codex: HookAgentDeliveryStatus,
+}
+
+impl HookDeliveryStatus {
+    pub fn for_agent(&self, agent: Agent) -> &HookAgentDeliveryStatus {
+        match agent {
+            Agent::Claude => &self.claude,
+            Agent::Codex => &self.codex,
+        }
+    }
+}
+
+/// Shared, bounded proof that hook traffic reached this daemon. It deliberately
+/// stores counters only; session ids and payloads remain in the registry/log
+/// path rather than becoming preflight-readable data.
+#[derive(Debug, Default)]
+pub struct HookDeliveryState {
+    status: Mutex<HookDeliveryStatus>,
+}
+
+impl HookDeliveryState {
+    pub fn observe(&self, agent: Agent, attribution: &HookAttribution) {
+        let mut status = self
+            .status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let agent_status = match agent {
+            Agent::Claude => &mut status.claude,
+            Agent::Codex => &mut status.codex,
+        };
+        agent_status.observed = true;
+        agent_status.observed_events = agent_status.observed_events.saturating_add(1);
+        match attribution {
+            HookAttribution::Matched(_) => {
+                agent_status.matched_events = agent_status.matched_events.saturating_add(1);
+            }
+            HookAttribution::Ambiguous(_) => {
+                agent_status.ambiguous_events = agent_status.ambiguous_events.saturating_add(1);
+            }
+            HookAttribution::Unknown => {
+                agent_status.unmatched_events = agent_status.unmatched_events.saturating_add(1);
+            }
+        }
+    }
+
+    pub fn snapshot(&self) -> HookDeliveryStatus {
+        self.status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct HookEvent {

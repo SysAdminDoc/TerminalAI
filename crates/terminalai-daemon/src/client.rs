@@ -7,7 +7,7 @@ use std::thread;
 use std::time::Duration;
 
 use interprocess::local_socket::{prelude::*, GenericNamespaced, Name, RecvHalf, SendHalf};
-use terminalai_core::{LogEntry, RegistryEvent, SessionRegistry};
+use terminalai_core::{HookDeliveryStatus, LogEntry, RegistryEvent, SessionRegistry};
 
 use super::dispatch::dispatch_with_endpoint;
 use super::http_hooks::HookEndpoint;
@@ -416,6 +416,16 @@ impl DaemonClient {
             Response::Error { message } => Err(IpcError::Remote(message)),
             other => Err(IpcError::InvalidMessage(format!(
                 "unexpected hook endpoint response: {other:?}"
+            ))),
+        }
+    }
+
+    pub fn hook_delivery_status(&self) -> Result<HookDeliveryStatus, IpcError> {
+        match self.call(Request::HookStatus)? {
+            Response::HookStatus { status } => Ok(status),
+            Response::Error { message } => Err(IpcError::Remote(message)),
+            other => Err(IpcError::InvalidMessage(format!(
+                "unexpected hook status response: {other:?}"
             ))),
         }
     }

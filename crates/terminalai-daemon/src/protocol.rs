@@ -6,12 +6,13 @@ use serde::{Deserialize, Serialize};
 use terminalai_core::agent::Agent;
 use terminalai_core::launch::LaunchSpec;
 use terminalai_core::{
-    AdmissionSnapshot, AgentEvent, HookEvent, RegistryEvent, ReviewItem, Session, SessionId,
+    AdmissionSnapshot, AgentEvent, HookDeliveryStatus, HookEvent, RegistryEvent, ReviewItem,
+    Session, SessionId,
 };
 
 use super::http_hooks::HookEndpoint;
 
-pub const PROTOCOL_VERSION: u16 = 3;
+pub const PROTOCOL_VERSION: u16 = 4;
 /// Stable control-plane name. Protocol compatibility is negotiated in the
 /// first frame, so changing the socket name would strand an older daemon that
 /// still owns live sessions before the newer client can report the skew.
@@ -173,6 +174,8 @@ pub enum Request {
         configured_path: Option<PathBuf>,
     },
     HookEndpoint,
+    /// Read-only daemon-lifetime evidence that valid hooks reached the core.
+    HookStatus,
     Hook {
         event: HookEvent,
         /// Secret minted for the supervised session and supplied by its hook
@@ -394,6 +397,9 @@ pub enum Response {
     },
     HookEndpoint {
         endpoint: HookEndpoint,
+    },
+    HookStatus {
+        status: HookDeliveryStatus,
     },
     Hook {
         matched: bool,

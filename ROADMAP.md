@@ -10,16 +10,6 @@ the packaged Windows application, real agent versions, and an unfamiliar operato
 Items stay here while their implementation is actionable. Operator-owned or vendor-owned evidence
 remains cross-referenced in `Roadmap_Blocked.md` and is not claimed by a local test.
 
-- [ ] P1 — Isolate agent-team identity and prove hook delivery
-  Category: correctness
-  Where: `crates/terminalai-core/src/registry/ingest.rs`, `hooks.rs`, daemon hook transport and preflight.
-  Problem: teammate processes may inherit the lead's hook token, allowing a teammate event to mutate the lead row; “hooks installed” also does not prove that a hook reaches this daemon.
-  Evidence: `Roadmap_Blocked.md` records both the team-hook identity question and the missing live `--init-only` proof.
-  Fix: add an explicit per-agent-instance correlation field where the vendor exposes one, preserve unknown attribution instead of guessing, distinguish configured/observed/blocked preflight states, and add replay tests for lead/teammate interleavings.
-  Touches: `crates/terminalai-core/src/registry/ingest.rs`, `crates/terminalai-core/src/hooks.rs`, `crates/terminalai-daemon/src/http_hooks.rs`, `crates/terminalai-app/src/main.rs`.
-  Acceptance: a teammate event cannot change the wrong row, ambiguous events are visible as ambiguous, preflight never calls configuration alone “firing,” and the live vendor-dependent result remains explicitly blocked until an operator-owned team run exists.
-  Complexity: M
-
 - [ ] P2 — Add synthetic fleet-scale reliability and resource gates
   Category: performance and resilience
   Where: core registry, daemon persistence, probe harness and release verification.

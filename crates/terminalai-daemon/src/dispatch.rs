@@ -251,6 +251,9 @@ pub(super) fn dispatch_with_endpoint(
                 message: "HTTP hook endpoint is unavailable".into(),
             },
         },
+        Request::HookStatus => Response::HookStatus {
+            status: registry.hook_delivery_status(),
+        },
         Request::Hook { event, hook_token } => {
             let signal = event.signal.clone();
             let matched = registry.apply_hook_matching(
@@ -259,8 +262,8 @@ pub(super) fn dispatch_with_endpoint(
                 std::time::SystemTime::now(),
             );
             Response::Hook {
-                worktree_path: placement_answer(&signal, matched.as_ref(), registry),
-                matched: matched.is_some(),
+                worktree_path: placement_answer(&signal, matched.matched_id(), registry),
+                matched: matched.is_matched(),
             }
         }
         Request::AgentEvent { event } => Response::AgentEvent {
@@ -600,6 +603,7 @@ pub(super) fn request_requires_registry(request: &Request) -> bool {
             | Request::Capabilities { .. }
             | Request::Preview { .. }
             | Request::HookEndpoint
+            | Request::HookStatus
     )
 }
 
