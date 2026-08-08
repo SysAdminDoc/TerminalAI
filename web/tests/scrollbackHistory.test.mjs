@@ -4,6 +4,10 @@ import test from "node:test";
 import { appSource } from "./appSource.mjs";
 
 const main = appSource();
+const terminalHistory = readFileSync(
+  new URL("../src/terminalHistory.js", import.meta.url),
+  "utf8",
+).replace(/\r\n/g, "\n");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 
@@ -16,6 +20,11 @@ test("history is reachable from the terminal toolbar, not only the CLI", () => {
   assert.match(html, /id="terminal-history"/);
   assert.match(main, /\$\("terminal-history"\)\.addEventListener/);
   assert.ok(/^button-load-history = /m.test(ftl), "button has no localized title");
+});
+
+test("fleet row actions are returned from the history boundary before the shell binds them", () => {
+  assert.match(terminalHistory, /rowAction,\n  \};/);
+  assert.match(main, /rowAction: \(\.\.\.args\) => rowAction\(\.\.\.args\)/);
 });
 
 test("history arrives on a channel rather than as a command return value", () => {

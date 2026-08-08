@@ -15,6 +15,10 @@ const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const main =
   appSource() +
   readFileSync(new URL("../src/rowMarkup.js", import.meta.url), "utf8");
+const fleetRows = readFileSync(
+  new URL("../src/fleetRowState.js", import.meta.url),
+  "utf8",
+).replace(/\r\n/g, "\n");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 const sessionStatus = createSessionStatus({ t: (key) => key, rateLimitedLabel });
 
@@ -26,11 +30,11 @@ test("fleet container and rows use single-select listbox semantics", () => {
     renderFixtureRow(),
     /role="option" tabindex="-1" aria-posinset="1" aria-setsize="1" aria-selected="false"/,
   );
-  assert.match(main, /aria-posinset/);
-  assert.match(main, /aria-setsize/);
-  assert.match(main, /aria-selected/);
-  assert.match(main, /ArrowDown/);
-  assert.match(main, /moveFleetRow/);
+  assert.match(fleetRows, /aria-posinset/);
+  assert.match(fleetRows, /aria-setsize/);
+  assert.match(fleetRows, /aria-selected/);
+  assert.match(fleetRows, /ArrowDown/);
+  assert.match(fleetRows, /moveFleetRow/);
 });
 
 test("fleet row actions remain explicit buttons and attention glyphs stay distinct", () => {
@@ -136,9 +140,9 @@ test("a session's memory is shown, and an unsampled one is not shown as zero", (
   // facts; rendering the second as 0 MB would report a healthy number from the
   // absence of a signal.
   assert.match(main, /function memory\(bytes\)/);
-  assert.match(main, /if \(!Number\.isFinite\(value\) \|\| value <= 0\) return "—";/);
+  assert.match(fleetRows, /memoryCell\.textContent = memory\(session\.memory_bytes\);/);
   assert.match(main, /data-row-memory/);
-  assert.match(main, /memoryCell\.classList\.toggle\("row-memory-limited"/);
+  assert.match(fleetRows, /memoryCell\.classList\.toggle\("row-memory-limited"/);
   for (const key of ["memory-explained", "memory-limited-explained"]) {
     assert.ok(new RegExp(`^${key} = `, "m").test(ftl), `${key} has no string`);
   }

@@ -185,5 +185,6 @@ async function rowAction(action, id, row = null) {
     renderFindCount,
     loadOlderOutput,
     attachSessionOutput,
+    rowAction,
   };
 }
