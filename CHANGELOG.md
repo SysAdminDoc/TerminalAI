@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+## [0.23.0] — 2026-08-08
+
+### Changed
+
+- Re-imagined the workspace pages with a cohesive dark/light visual system and carried the new
+  design through the launcher, queue, projects, working sets, history, diagnostics, preflight,
+  review and terminal surfaces. The headless Chrome audit is clean at both supported widths and
+  both colour schemes.
+- Split the frontend shell into focused launcher, queue, workspace-pages, terminal-history,
+  operational-panels and daemon-events modules, reducing `web/src/main.js` below 2,500 lines
+  without changing the source contracts or behavior covered by the 398-test web suite.
+- Split the daemon control plane into protocol, dispatch, client and test modules so transport and
+  request routing have explicit boundaries.
+
 ## [0.22.0] — 2026-08-08
 
 ### Added
