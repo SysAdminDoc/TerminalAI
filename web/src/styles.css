@@ -4728,6 +4728,136 @@ body {
   color: var(--text);
 }
 
+.first-run-guide {
+  width: min(520px, 100%);
+  padding: 14px;
+  border: 1px solid var(--surface0);
+  border-radius: 12px;
+  background: var(--panel-raised);
+  text-align: left;
+}
+
+.first-run-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.first-run-progress {
+  color: var(--subtext0);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.first-run-guide h3 {
+  margin: 0 0 11px;
+  color: var(--text);
+  font-size: 13px;
+  letter-spacing: -.01em;
+}
+
+.first-run-checklist {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.first-run-step {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--surface0);
+  border-radius: 9px;
+  background: var(--panel-bg);
+}
+
+.first-run-step[data-complete="true"] {
+  border-color: var(--accent-border);
+  background: var(--accent-soft);
+}
+
+.first-run-number {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--blue);
+  border-radius: 50%;
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.first-run-step[data-complete="true"] .first-run-number {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.first-run-step strong,
+.first-run-step small {
+  display: block;
+}
+
+.first-run-step strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.first-run-step small {
+  margin-top: 4px;
+  color: var(--subtext0);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.first-run-step-state {
+  grid-column: 2;
+  color: var(--subtext0);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.first-run-step[data-complete="true"] .first-run-step-state {
+  color: var(--green);
+}
+
+.demo-mode-banner {
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 18px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent-border);
+  border-radius: 10px;
+  background: var(--accent-soft);
+}
+
+.demo-mode-banner > div {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.demo-mode-banner strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.demo-mode-banner > div > span:last-child {
+  color: var(--subtext1);
+  font-size: 10px;
+}
+
+.demo-mode-banner .button {
+  flex: 0 0 auto;
+}
+
 @media (max-width: 1180px) {
   #app {
     grid-template-columns: 178px minmax(0, 1fr);

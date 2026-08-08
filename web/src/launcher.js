@@ -18,6 +18,7 @@ export function createLauncher(deps) {
     escapeHtml,
     renderDataError,
     renderProjects,
+    onFirstRunStep,
   } = deps;
 
   function defaultSpec() {
@@ -591,6 +592,7 @@ async function registerProjectRoot() {
     await Promise.all([loadProjectRoots(), loadKnownProjects()]);
     if ($("projects-dialog").open) await refreshScannedProjects();
     const found = state.projects.filter((project) => project.root === root).length;
+    onFirstRunStep?.("project");
     showToast(
       found ? t("projects-root-added", { root, count: found }) : t("projects-none-found", { root }),
       found ? "success" : "",
@@ -646,6 +648,7 @@ async function saveCurrentPreset() {
   function openLauncher() {
     writeSpec(defaultSpec());
     void loadKnownProjects();
+    onFirstRunStep?.("launcher");
     $("launcher-dialog").showModal();
     $("cwd-input").focus();
     void loadAgentCapabilities($("agent-input").value);

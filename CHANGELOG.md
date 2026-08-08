@@ -13,6 +13,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   can be spawned.
 - Hardened the packaged Tauri/WebView2 smoke path with isolated-display placement retries, native
   daemon event delivery, focused-terminal resize/attach assertions and outage recovery screenshots.
+- Added a first-run checklist with local-only progress, task-oriented empty-state guidance, and a
+  read-only safe demo that covers every fleet status without starting an agent or sending daemon
+  commands. The packaged WebView2 gate now drives the demo and proves focus stays offline.
 
 ## [0.23.0] — 2026-08-08
 

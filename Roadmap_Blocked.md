@@ -109,17 +109,19 @@ appears, names the session, and that clicking it focuses that row.
 
 ## Usability acceptance test with a person who has not seen the tool
 
-The implementation shipped in v0.6.0: first-run guidance that points at registering a root, an
-in-app explainer of the row → focused-terminal model whose state list is generated from the same
-table the rows are drawn from, a plain-language description for every status and for the dwell
-timer, and a test that every icon-only control — static or built at runtime — carries a tooltip
-and an accessible name.
+The implementation now includes a task-oriented first-run checklist, a read-only safe demo that
+covers every fleet status without starting an agent, the row → focused-terminal explainer whose
+state list is generated from the same table the rows are drawn from, plain-language descriptions
+for every status and the dwell timer, and packaged WebView2 proof that the demo never attaches a
+daemon output channel. The deterministic suite also checks that every icon-only control — static
+or built at runtime — carries a tooltip and an accessible name.
 
 What cannot be done here is the item's own acceptance criterion: *someone unfamiliar with the tool
 can launch a session, read its state, and answer an attention request unaided*. That needs a person
 who has not seen it, and this agent is the worst possible judge of whether its own explanation is
 clear. Watch one run, note where they hesitate, and reopen the item against what they got stuck on
-rather than against a checklist.
+rather than against a checklist. The safe demo and checklist reduce the cost of that run; they do
+not substitute for it.
 
 ## ACP transport as an alternative to the pty
 

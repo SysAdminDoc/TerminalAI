@@ -252,6 +252,26 @@ describe("TerminalAI desktop surface", () => {
     await dispatchClick("#refresh-button");
     await browser.$("#empty-state").waitForDisplayed();
     assert.match(await browser.$("#empty-state").getText(), /No sessions yet/);
+    assert.match(await browser.$("#empty-state").getText(), /Three steps to your first controlled session/);
+    const attachBeforeDemo = attachOutputMock.calls.length;
+    await dispatchClick("#empty-demo-button");
+    await browser.$("#demo-mode-banner").waitForDisplayed();
+    const demoBanner = await browser.tauri.execute(() => ({
+      hidden: document.querySelector("#demo-mode-banner")?.hidden,
+      text: document.querySelector("#demo-mode-banner")?.textContent ?? "",
+    }));
+    assert.equal(demoBanner.hidden, false);
+    assert.match(demoBanner.text, /No agent process is running/);
+    assert.equal(await browser.$$('#fleet-list [role="option"]').length, 11);
+    assert.match(await browser.$("#fleet-list").getText(), /Demo · needs-approval/);
+    await dispatchClick('#fleet-list [data-id="first-run-demo-awaiting-input"]');
+    await browser.waitUntil(async () => (await browser.$("#terminal-name").getText()).includes("awaiting-input"), {
+      timeout: 10000,
+      timeoutMsg: "the safe demo must focus its sample terminal without attaching a daemon channel",
+    });
+    assert.equal(attachOutputMock.calls.length, attachBeforeDemo);
+    await dispatchClick("#demo-exit-button");
+    await browser.$("#empty-state").waitForDisplayed();
 
     await fleetMock.mockRejectedValue("Synthetic daemon unavailable");
     const preflightMock = await browser.tauri.mock("preflight_report");

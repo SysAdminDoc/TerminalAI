@@ -10,16 +10,6 @@ the packaged Windows application, real agent versions, and an unfamiliar operato
 Items stay here while their implementation is actionable. Operator-owned or vendor-owned evidence
 remains cross-referenced in `Roadmap_Blocked.md` and is not claimed by a local test.
 
-- [ ] P1 — Make the first-run operator workflow measurable and teachable
-  Category: usability
-  Where: launcher, empty states, explainer, project registration and session recovery.
-  Problem: the app is intentionally dense and its self-explanation is unvalidated; a new operator may still hesitate at project registration, launch configuration, status interpretation, or attention recovery.
-  Evidence: the implementation has first-run guidance and a row-to-terminal explainer, but unfamiliar-person acceptance is explicitly still open in `Roadmap_Blocked.md`.
-  Fix: add a guided first-run path with a safe demo/mock session, task-oriented empty states, a compact “what happens next” sequence, and a locally recorded usability checklist that does not collect user data.
-  Touches: `web/index.html`, `web/src/main.js`, `web/src/launcher.js`, `web/src/workspacePages.js`, `web/src/i18n/terminalai.ftl`, `web/tests/`.
-  Acceptance: a fresh profile can discover/register a project, launch a safe demo session, identify every attention state, recover focus after restart, and reach the real launcher without undocumented knowledge; the remaining human acceptance is recorded as external evidence.
-  Complexity: M
-
 - [ ] P1 — Isolate agent-team identity and prove hook delivery
   Category: correctness
   Where: `crates/terminalai-core/src/registry/ingest.rs`, `hooks.rs`, daemon hook transport and preflight.

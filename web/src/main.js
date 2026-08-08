@@ -43,6 +43,13 @@ import { createWorkspacePages } from "./workspacePages.js";
 import { createTerminalHistory } from "./terminalHistory.js";
 import { createOperationalPanels } from "./operationalPanels.js";
 import { createDaemonEvents } from "./daemonEvents.js";
+import {
+  createFirstRunDemoSessions,
+  demoStatusCount,
+  isFirstRunDemoSession,
+  readFirstRunProgress,
+  saveFirstRunProgress,
+} from "./firstRun.js";
 
 const WDIO_BUILD = import.meta.env.VITE_TERMINALAI_WDIO === "1";
 
@@ -283,6 +290,9 @@ const state = {
   workRun: null,
   workSchedule: null,
   reviewError: null,
+  firstRunProgress: readFirstRunProgress(),
+  demoMode: false,
+  demoPrevious: null,
   announcementQueue: new Map(),
   announcementTimer: null,
   orderFreeze: null,
@@ -311,6 +321,33 @@ function syncRailPage(page) {
     if (active) item.setAttribute("aria-current", "page");
     else item.removeAttribute("aria-current");
   }
+}
+
+function renderFirstRunGuide() {
+  const checklist = $("first-run-checklist");
+  if (!checklist) return;
+  const entries = Array.from(checklist.querySelectorAll("[data-first-run-step]"));
+  const done = entries.filter((entry) => state.firstRunProgress[entry.dataset.firstRunStep]).length;
+  $("first-run-progress").textContent = t("first-run-progress", {
+    done,
+    total: entries.length,
+  });
+  for (const entry of entries) {
+    const complete = state.firstRunProgress[entry.dataset.firstRunStep] === true;
+    entry.dataset.complete = String(complete);
+    entry.querySelector(".first-run-step-state").textContent = t(
+      complete ? "first-run-step-done" : "first-run-step-next",
+    );
+  }
+}
+
+function markFirstRunStep(step) {
+  if (state.firstRunProgress[step] === true) return;
+  state.firstRunProgress = saveFirstRunProgress({
+    ...state.firstRunProgress,
+    [step]: true,
+  });
+  renderFirstRunGuide();
 }
 
 function closeWorkspacePages() {
@@ -444,6 +481,7 @@ const launcherPanel = createLauncher({
   escapeHtml,
   renderDataError,
   renderProjects: (...args) => workspacePages.renderProjects(...args),
+  onFirstRunStep: markFirstRunStep,
 });
 const {
   bindEvents: bindLauncherEvents,
@@ -1103,6 +1141,8 @@ function renderRows() {
   $("empty-state").classList.toggle("empty-state-hidden", state.snapshotLoading || state.sessions.length > 0);
   list.classList.toggle("fleet-list-hidden", state.sessions.length === 0);
   list.classList.toggle("fleet-list-wide", state.wideMode);
+  $("demo-mode-banner").hidden = !state.demoMode;
+  renderFirstRunGuide();
   const identityLabel = $("column-identity-label");
   const identityLabelKey = state.wideMode ? "column-label-wide" : "column-label-compact";
   identityLabel.setAttribute("data-i18n", identityLabelKey);
@@ -1235,6 +1275,15 @@ function bindFleetRow(row) {
   for (const button of row.querySelectorAll("button[data-action]")) {
     button.addEventListener("click", (event) => {
       event.stopPropagation();
+      if (state.demoMode) {
+        if (button.dataset.action === "focus") void focusSession(row.dataset.id);
+        else if (button.dataset.action === "pin") {
+          const session = state.sessions.find((item) => item.id === row.dataset.id);
+          if (session) session.pinned = !session.pinned;
+          renderRows();
+        } else showToast(t("demo-read-only"), "success");
+        return;
+      }
       rowAction(button.dataset.action, row.dataset.id, row);
     });
   }
@@ -1243,7 +1292,8 @@ function bindFleetRow(row) {
   reply?.addEventListener("keydown", (event) => {
     if (event.key !== "Enter") return;
     event.preventDefault();
-    rowAction("reply", row.dataset.id, row);
+    if (state.demoMode) showToast(t("demo-read-only"), "success");
+    else rowAction("reply", row.dataset.id, row);
   });
 }
 
@@ -1546,6 +1596,61 @@ function removeSession(id) {
   applySessionRemoval(id);
 }
 
+function demoTerminalText(session) {
+  return [
+    `\x1b[38;5;111m${t("demo-terminal-header")}\x1b[0m`,
+    t("demo-terminal-note"),
+    "",
+    t("demo-terminal-status", { status: session?.status ?? "unknown" }),
+    t("demo-terminal-focus"),
+    "",
+  ].join("\r\n");
+}
+
+function renderDemoTerminal(session) {
+  if (!state.demoMode || !session) return;
+  state.terminal?.reset();
+  state.terminal?.write(demoTerminalText(session));
+}
+
+function enterFirstRunDemo() {
+  if (state.demoMode) return;
+  state.demoPrevious = {
+    sessions: state.sessions,
+    focused: state.focused,
+    admission: state.admission,
+  };
+  state.demoMode = true;
+  state.sessions = createFirstRunDemoSessions();
+  state.focused = state.sessions[0]?.id ?? null;
+  state.admission = {
+    ...state.admission,
+    max_live_sessions: 11,
+    live_sessions: state.sessions.length,
+    queued_sessions: state.sessions.filter((session) => session.status === "queued").length,
+    aggregate_cost_usd: state.sessions.reduce((total, session) => total + session.cost_usd, 0),
+  };
+  markFirstRunStep("demo");
+  renderRows();
+  updateTerminalHeader();
+  renderDemoTerminal(state.sessions[0]);
+  showToast(t("demo-status-coverage", { count: demoStatusCount(state.sessions) }), "success");
+}
+
+function exitFirstRunDemo() {
+  if (!state.demoMode) return;
+  const previous = state.demoPrevious ?? { sessions: [], focused: null, admission: state.admission };
+  state.demoMode = false;
+  state.demoPrevious = null;
+  state.sessions = previous.sessions;
+  state.focused = previous.focused;
+  state.admission = previous.admission;
+  state.outputChannel = null;
+  state.terminal?.reset();
+  renderRows();
+  updateTerminalHeader();
+}
+
 // The xterm element is appended after the placeholder inside an overflow-hidden host,
 // so a placeholder left in flow lays the renderer out entirely below the visible box.
 function renderTerminalPlaceholder() {
@@ -1796,6 +1901,7 @@ async function loadSnapshot() {
 }
 
 async function loadSnapshotNow() {
+  if (state.demoMode) exitFirstRunDemo();
   state.snapshotLoading = true;
   state.snapshotEvents = [];
   renderSnapshotLoading();
@@ -1873,6 +1979,10 @@ async function focusSessionNow(id) {
   fitTerminal();
   renderRows();
   updateTerminalHeader();
+  if (state.demoMode && isFirstRunDemoSession(id)) {
+    renderDemoTerminal(state.sessions.find((session) => session.id === id));
+    return;
+  }
   try {
     await attachSessionOutput(id);
     if (state.focused !== id) return;
@@ -2305,12 +2415,18 @@ const terminalPane = createTerminalPane({
 const { openSessionLink, setupTerminal } = terminalPane;
 
 function bindEvents() {
-  $("new-session-button").addEventListener("click", openLauncher);
+  $("new-session-button").addEventListener("click", () => {
+    exitFirstRunDemo();
+    openLauncher();
+  });
   $("empty-new-button").addEventListener("click", openLauncher);
+  $("empty-demo-button").addEventListener("click", enterFirstRunDemo);
+  $("demo-exit-button").addEventListener("click", exitFirstRunDemo);
   $("fleet-summary").addEventListener("click", (event) => {
     if (event.target?.closest?.("#fleet-spend")) openRollup();
   });
   $("refresh-button").addEventListener("click", () => {
+    exitFirstRunDemo();
     void loadSnapshot();
     void loadExternal();
   });

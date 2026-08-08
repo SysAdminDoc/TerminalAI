@@ -173,7 +173,7 @@ export function createTerminalPane(deps) {
     // stayed at its hard-coded size no matter how large the pane was.
     observeTerminalSize();
     state.terminal.onData(async (data) => {
-      if (!state.focused) return;
+      if (!state.focused || state.demoMode) return;
       try {
         await invoke("write_session", { id: state.focused, data });
       } catch (error) {

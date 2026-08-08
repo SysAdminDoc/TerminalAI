@@ -140,6 +140,10 @@
           <div id="fleet-state-strip" class="fleet-state-strip" role="list" aria-label="Fleet state counts" data-i18n-aria-label="label-status-counts"></div>
           <div id="column-labels" class="column-labels" aria-hidden="true"><span id="column-identity-label" data-i18n="column-label-compact">STATUS / REPO</span><span>AGENT · PROGRESS</span><span>DWELL / LAST LINE</span><span></span></div>
           <div id="fleet-list" class="fleet-list" role="listbox" aria-label="Tracked sessions" data-i18n-aria-label="label-tracked-sessions" aria-describedby="fleet-summary" aria-orientation="vertical"></div>
+          <div id="demo-mode-banner" class="demo-mode-banner" hidden role="status" aria-live="polite">
+            <div><span class="eyebrow" data-i18n="demo-mode-eyebrow">SAFE DEMO</span><strong data-i18n="demo-mode-title">Sample fleet only</strong><span data-i18n="demo-mode-detail">No agent process is running and no command can be sent.</span></div>
+            <button class="button button-quiet" id="demo-exit-button" type="button" data-i18n="demo-exit">Exit demo</button>
+          </div>
           <div id="external-view" class="external-view view-hidden" aria-label="Sessions started outside TerminalAI" data-i18n-aria-label="label-external-sessions">
             <div class="external-heading"><span class="eyebrow" data-i18n="label-elsewhere">ELSEWHERE ON THIS MACHINE</span><span id="external-summary"></span></div>
             <div id="external-list" class="external-list" role="list" aria-label="Sessions TerminalAI does not supervise"></div>
@@ -152,7 +156,17 @@
             <p data-i18n="empty-no-sessions-detail">Launch a Claude Code or Codex session and its attention state will stay here.</p>
             <button class="button button-secondary" id="empty-new-button" data-i18n="empty-launch-first">Launch your first session</button>
             <p class="empty-next" data-i18n="empty-first-root">Or register the folder that holds your repositories, and every project in it becomes one click away.</p>
+            <section class="first-run-guide" aria-label="First-run path" data-i18n-aria-label="first-run-title">
+              <div class="first-run-heading"><span class="eyebrow" data-i18n="first-run-eyebrow">FIRST RUN</span><span id="first-run-progress" class="first-run-progress"></span></div>
+              <h3 data-i18n="first-run-title">Three steps to your first controlled session</h3>
+              <div id="first-run-checklist" class="first-run-checklist">
+                <div class="first-run-step" data-first-run-step="project"><span class="first-run-number">1</span><span><strong data-i18n="first-run-project">Register a project</strong><small data-i18n="first-run-project-detail">Choose a repository root; projects are discovered locally.</small></span><span class="first-run-step-state"></span></div>
+                <div class="first-run-step" data-first-run-step="demo"><span class="first-run-number">2</span><span><strong data-i18n="first-run-demo">Explore the safe demo</strong><small data-i18n="first-run-demo-detail">See every attention state without starting an agent.</small></span><span class="first-run-step-state"></span></div>
+                <div class="first-run-step" data-first-run-step="launcher"><span class="first-run-number">3</span><span><strong data-i18n="first-run-launcher">Open the real launcher</strong><small data-i18n="first-run-launcher-detail">Preview the exact command before you run it.</small></span><span class="first-run-step-state"></span></div>
+              </div>
+            </section>
             <div class="empty-actions"><button class="button button-quiet" id="empty-root-button" type="button" data-i18n="button-register-root" data-i18n-title="button-register-root-title" title="Register a folder that holds your repositories">Register root</button><button class="button button-quiet" id="empty-explainer-button" type="button" data-i18n="empty-first-explainer" data-i18n-title="button-explainer-title" title="How the fleet screen works">How this works</button></div>
+            <button class="button button-primary" id="empty-demo-button" type="button" data-i18n="empty-demo-button">Explore safe demo</button>
           </div>
         </section>
 
