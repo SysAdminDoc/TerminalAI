@@ -10,26 +10,6 @@ the packaged Windows application, real agent versions, and an unfamiliar operato
 Items stay here while their implementation is actionable. Operator-owned or vendor-owned evidence
 remains cross-referenced in `Roadmap_Blocked.md` and is not claimed by a local test.
 
-- [ ] P1 — Prove the packaged Tauri/WebView2 application end to end
-  Category: release confidence
-  Where: `crates/terminalai-app`, `web/scripts/chrome-audit.mjs`, `scripts/verify-installer.ps1`
-  Problem: the headless Chrome audit proves the Vite renderer, but it does not prove the packaged WebView2 shell, named-pipe startup, focus/resize wiring, WinRT toast delivery, or an upgrade over a running daemon.
-  Evidence: the current Chrome gate is clean, while the packaged UI/WebDriver path and interactive toast delivery remain external residuals in `Roadmap_Blocked.md` under R-56 and Windows toast delivery.
-  Fix: add an isolated packaged-shell smoke harness with a deterministic mock daemon, exercise launch/focus/resize/terminal output/reconnect/error recovery, and keep installer upgrade checks separate from interactive-desktop verification.
-  Touches: `crates/terminalai-app/src/main.rs`, `web/scripts/chrome-audit.mjs`, `scripts/verify-installer.ps1`, release-test fixtures.
-  Acceptance: a release-mode app starts on the isolated non-input desktop, reaches the mocked daemon, opens/focuses a session, resizes it, receives an event, survives reconnect, and the installer gate proves upgrade-over-running-daemon behavior without touching the operator desktop.
-  Complexity: L
-
-- [ ] P1 — Build a versioned Claude/Codex compatibility matrix
-  Category: agent compatibility
-  Where: `crates/terminalai-core/src/launch.rs`, capability discovery, launch fixtures and `terminalai-probe verify-goldens`.
-  Problem: argv goldens prove what TerminalAI emits, but not that the installed agent accepts and acts on every option; version-gated features can otherwise regress silently.
-  Evidence: the repository already has launch goldens and runtime capability discovery, while the compaction and screen-reader features remain blocked on vendor versions in `Roadmap_Blocked.md`.
-  Fix: make fixtures versioned by agent and capability, record accepted/rejected/mode-restricted options, validate preview and final argv through the same matrix, and render a clear unsupported explanation in the launcher.
-  Touches: `crates/terminalai-core/src/launch.rs`, `crates/terminalai-core/src/capabilities.rs`, `crates/terminalai-core/tests/fixtures/launch/`, `crates/terminalai-probe`, `web/src/launcher.js`.
-  Acceptance: every advertised option has an agent/version fixture, unsupported or mode-restricted options are refused before spawn, the preview names the reason, and `verify-goldens` checks both emitted shape and installed-agent applicability where the operator supplies the binary.
-  Complexity: M
-
 - [ ] P1 — Make the first-run operator workflow measurable and teachable
   Category: usability
   Where: launcher, empty states, explainer, project registration and session recovery.
