@@ -4,14 +4,14 @@ Single task tracker for this repo. Newest phase at the top; completed items are 
 
 ## Verification Gaps — 2026-08-08
 
-- [ ] P2 — The WebdriverIO end-to-end gate never reaches the app's own frontend
+- [ ] P2 — The WebdriverIO end-to-end gate reaches the app, then stops on the preflight view
   Category: verification
-  Where: `web/scripts/run-e2e.mjs`, `web/tests/ui.e2e.mjs`, `crates/terminalai-app/tauri.conf.json`
-  Problem: `npm --prefix web run test:e2e` fails at its first assertion — `#fleet-loading` is never displayed — and it fails identically on an unmodified tree, so it is a standing red gate rather than a regression. Probed inside the running window, `document.body` is `<body style="font-family: system-ui, sans-serif; font-size: 75%">` with no app markup at all, and the service logs `Tauri plugin not available` on every poll, which is what a frontend that never loaded looks like from the outside. This is the only harness that drives the real WebView2 window, so every dialog behaviour is currently verified in jsdom and in the Chromium audit but never in the shipping shell.
-  Evidence: two runs on 2026-08-08, one with the working tree stashed, both failing at `ui.e2e.mjs` on the same assertion; 30 s of `waitForDisplayed` does not change it, so it is not first-paint timing. The harness builds with `cargo build --release --workspace --features terminalai-app/wdio`, and this repo's own notes say the app exe that command produces is a dev shell (`CLAUDE.md`, Build & verify) — a dev shell points WebView2 at `devUrl` (`http://127.0.0.1:5173`), which nothing is serving during the run. That is the first thing to test.
-  Fix: establish what the launched exe is actually loading (embedded `frontendDist` or `devUrl`), then either build it the way a shipped binary is built or serve the frontend the dev shell expects. `web/tests/ui.e2e.mjs` already carries an unrun scenario for the repeating work run that will exercise the schedule controls once the harness reaches the app.
-  Acceptance: `npm --prefix web run test:e2e` passes on a clean tree and its screenshots show the real fleet, and the first assertion fails loudly if the window ever comes up without the app again.
-  Confidence: Verified (the failure and its independence from this session's changes; the dev-shell cause is the leading hypothesis, not yet proven)
+  Where: `web/tests/ui.e2e.mjs`, `web/src/main.js` (`loadPreflight`, `setPreflightMode`)
+  Problem: `npm --prefix web run test:e2e` now loads the real frontend — the loading state appears, the mocked fleet reaches the renderer (`#fleet-summary` reads `0/3 live`) — and then fails because `#fleet-list` stays hidden behind `#preflight-view`. The spec mocks `preflight_report` with every check `ok`, so something is putting the window into preflight mode anyway, and the fleet list is never shown. This is the only harness that drives the real WebView2 window; until it passes, dialog behaviour is verified in jsdom and in the Chromium audit but never in the shipping shell.
+  Evidence: probed inside the running window on 2026-08-08 — `#fleet-loading` false, `#preflight-view` true, `#fleet-summary` "0/3 live", `fleetMock.calls.length` 0 (the wdio mock object does not appear to count calls, so that number is not evidence either way). Fixed on the way here: the harness built the app *without* `custom-protocol`, so `dev = !custom_protocol` in `tauri`'s build script made every run a dev shell pointed at `devUrl` with nothing serving it — the window came up empty and every assertion failed. The wdio plugin's non-`execute` commands were also denied by the ACL on every poll.
+  Fix: find what sets `state.preflightMode` when every check is `ok` — the daemon client is deliberately absent under `cfg(feature = "wdio")`, which is the first suspect — and make the spec assert the fleet is visible rather than only that a row exists. `web/tests/ui.e2e.mjs` already carries an unrun scenario for the repeating work run that will exercise the schedule controls once the fleet renders.
+  Acceptance: `npm --prefix web run test:e2e` passes on a clean tree and its screenshots show the real fleet, not the first-run check.
+  Confidence: Verified (observed twice, and on a stashed tree before any of this session's changes)
   Effort: M
 
 ## Audit Findings — 2026-08-07

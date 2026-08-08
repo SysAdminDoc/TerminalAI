@@ -106,7 +106,11 @@ try {
     cwd: webRoot,
     env: { ...process.env, VITE_TERMINALAI_WDIO: "1" },
   });
-  run("cargo", ["build", "--release", "--workspace", "--features", "terminalai-app/wdio"], {
+  // `custom-protocol` is not optional here: without it the app is a dev shell
+  // pointed at `devUrl`, nothing serves that during a test run, and the window
+  // comes up empty -- which reads as every assertion in the spec failing rather
+  // than as a build that loaded no frontend.
+  run("cargo", ["build", "--release", "--workspace", "--features", "terminalai-app/wdio,terminalai-app/custom-protocol"], {
     cwd: repoRoot,
     env: { ...process.env, TAURI_CONFIG: tauriConfig },
   });

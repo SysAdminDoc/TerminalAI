@@ -8,6 +8,10 @@
   "permissions": [
     "core:default",
     "wdio:allow-execute",
+    "wdio:allow-log-frontend",
+    "wdio:allow-get-active-window-label",
+    "wdio:allow-get-window-states",
+    "wdio:allow-list-windows",
     "allow-app-version",
     "allow-fleet-snapshot",
     "allow-review-snapshot",

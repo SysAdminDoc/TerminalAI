@@ -14,6 +14,11 @@ path = "src/main.rs"
 
 [features]
 default = []
+# What makes a build load its embedded frontend instead of the dev server. The
+# `tauri` CLI turns this on for a bundled build; a bare `cargo build --release`
+# does not, and the binary it produces is a dev shell pointed at `devUrl` --
+# which is why the end-to-end harness asks for it by name.
+custom-protocol = ["tauri/custom-protocol"]
 wdio = ["dep:tauri-plugin-wdio"]
 wdio-embedded = ["wdio", "dep:tauri-plugin-wdio-webdriver"]
 

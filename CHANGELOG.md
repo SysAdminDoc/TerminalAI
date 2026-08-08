@@ -76,6 +76,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- The end-to-end harness built the app without `custom-protocol`, and `tauri`'s build script computes
+  `dev = !custom_protocol` — so every run launched a dev shell pointed at `devUrl` with nothing
+  serving it, the window came up with an empty body, and all of WebdriverIO's assertions failed for a
+  reason none of them named. The app crate now declares the feature and the harness asks for it. With
+  the ACL enforcing for real, four `wdio:` plugin commands the capability files had never granted
+  turned out to be denied on every poll; they are granted now. The gate still does not pass — the
+  fleet list stays behind the first-run check — and that is on the roadmap with the probe output.
+
 - The store-health test no longer fails on a machine that has run it before. It ends by creating a
   `blocker` directory where its next run needs to write a `blocker` file, the scratch directory is
   named after the process id, and Windows reuses those — so the test failed with "access is denied"
