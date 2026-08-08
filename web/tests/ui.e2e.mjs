@@ -113,6 +113,17 @@ async function dispatchClick(selector) {
   }, selector);
 }
 
+/// The native packaged build does not expose `window.__TAURI__.event` because
+/// the application imports the event API from its bundle. Invoke the same
+/// plugin command that `@tauri-apps/api/event` calls so this test exercises the
+/// real event transport rather than relying on the convenience global.
+async function emitNativeEvent(name, payload) {
+  await browser.tauri.execute((tauri, event, value) => tauri.core.invoke("plugin:event|emit", {
+    event,
+    payload: value,
+  }), name, payload);
+}
+
 /// A capture of the real shipping window, kept after the run.
 ///
 /// The screenshots are the point of driving WebView2 rather than jsdom, so the
@@ -142,14 +153,44 @@ describe("TerminalAI desktop surface", () => {
     await mockCommand("review_snapshot", review);
     await mockCommand("list_presets", []);
     await mockCommand("app_version", "0.1.0");
-    await mockCommand("attach_session_output", null);
+    const attachOutputMock = await mockCommand("attach_session_output", null);
+    const resizeMock = await mockCommand("resize_session", null);
+    await mockCommand("focus_session", null);
+    await mockCommand("subscribe_output", null);
+    await mockCommand("stream_scrollback", null);
     await mockCommand("mark_read", null);
     await mockCommand("preview_launch", "claude --model sonnet");
 
     await browser.tauri.execute(() => window.dispatchEvent(new Event("terminalai-wdio-ready")));
     await browser.$('#fleet-list [role="option"]').waitForDisplayed();
     assert.match(await browser.$("#fleet-list").getText(), /Demo API/);
+    await browser.waitUntil(() => attachOutputMock.calls.length > 0, {
+      timeout: 30000,
+      timeoutMsg: "the focused session must attach its output channel in the packaged shell",
+    });
+    await browser.waitUntil(() => resizeMock.calls.length > 0, {
+      timeout: 30000,
+      timeoutMsg: "the packaged shell must send the measured terminal geometry",
+    });
     await assertScreenshot("fleet.png");
+
+    await emitNativeEvent("terminalai:event", {
+      kind: "session-updated",
+      session: {
+        ...session,
+        status: "awaiting-input",
+        phase: "awaiting-input",
+        last_line: "Waiting for operator input",
+        status_since: systemTime(0),
+        state_since: systemTime(0),
+      },
+    });
+    const updatedRow = browser.$('#fleet-list [data-id="s0001"]');
+    await updatedRow.waitForDisplayed();
+    await browser.waitUntil(async () => (await updatedRow.getAttribute("aria-label"))?.includes("Awaiting input"), {
+      timeout: 10000,
+      timeoutMsg: "a real Tauri event must update the accessible session row",
+    });
 
     await dispatchClick("#new-session-button");
     await browser.$("#launcher-dialog[open]").waitForDisplayed();
@@ -220,5 +261,17 @@ describe("TerminalAI desktop surface", () => {
     assert.match(await browser.$("#preflight-list").getText(), /Synthetic daemon outage/);
     assert.equal(await browser.$("#preflight-list .tone-red").isDisplayed(), true);
     await assertScreenshot("daemon-unreachable.png");
+
+    await fleetMock.mockReturnValue(fleet());
+    await preflightMock.mockReturnValue(readyPreflight);
+    // Recovery is driven through the operator-facing recheck control. It
+    // refreshes both health and fleet state, then closes the outage surface
+    // only after the daemon reports that it is ready again.
+    await dispatchClick('#preflight-list button[data-preflight-action="recheck"][data-preflight-id="daemon"]');
+    await browser.$('#fleet-list [data-id="s0001"]').waitForDisplayed();
+    assert.equal(await browser.$("#preflight-view").isDisplayed(), false);
+    assert.match(await browser.$('#fleet-list [data-id="s0001"]').getAttribute("aria-label"), /Demo API/);
+    assert.ok(attachOutputMock.calls.length > 1, "reconnecting must reattach the focused session output");
+    await assertScreenshot("daemon-recovered.png");
   });
 });

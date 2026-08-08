@@ -68,24 +68,38 @@ function sleep(milliseconds) {
   Atomics.wait(new Int32Array(buffer), 0, 0, milliseconds);
 }
 
+function readPlacementIfComplete(placementPath) {
+  try {
+    return JSON.parse(readFileSync(placementPath, "utf8"));
+  } catch (error) {
+    // The isolated host writes this small proof file after CreateProcess. A
+    // filesystem watcher can observe the file between creation and completion
+    // of the write, so retry a partial JSON document until the timeout below.
+    if (error instanceof SyntaxError || error?.code === "EBUSY") return null;
+    throw error;
+  }
+}
+
 function waitForRunnerAndVerifyPlacement(pid, placementPath, desktopName) {
   const deadline = Date.now() + 180_000;
   let placementVerified = false;
   while (processExists(pid)) {
     if (!placementVerified && existsSync(placementPath)) {
-      const placement = JSON.parse(readFileSync(placementPath, "utf8"));
-      run("pwsh.exe", [
-        "-NoLogo",
-        "-NoProfile",
-        "-File",
-        visualIsolation,
-        "verify",
-        "-ProcessId",
-        String(placement.processId),
-        "-DesktopName",
-        desktopName,
-      ], { cwd: repoRoot });
-      placementVerified = true;
+      const placement = readPlacementIfComplete(placementPath);
+      if (placement) {
+        run("pwsh.exe", [
+          "-NoLogo",
+          "-NoProfile",
+          "-File",
+          visualIsolation,
+          "verify",
+          "-ProcessId",
+          String(placement.processId),
+          "-DesktopName",
+          desktopName,
+        ], { cwd: repoRoot });
+        placementVerified = true;
+      }
     }
     if (Date.now() >= deadline) throw new Error(`isolated E2E runner exceeded timeout; placementVerified=${placementVerified}`);
     sleep(100);
