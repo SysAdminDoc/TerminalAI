@@ -22,12 +22,12 @@ remains cross-referenced in `Roadmap_Blocked.md` and is not claimed by a local t
 
 - [ ] P2 — Make distribution and cross-target verification repeatable
   Category: release engineering
-  Where: installer scripts, GitHub release workflow, winget metadata and cross-target checks.
+  Where: `scripts/prepare-release-assets.ps1`, `.github/workflows/release.yml`, installer scripts, Winget metadata and cross-target checks.
   Problem: a successful local build is not yet a frictionless release path for users, and Windows-only verification leaves Unix cfg branches and published installer metadata outside the regular gate.
   Evidence: `Roadmap_Blocked.md` tracks the outward-facing winget/checksum steps and the need for cross-host closure of non-Windows branches.
-  Fix: automate release artifact manifests and SHA-256 checks, publish a ready-to-submit winget manifest, run Linux/macOS compile/test jobs for cfg branches, and keep the unsigned installer policy explicit.
-  Touches: `.github/workflows/`, `scripts/verify-installer.ps1`, `scripts/verify-reproducible.ps1`, `scripts/check-cross-targets.ps1`, release metadata.
-  Acceptance: one tagged release produces reproducible NSIS/MSI artifacts, hashes, upgrade evidence and submission-ready metadata; cross-target CI compiles/tests the non-Windows branches and reports unsupported runtime checks honestly.
+  Fix: automate release artifact manifests and SHA-256 checks, publish a ready-to-submit Winget manifest, run Linux/macOS compile/test jobs for cfg branches, and keep the unsigned installer policy explicit. The executable pair is byte-reproducible; Tauri's templated NSIS/MSI wrappers remain hash-pinned release artifacts rather than being falsely called byte-reproducible.
+  Touches: `.github/workflows/release.yml`, `scripts/prepare-release-assets.ps1`, `scripts/verify-installer.ps1`, `scripts/verify-reproducible.ps1`, `scripts/check-cross-targets.ps1`, release metadata.
+  Acceptance: one tagged release runs the cross-target jobs, produces reproducible sidecar evidence, verifies the exact unsigned NSIS/MSI install and upgrade path, emits hashes/provenance and submission-ready Winget metadata, and reports unsupported desktop/ARM64 runtime checks honestly.
   Complexity: M
 
 ## Audit Findings — 2026-08-07

@@ -234,6 +234,13 @@ against the exact uploaded artifact, including the upgrade-over-a-running-daemon
 publishing. What remains is only the outward-facing half: opening a PR against the third-party
 `microsoft/winget-pkgs` repository, which is the operator's action to take.
 
+Update 2026-08-08: the local release side is now repeatable. A tagged build runs
+`scripts/prepare-release-assets.ps1`, which copies the exact versioned NSIS/MSI files, emits
+`SHA256SUMS` and `release-manifest.json`, and generates a schema-validated three-file Winget
+manifest with the MSI ProductCode and UpgradeCode read from the built database. The remaining
+blocker is still the operator-owned PR against `microsoft/winget-pkgs` after a tagged release is
+published.
+
 ## Publish checksums and a detached signature with each release
 
 Blocked 2026-08-04: the signature needs a private key the operator holds, which this agent must
@@ -242,6 +249,10 @@ the signature half does not back.
 
 Update 2026-08-06: the key is now the only blocker. A published release for the step to attach to
 exists as of v0.10.0.
+
+Update 2026-08-08: the tagged workflow now publishes unsigned `SHA256SUMS` as a byte-integrity
+aid and states the no-signing policy in the release manifest. It intentionally does not generate a
+detached signature; the private key/public-key step remains blocked on operator-owned key material.
 
 What closes it: the operator generates a minisign keypair once (`minisign -G`, or `tauri signer
 generate`), keeps the secret key out of the repository, and publishes the public key in `README.md`.

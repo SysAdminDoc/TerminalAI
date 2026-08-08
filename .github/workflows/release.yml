@@ -1,0 +1,147 @@
+name: Release and cross-target verification
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unix-targets:
+    name: ${{ matrix.os }} core/daemon/probe tests
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test Unix code paths
+        run: cargo test --locked --all-targets -p terminalai-core -p terminalai-daemon -p terminalai-probe
+
+      - name: State the unsupported runtime scope
+        shell: bash
+        run: |
+          echo "Tested on $RUNNER_OS: terminalai-core, terminalai-daemon, and terminalai-probe."
+          echo "Unsupported here by design: terminalai-app's Windows Tauri/WebView2 desktop runtime and installer bundles."
+          echo "This job proves Unix cfg compilation and tests; it does not claim a non-Windows desktop release."
+
+  windows-cross-targets:
+    name: Windows cross-target type checks
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install the managed Rust toolchain and targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,aarch64-pc-windows-msvc
+
+      - name: Check non-host cfg branches
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/check-cross-targets.ps1 -Toolchain stable-x86_64-pc-windows-msvc
+
+      - name: State the unsupported runtime scope
+        shell: pwsh
+        run: |
+          Write-Output 'Checked: terminalai-core, terminalai-daemon, and terminalai-probe for Linux x86_64 and Windows ARM64.'
+          Write-Output 'Unsupported runtime claim: terminalai-app is not cross-built here because its Tauri/libdbus desktop dependency is platform-specific.'
+          Write-Output 'Unsupported architecture claim: ARM64 is type-checked only; no ARM64 installer is published without real-hardware smoke evidence.'
+
+  windows-release:
+    name: Build, verify, and publish unsigned Windows release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [unix-targets, windows-cross-targets]
+    runs-on: windows-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix web
+
+      - name: Run frontend tests and build
+        shell: pwsh
+        run: |
+          npm --prefix web test
+          npm --prefix web run build
+
+      - name: Verify release metadata and test-count claims
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/verify-release-metadata.ps1
+
+      - name: Prove deterministic sidecars from two clean builds
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/verify-reproducible.ps1
+
+      - name: Build unsigned NSIS and MSI installers
+        shell: pwsh
+        run: cargo tauri build --ci --no-sign --bundles nsis,msi -- --manifest-path Cargo.toml
+
+      - name: Verify the exact installer and upgrade path
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $installer = Join-Path $PWD "target/release/bundle/nsis/TerminalAI_${version}_x64-setup.exe"
+          pwsh -NoProfile -File scripts/verify-installer.ps1 -Installer $installer -LaunchTimeoutSeconds 90
+
+      - name: Generate hashes, provenance, and Winget manifests
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/prepare-release-assets.ps1 -Tag "${{ github.ref_name }}"
+
+      - name: Upload release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: TerminalAI-${{ github.ref_name }}-release-assets
+          path: dist/release
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Create or update the GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $repo = '${{ github.repository }}'
+          gh release view $tag --repo $repo 2>$null
+          if ($LASTEXITCODE -ne 0) {
+              gh release create $tag --repo $repo --verify-tag --title "TerminalAI $tag" --notes-file dist/release/UNSIGNED.txt
+              if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE" }
+          }
+          $assets = @(
+              Get-ChildItem -LiteralPath dist/release -File
+              Get-ChildItem -LiteralPath dist/release/winget -File
+          ) | Select-Object -ExpandProperty FullName
+          gh release upload $tag --repo $repo --clobber @assets
+          if ($LASTEXITCODE -ne 0) { throw "gh release upload failed with exit code $LASTEXITCODE" }

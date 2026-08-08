@@ -79,6 +79,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   history is initialized.
 - Split the stylesheet into import-ordered `tokens`, `foundation`, `pages`, and `shell` layers;
   frontend style assertions now resolve the same assembled cascade through `web/tests/cssSource.mjs`.
+- Added the tagged Windows release lane in `.github/workflows/release.yml`: Linux/macOS cfg tests,
+  Windows cross-target checks, clean-build executable reproducibility, isolated installer upgrade
+  evidence, SHA-256 release manifests, explicit unsigned policy, and generated Winget metadata.
+- Added `scripts/prepare-release-assets.ps1`, which derives the exact versioned NSIS/MSI artifacts,
+  hashes, commit provenance, and MSI ProductCode/UpgradeCode from the built release instead of
+  trusting filenames or a hand-maintained package manifest.
 
 ## [0.23.0] — 2026-08-08
 
