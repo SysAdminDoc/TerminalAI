@@ -37,6 +37,12 @@ import { createRowRenderer } from "./rowMarkup.js";
 import { createTerminalPane } from "./terminalPane.js";
 import { createWorkRunPanel } from "./workRunPanel.js";
 import { renderWindowShares } from "./quotaWindow.js";
+import { createLauncher } from "./launcher.js";
+import { createQueuePanel } from "./queuePanel.js";
+import { createWorkspacePages } from "./workspacePages.js";
+import { createTerminalHistory } from "./terminalHistory.js";
+import { createOperationalPanels } from "./operationalPanels.js";
+import { createDaemonEvents } from "./daemonEvents.js";
 
 const WDIO_BUILD = import.meta.env.VITE_TERMINALAI_WDIO === "1";
 
@@ -427,6 +433,57 @@ function showToast(message, tone = "error") {
   }, 4200);
 }
 
+const launcherPanel = createLauncher({
+  $,
+  document,
+  state,
+  invoke,
+  invokeArgs,
+  showToast,
+  t,
+  escapeHtml,
+  renderDataError,
+  renderProjects: (...args) => workspacePages.renderProjects(...args),
+});
+const {
+  bindEvents: bindLauncherEvents,
+  openLauncher,
+  clearFolderValidation,
+  syncAgentFields,
+  loadAgentCapabilities,
+  schedulePreview,
+  loadProjectTemplates,
+  applyProjectTemplate,
+  loadProjectRoots,
+  refreshScannedProjects,
+  removeProjectRoot,
+  loadKnownProjects,
+  registerProjectRoot,
+  saveCurrentPreset,
+  deleteSelectedPreset,
+  loadSelectedPreset,
+  loadPresets,
+  launchCurrentSpec,
+} = launcherPanel;
+
+const queuePanel = createQueuePanel({
+  $,
+  state,
+  invoke,
+  showToast,
+  t,
+  escapeHtml,
+  renderDataError,
+});
+const {
+  bindEvents: bindQueueEvents,
+  queueGlyph,
+  queueTitle,
+  openQueue,
+  refreshQueue,
+  addQueuedPrompt,
+} = queuePanel;
+
 /// The fleet's state is not reaching disk.
 ///
 /// Deliberately not dismissable, unlike the quarantine banner beside it. A
@@ -651,257 +708,7 @@ function checkForUpdates() {
   });
 }
 
-function diagnosticSource(value) {
-  const key = String(value ?? "unknown");
-  const localized = t(`source-${key}`);
-  if (localized !== `source-${key}`) return localized;
-  return key
-    .split("-")
-    .map((part) => part ? part[0].toUpperCase() + part.slice(1) : part)
-    .join(" ");
-}
-
-function diagnosticTime(value) {
-  const time = systemTimeMs(value);
-  return Number.isFinite(time) ? new Date(time).toISOString().replace(".000Z", "Z").replace("T", " ") : t("unknown-time");
-}
-
-function renderDiagnostics() {
-  const host = $("diagnostics-host");
-  const session = state.sessions.find((item) => item.id === state.focused);
-  if (!session) {
-    const structure = "empty";
-    const message = t("empty-focus-diagnostics");
-    const empty = host.querySelector(".diagnostics-empty");
-    if (host.dataset.diagnosticsStructure !== structure || !empty) {
-      host.innerHTML = '<div class="diagnostics-empty">' + escapeHtml(message) + "</div>";
-      host.dataset.diagnosticsStructure = structure;
-    } else if (empty.textContent !== message) {
-      empty.textContent = message;
-    }
-    return;
-  }
-
-  const history = Array.isArray(session.status_history) ? [...session.status_history].reverse() : [];
-  const structure = JSON.stringify([session.id, history]);
-  const latest = history[0];
-  const meta = STATUS_META[session.status] ?? STATUS_META.exited;
-  const label = lifecycleLabel(session);
-  const source = latest?.source ? diagnosticSource(latest.source) : t("diagnostics-unavailable");
-
-  // Status dwell changes every second, but the timeline does not. Update only
-  // the small live fields so selecting a reason never loses its DOM node.
-  if (host.dataset.diagnosticsStructure === structure) {
-    const heading = host.querySelector(".diagnostics-heading");
-    const headingName = heading?.querySelector("h2");
-    const headingPath = heading?.querySelector("p");
-    const glyph = heading?.querySelector(".status-glyph");
-    const current = host.querySelector(".diagnostics-current");
-    const currentStatus = current?.querySelector("b");
-    const currentDetail = current?.querySelector("span:last-child");
-    if (headingName && headingPath && glyph && currentStatus && currentDetail) {
-      headingName.textContent = session.name;
-      headingPath.textContent = session.cwd;
-      glyph.className = "status-glyph tone-" + lifecycleTone(session, meta);
-      glyph.title = label;
-      glyph.textContent = meta.glyph;
-      currentStatus.textContent = label;
-      // The terminal phases carry a reason; everything else says it in its label.
-      const detail = lifecycleDetail(session);
-      currentDetail.textContent = (detail ? detail + " · " : "")
-        + t("diagnostics-for", { dwell: dwell(session.status_since) }) + " · " + t("diagnostics-source", { source });
-      return;
-    }
-  }
-
-  const timeline = history.length
-    ? history.map((entry) => {
-      const entryMeta = STATUS_META[entry.to] ?? STATUS_META.exited;
-      const from = entry.from ? statusLabel(entry.from) : t("session-created");
-      const reason = formatReason(entry.reason, entry.detail);
-      return '<li class="diagnostic-event"><span class="diagnostic-event-glyph tone-' + entryMeta.tone + '" aria-hidden="true">' + entryMeta.glyph + '</span><div class="diagnostic-event-body"><div><b>' + escapeHtml(metaLabel(entryMeta)) + '</b><span>' + escapeHtml(t("diagnostics-from", { status: from })) + '</span></div><small>' + escapeHtml(diagnosticSource(entry.source)) + ' · ' + escapeHtml(diagnosticTime(entry.at)) + '</small>' + (reason ? '<p>' + escapeHtml(reason) + '</p>' : '') + '</div></li>';
-    }).join("")
-    : '<li class="diagnostics-empty">' + escapeHtml(t("empty-no-transition-history")) + "</li>";
-  host.innerHTML =
-    '<div class="diagnostics-heading"><div><span class="eyebrow">' + escapeHtml(t("diagnostics-why-this-state")) + '</span><h2>' + escapeHtml(session.name) + '</h2><p>' + escapeHtml(session.cwd) + '</p></div><div class="diagnostics-heading-actions"><button type="button" class="button button-quiet" data-diagnostics-action="preflight">' + escapeHtml(t("button-preflight")) + '</button><span class="status-glyph tone-' + lifecycleTone(session, meta) + '" title="' + escapeHtml(label) + '" aria-hidden="true">' + meta.glyph + '</span></div></div>' +
-    '<div class="diagnostics-current"><span>' + escapeHtml(t("diagnostics-current-status")) + '</span><b>' + escapeHtml(label) + '</b><span>' + escapeHtml((lifecycleDetail(session) ? lifecycleDetail(session) + ' · ' : '') + t("diagnostics-for", { dwell: dwell(session.status_since) }) + ' · ' + t("diagnostics-source", { source })) + '</span></div>' +
-    '<ol class="diagnostics-timeline">' + timeline + "</ol>";
-  host.dataset.diagnosticsStructure = structure;
-}
-function formatReason(reason, legacyDetail = null) {
-  if (!reason?.kind) return legacyDetail || t("reason-unknown");
-  const args = reason.args ?? {};
-  const status = args.status ? statusLabel(args.status) : t("status-unknown");
-  const messageArgs = { ...args, status, code: args.code ?? "unknown" };
-  const id = `reason-${reason.kind}`;
-  return t(id, messageArgs) === id ? (legacyDetail || t("reason-unknown")) : t(id, messageArgs);
-}
-
-function logTime(value) {
-  const time = systemTimeMs(value);
-  return Number.isFinite(time) ? new Date(time).toISOString().replace(".000Z", "Z").replace("T", " ") : t("unknown-time");
-}
-
-function renderLogs() {
-  const host = $("logs-host");
-  if (!state.logs.length) {
-    host.innerHTML = `<div class="logs-empty">${escapeHtml(t("empty-no-daemon-records"))}</div>`;
-    return;
-  }
-  const rows = [...state.logs].reverse().map((entry) => {
-    const fields = Object.entries(entry.fields ?? {})
-      .filter(([key]) => ["session_id", "agent", "cwd"].includes(key))
-      .map(([key, value]) => `<span>${escapeHtml(key)}=${escapeHtml(value)}</span>`)
-      .join("");
-    return `<li class="log-event"><div class="log-event-heading"><b>${escapeHtml(entry.level ?? "INFO")}</b><span>${escapeHtml(entry.target ?? "terminalai")}</span><time>${escapeHtml(logTime(entry.at))}</time></div><p>${escapeHtml(entry.message ?? "")}</p>${fields ? `<div class="log-event-fields">${fields}</div>` : ""}</li>`;
-  }).join("");
-  host.innerHTML = '<div class="logs-heading"><div><span class="eyebrow">' + escapeHtml(t("logs-control-plane")) + '</span><h2>' + escapeHtml(t("logs-daemon-records")) + '</h2><p>' + escapeHtml(t("logs-latest-retained")) + '</p></div><span class="status-glyph tone-sapphire" aria-hidden="true">≋</span></div><ol class="logs-list">' + rows + '</ol>';
-}
-
-function syncDiagnosticsVisibility() {
-  const diagnostics = state.diagnosticsMode;
-  const logs = state.logsMode;
-  $("terminal-host").classList.toggle("view-hidden", diagnostics || logs);
-  $("diagnostics-host").classList.toggle("view-hidden", !diagnostics);
-  $("logs-host").classList.toggle("view-hidden", !logs);
-  $("diagnostics-toggle").setAttribute("aria-pressed", String(diagnostics));
-  $("diagnostics-toggle").classList.toggle("row-action-active", diagnostics);
-  $("diagnostics-toggle").textContent = diagnostics ? "▣" : "?";
-  $("logs-toggle").setAttribute("aria-pressed", String(logs));
-  $("logs-toggle").classList.toggle("row-action-active", logs);
-  $("logs-toggle").textContent = logs ? "▣" : "≋";
-  if (diagnostics) renderDiagnostics();
-  if (logs) renderLogs();
-}
-
-function setDiagnosticsMode(active) {
-  state.diagnosticsMode = active;
-  if (active) state.logsMode = false;
-  syncDiagnosticsVisibility();
-}
-
-function setLogsMode(active) {
-  state.logsMode = active;
-  if (active) state.diagnosticsMode = false;
-  syncDiagnosticsVisibility();
-}
-
-function setScreenReaderMode(active) {
-  state.screenReaderMode = Boolean(active);
-  if (state.terminal) state.terminal.options.screenReaderMode = state.screenReaderMode;
-  const toggle = $("screen-reader-toggle");
-  toggle.setAttribute("aria-pressed", String(state.screenReaderMode));
-  toggle.classList.toggle("row-action-active", state.screenReaderMode);
-  toggle.title = state.screenReaderMode
-    ? t("screen-reader-disable")
-    : t("screen-reader-enable");
-}
-
-function appendLogs(entries) {
-  if (!Array.isArray(entries)) return;
-  state.logs.push(...entries);
-  state.logs = state.logs.slice(-256);
-  if (state.logsMode) renderLogs();
-}
-
-function syncPreflightVisibility() {
-  const active = state.preflightMode;
-  if (active) closeWorkspacePages();
-  ["fleet-state-strip", "column-labels", "fleet-list", "fleet-order-notice", "empty-state", "review-view"].forEach((id) => {
-    $(id).classList.toggle("view-hidden", active);
-  });
-  $("preflight-view").classList.toggle("view-hidden", !active);
-  $("preflight-toggle").setAttribute("aria-pressed", String(active));
-  $("preflight-toggle").classList.toggle("wide-toggle-active", active);
-  syncRailPage(active ? "preflight" : "fleet");
-  if (active) renderPreflight();
-}
-
-function setPreflightMode(active) {
-  state.preflightMode = active;
-  if (active) {
-    state.reviewMode = false;
-    state.diagnosticsMode = false;
-    state.logsMode = false;
-  }
-  syncPreflightVisibility();
-  syncReviewVisibility();
-  syncDiagnosticsVisibility();
-  if (active && !state.preflight) void loadPreflight();
-  if (!active) renderRows();
-}
-
-function preflightChecksNeedAttention(report) {
-  return (report?.checks ?? []).some((check) => !["ok", "unsupported"].includes(check.state));
-}
-
-function renderPreflight() {
-  const report = state.preflight;
-  const checks = Array.isArray(report?.checks) ? report.checks : [];
-  const attention = checks.filter((check) => !["ok", "unsupported"].includes(check.state)).length;
-  $("preflight-summary").textContent = state.preflightLoading
-    ? t("preflight-checking")
-    : state.preflightReason
-      ? state.preflightReason
-      : attention
-        ? countMessage("count-check", attention)
-        : t("preflight-all-ready");
-  $("preflight-list").innerHTML = checks.map((check) => {
-    const meta = PREFLIGHT_META[check.state] ?? PREFLIGHT_META.error;
-    const detail = check.detail ? `<small>${escapeHtml(check.detail)}</small>` : "";
-    const fixLabel = check.can_fix ? t("button-fix") : t("button-fix-unavailable");
-    return `<article class="preflight-row" role="listitem"><span class="status-glyph tone-${escapeHtml(meta.tone)}" title="${escapeHtml(metaLabel(meta))}" aria-hidden="true">${escapeHtml(meta.glyph)}</span><div class="preflight-copy"><div><b>${escapeHtml(check.label)}</b><span>${escapeHtml(metaLabel(meta))}</span></div><strong>${escapeHtml(check.detected)}</strong>${detail}</div><div class="preflight-actions"><button type="button" class="button button-secondary" data-preflight-action="fix" data-preflight-id="${escapeHtml(check.id)}"${check.can_fix ? "" : " disabled"} aria-label="${escapeHtml(fixLabel)} ${escapeHtml(check.label)}">${escapeHtml(fixLabel)}</button><button type="button" class="button button-quiet" data-preflight-action="recheck" data-preflight-id="${escapeHtml(check.id)}" aria-label="${escapeHtml(t("button-recheck"))} ${escapeHtml(check.label)}">${escapeHtml(t("button-recheck"))}</button></div></article>`;
-  }).join("");
-}
-
-async function loadPreflight(show = false) {
-  if (show) {
-    state.preflightMode = true;
-    syncPreflightVisibility();
-  }
-  state.preflightLoading = true;
-  renderPreflight();
-  try {
-    const report = await invoke("preflight_report");
-    state.preflight = report;
-    state.preflightReason = null;
-    if (!show && preflightChecksNeedAttention(report)) state.preflightMode = true;
-  } catch (error) {
-    state.preflightReason = t("preflight-run-error", { error: String(error) });
-    state.preflightMode = true;
-  } finally {
-    state.preflightLoading = false;
-    syncPreflightVisibility();
-    syncReviewVisibility();
-    if (!state.preflightMode) renderRows();
-  }
-}
-
-async function handlePreflightAction(action, id, button) {
-  if (button) button.disabled = true;
-  try {
-    if (action === "fix") {
-      await invoke("preflight_fix", { kind: id });
-      showToast(t("preflight-fix-applied", { id }), "success");
-    }
-    await loadPreflight(true);
-    if (id === "daemon" || action === "recheck") {
-      try {
-        await loadSnapshot();
-        if (!preflightChecksNeedAttention(state.preflight)) setPreflightMode(false);
-      } catch (_) {
-        // The preflight panel remains visible with the daemon check's detail.
-      }
-    }
-  } catch (error) {
-    state.preflightReason = t("preflight-action-error", { action, id, error: String(error) });
-    renderPreflight();
-    showToast(state.preflightReason);
-  } finally {
-    if (button) button.disabled = false;
-  }
-}
-
+// Diagnostics, daemon logs, and preflight checks live in `operationalPanels.js`.
 function syncReviewVisibility() {
   const hidden = state.reviewMode || state.preflightMode;
   ["fleet-state-strip", "column-labels", "fleet-list", "empty-state"].forEach((id) => {
@@ -2250,497 +2057,9 @@ async function sendBroadcast() {
  * amount queued, and rendering either as 0 would sort it beside a finished
  * project and quietly remove it from consideration.
  */
-function renderProjects() {
-  if (state.projectsError) {
-    $("projects-coverage").textContent = t("projects-unavailable");
-    renderDataError(
-      $("projects-body"),
-      t("projects-load-error", { error: state.projectsError }),
-      "projects",
-      openProjects,
-    );
-    return;
-  }
-  const openOnly = $("projects-open-only").checked;
-  const all = state.scannedProjects;
-  const rows = sortProjects(openOnly ? all.filter((item) => hasOpenWork(item.roadmap)) : all);
-  const { withWork, unknown, total } = summarizeProjects(all);
-  $("projects-coverage").textContent = total
-    ? t("projects-summary", { withWork, total, unknown })
-    : t("projects-none-registered");
+// Workspace utility pages live in `workspacePages.js`.
 
-  if (!rows.length) {
-    $("projects-body").innerHTML = `<p class="rollup-total">${escapeHtml(
-      total ? t("projects-none-matching") : t("projects-none-registered"),
-    )}</p>`;
-    return;
-  }
-  $("projects-body").innerHTML = `
-    <table class="rollup-table projects-table">
-      <thead><tr>
-        <th>${escapeHtml(t("projects-column-project"))}</th>
-        <th class="rollup-number">${escapeHtml(t("projects-column-open"))}</th>
-        <th>${escapeHtml(t("projects-column-touched"))}</th>
-        <th>${escapeHtml(t("projects-column-next"))}</th>
-        <th></th>
-      </tr></thead>
-      <tbody>${rows
-        .map((item) => {
-          const cell = openItemsCell(item.roadmap, t);
-          const touched = stalenessLabel(item.roadmap, t) ?? "—";
-          const next = item.roadmap?.next_item ?? "";
-          // Each cell is built separately so no interpolation has to wrap, and
-          // every value is escaped at the point it lands — including inside an
-          // attribute, which `contentSecurity.test.mjs` checks uniformly.
-          const cells = [
-            `<th scope="row" title="${escapeHtml(item.path)}">${escapeHtml(item.name)}</th>`,
-            `<td class="rollup-number${cell.known ? "" : " rollup-unpriced"}">${escapeHtml(cell.text)}</td>`,
-            `<td>${escapeHtml(touched)}</td>`,
-            `<td class="projects-next">${escapeHtml(next)}</td>`,
-            `<td><button type="button" class="button button-quiet" data-launch-project="${escapeHtml(item.path)}">${escapeHtml(t("projects-launch"))}</button></td>`,
-          ];
-          return `<tr>${cells.join("")}</tr>`;
-        })
-        .join("")}</tbody>
-    </table>`;
-  for (const button of $("projects-body").querySelectorAll("[data-launch-project]")) {
-    button.addEventListener("click", () => {
-      $("projects-dialog").close();
-      openLauncher();
-      $("cwd-input").value = button.dataset.launchProject;
-      schedulePreview();
-      void loadProjectTemplates();
-    });
-  }
-}
-
-/// Show every session waiting on a decision.
-///
-/// A view over the snapshot the window already holds — a blocked session
-/// carries its own pending request — so there is no separate poll and nothing
-/// here can disagree with the rows behind it.
-function openApprovals() {
-  const dialog = $("approvals-dialog");
-  openWorkspacePage(dialog);
-  renderGuarded(
-    $("approvals-body"),
-    t("approvals-render-error"),
-    "openApprovals",
-    openApprovals,
-    renderApprovalInbox,
-  );
-}
-
-function renderApprovalInbox() {
-  const dialog = $("approvals-dialog");
-  if (!dialog.open) return;
-  const waiting = pendingApprovals(state.sessions);
-  $("approvals-count").textContent = t("approvals-count", { count: waiting.length });
-  const railApprovalCount = $("rail-approval-count");
-  if (railApprovalCount) {
-    railApprovalCount.textContent = String(waiting.length);
-    railApprovalCount.hidden = waiting.length === 0;
-  }
-  const body = $("approvals-body");
-  // The inbox follows the fleet, so it re-renders whenever any session
-  // changes — and a session unrelated to this one changing must not wipe an
-  // answer being typed. Skipped entirely when nothing the inbox shows has
-  // moved, and typed text is carried across when it has.
-  const signature = waiting
-    .map((session) => `${session.id}:${requestLine(session, t)}`)
-    .join("|");
-  if (body.dataset.signature === signature) return;
-  const typed = new Map(
-    [...body.querySelectorAll("[data-approval-reply]")]
-      .filter((element) => element.value)
-      .map((element) => [element.dataset.approvalReply, element.value]),
-  );
-  body.dataset.signature = signature;
-  body.innerHTML = renderApprovals(waiting, {
-    escape: escapeHtml,
-    translate: t,
-    dwell: (session) => relativeDwell(waitingSince(session) ?? systemTimeMs(session.status_since)),
-  });
-  for (const [id, value] of typed) {
-    const input = [...body.querySelectorAll("[data-approval-reply]")].find(
-      (element) => element.dataset.approvalReply === id,
-    );
-    if (input) input.value = value;
-  }
-  for (const button of body.querySelectorAll("[data-approval-focus]")) {
-    button.addEventListener("click", () => {
-      dialog.close();
-      void focusSession(button.dataset.approvalFocus);
-    });
-  }
-  for (const button of body.querySelectorAll("[data-approval-send]")) {
-    button.addEventListener("click", () => void sendApproval(button.dataset.approvalSend));
-  }
-  for (const input of body.querySelectorAll("[data-approval-reply]")) {
-    input.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter") return;
-      event.preventDefault();
-      void sendApproval(input.dataset.approvalReply);
-    });
-  }
-}
-
-/// Send the operator's answer to the session that asked.
-///
-/// The same bracketed-paste write the fleet row's reply box uses, because it is
-/// the same act: typing at that session's prompt. Nothing is auto-approved and
-/// no universal "yes" is invented — what the agent accepts is its own prompt's
-/// vocabulary, and guessing it would be answering on the operator's behalf.
-async function sendApproval(id) {
-  // Walked rather than selected: a session id in a selector string is the same
-  // shape of mistake as one in markup, even though the escaper would differ.
-  const input = [...$("approvals-body").querySelectorAll("[data-approval-reply]")].find(
-    (element) => element.dataset.approvalReply === id,
-  );
-  const answer = input?.value.trim();
-  if (!answer) return;
-  try {
-    await invoke("write_session", { id, data: `[200~${answer}[201~
-` });
-    await invoke("mark_read", { id });
-    input.value = "";
-    showToast(t("approvals-sent"), "success");
-  } catch (error) {
-    showToast(String(error));
-  }
-}
-
-/// Show the saved layouts.
-async function openWorkingSets() {
-  const dialog = $("working-sets-dialog");
-  openWorkspacePage(dialog);
-  await refreshWorkingSets();
-}
-
-async function refreshWorkingSets() {
-  const body = $("working-sets-body");
-  try {
-    const sets = await invoke("list_working_sets");
-    $("working-sets-count").textContent = t("working-sets-count", { count: sets.length });
-    body.innerHTML = sets.length
-      ? sets.map((set) => renderWorkingSet(set, { escape: escapeHtml, translate: t })).join("")
-      : `<p class="rollup-total">${escapeHtml(t("working-sets-empty"))}</p>`;
-  } catch (error) {
-    $("working-sets-count").textContent = "";
-    body.innerHTML = `<p class="rollup-total">${escapeHtml(String(error))}</p>`;
-    return;
-  }
-  for (const button of body.querySelectorAll("[data-restore-set]")) {
-    button.addEventListener("click", () => void restoreWorkingSet(button.dataset.restoreSet));
-  }
-  for (const button of body.querySelectorAll("[data-delete-set]")) {
-    button.addEventListener("click", async () => {
-      try {
-        await invoke("delete_working_set", { name: button.dataset.deleteSet });
-        await refreshWorkingSets();
-      } catch (error) {
-        showToast(String(error));
-      }
-    });
-  }
-}
-
-/// Relaunch a layout and show, per session, what the fleet decided.
-///
-/// The outcomes are rendered in place rather than toasted: a restore of twelve
-/// sessions can have several distinct refusals, and a toast holds one line for
-/// four seconds.
-async function restoreWorkingSet(name) {
-  // Found by walking the elements rather than by building a selector string:
-  // a layout name is operator input, and interpolating it into a selector is
-  // the same shape of mistake as interpolating it into markup even though the
-  // escaper would differ.
-  const list = [...$("working-sets-body").querySelectorAll("[data-outcomes-for]")].find(
-    (element) => element.dataset.outcomesFor === name,
-  );
-  if (list) list.innerHTML = `<li>${escapeHtml(t("loading"))}</li>`;
-  try {
-    const outcomes = await invoke("restore_working_set", { name });
-    if (list) {
-      list.innerHTML = renderRestoreOutcomes(outcomes, { escape: escapeHtml, translate: t });
-    }
-    showToast(t("working-sets-restored", summarizeRestore(outcomes)), "success");
-  } catch (error) {
-    if (list) list.innerHTML = "";
-    showToast(String(error));
-  }
-}
-
-/// Ask the daemon which sessions printed a string, and how many times.
-///
-/// Find-in-pane answers the same question for the one attached renderer; this
-/// is the reason the disk tier exists at all — the other twenty-nine sessions
-/// have no renderer, and until now their output could only be read by focusing
-/// each one in turn.
-async function runFleetSearch() {
-  const needle = $("fleet-search-input").value.trim();
-  const body = $("fleet-search-body");
-  const count = $("fleet-search-count");
-  if (needle.length < 2) {
-    count.textContent = "";
-    body.innerHTML = `<p class="rollup-total">${escapeHtml(t("fleet-search-too-short"))}</p>`;
-    return;
-  }
-  const button = $("fleet-search-run");
-  button.disabled = true;
-  body.innerHTML = `<p class="rollup-total">${escapeHtml(t("loading"))}</p>`;
-  try {
-    const matches = await invoke("search_fleet", {
-      needle,
-      caseSensitive: $("fleet-search-case").checked,
-    });
-    count.textContent = t("fleet-search-summary", searchSummary(matches));
-    body.innerHTML = renderSearchResults(matches, {
-      escape: escapeHtml,
-      translate: t,
-      needle,
-    });
-    for (const element of body.querySelectorAll("[data-search-focus]")) {
-      element.addEventListener("click", () => {
-        $("search-dialog").close();
-        void focusSession(element.dataset.searchFocus);
-      });
-    }
-  } catch (error) {
-    // A retry, not just the text. This one has a real backend behind it, so a
-    // failure is often transient and re-running is exactly what the operator
-    // would do -- and had to do by retyping.
-    count.textContent = "";
-    renderDataError(
-      body,
-      t("fleet-search-error", { error: String(error) }),
-      "runFleetSearch",
-      runFleetSearch,
-    );
-  } finally {
-    button.disabled = false;
-  }
-}
-
-async function openSessionHistory() {
-  const dialog = $("history-dialog");
-  openWorkspacePage(dialog);
-  $("history-body").innerHTML = `<p class="rollup-total">${escapeHtml(t("loading"))}</p>`;
-  let archives = [];
-  try {
-    archives = await invoke("session_history");
-  } catch (error) {
-    $("history-count").textContent = "";
-    $("history-body").innerHTML =
-      `<p class="rollup-total">${escapeHtml(t("session-history-error", { error: String(error) }))}</p>`;
-    return;
-  }
-  $("history-count").textContent = t("session-history-count", { count: archives.length });
-  $("history-body").innerHTML = renderSessionHistory(archives, {
-    escape: escapeHtml,
-    translate: t,
-    formatTime: (ms) => new Date(ms).toLocaleString(),
-  });
-  await refreshWorktrees();
-  for (const button of $("history-body").querySelectorAll("[data-relaunch]")) {
-    button.addEventListener("click", () => {
-      const archive = archives.find((item) => item.id === button.dataset.relaunch);
-      if (!archive) return;
-      dialog.close();
-      openLauncher();
-      // Only what the archive actually holds. The command is kept as text, so
-      // restoring a model or a sandbox from it would mean parsing an argv this
-      // record never promised to keep parseable.
-      $("agent-input").value = archive.agent;
-      $("name-input").value = archive.name ?? "";
-      $("cwd-input").value = archive.cwd ?? "";
-      schedulePreview();
-      void loadProjectTemplates();
-    });
-  }
-}
-
-/** Survey leftover checkouts inside the history dialog, which is where a
- * finished session's leavings belong. */
-async function refreshWorktrees() {
-  let worktrees = [];
-  try {
-    worktrees = await invoke("stale_worktrees");
-  } catch (error) {
-    $("worktrees-count").textContent = "";
-    $("worktrees-body").innerHTML =
-      `<p class="rollup-total">${escapeHtml(t("worktrees-error", { error: String(error) }))}</p>`;
-    return;
-  }
-  $("worktrees-count").textContent = t("worktrees-count", { count: worktrees.length });
-  $("worktrees-body").innerHTML = renderWorktrees(worktrees, { escape: escapeHtml, translate: t });
-  for (const button of $("worktrees-body").querySelectorAll("[data-reap]")) {
-    button.addEventListener("click", async () => {
-      const stale = worktrees[Number(button.dataset.reap)];
-      if (!stale) return;
-      button.disabled = true;
-      try {
-        await invoke("reap_worktree", { stale });
-        showToast(t("worktrees-removed"), "success");
-      } catch (error) {
-        // The core refuses unmerged and unknown states too, so a refusal that
-        // reaches here is worth reading rather than retrying.
-        showToast(String(error));
-        button.disabled = false;
-        return;
-      }
-      await refreshWorktrees();
-    });
-  }
-}
-
-async function openProjects() {
-  const dialog = $("projects-dialog");
-  openWorkspacePage(dialog);
-  // Scanning reads a file per project, so the dialog opens first and fills in
-  // rather than blocking on a few hundred reads before anything appears.
-  $("projects-body").innerHTML = `<p class="rollup-total">${escapeHtml(t("loading"))}</p>`;
-  try {
-    state.scannedProjects = await invoke("scan_projects");
-    state.projectsError = null;
-  } catch (error) {
-    state.scannedProjects = [];
-    state.projectsError = String(error);
-  }
-  renderProjects();
-  await Promise.all([loadProjectRoots(), loadStoredPrompts()]);
-  await refreshWorkRun();
-  await refreshWorkSchedule();
-}
-
-/** The queue button's glyph: the count when there is one, an outline when not. */
-function queueGlyph(session) {
-  const count = session.queued_prompts ?? 0;
-  if (!count) return "≡";
-  return count > 9 ? "9+" : String(count);
-}
-
-function queueTitle(session) {
-  const count = session.queued_prompts ?? 0;
-  if (session.queue_paused) {
-    return t("queue-paused-title", { name: session.name, reason: t(`queue-pause-${session.queue_paused}`) });
-  }
-  return count
-    ? t("queue-count-title", { name: session.name, count })
-    : t("action-queue", { name: session.name });
-}
-
-/**
- * The prompts waiting on one session.
- *
- * Fetched when the dialog opens rather than carried on every row: a session is
- * re-rendered on each status change, and the prompts can be a quarter of a
- * megabyte each.
- */
-async function openQueue(id) {
-  state.queueSession = id;
-  const dialog = $("queue-dialog");
-  if (!dialog.open) dialog.showModal();
-  await refreshQueue();
-  $("queue-input").focus();
-}
-
-async function refreshQueue() {
-  const id = state.queueSession;
-  if (!id) return;
-  try {
-    state.queuePrompts = await invoke("queued_prompts", { id });
-    state.queueError = null;
-  } catch (error) {
-    state.queuePrompts = [];
-    state.queueError = String(error);
-  }
-  renderQueue();
-}
-
-function renderQueue() {
-  const id = state.queueSession;
-  const session = state.sessions.find((item) => item.id === id);
-  $("queue-title").textContent = session ? t("queue-title", { name: session.name }) : t("queue-title-generic");
-  const paused = session?.queue_paused ?? null;
-  // Always stated, and always with the reason. "Paused" alone leaves the
-  // operator guessing whether the agent is waiting on them or the queue is.
-  $("queue-status").textContent = paused
-    ? t("queue-paused-detail", { reason: t(`queue-pause-${paused}`) })
-    : t("queue-running");
-  $("queue-resume-button").hidden = !paused;
-  $("queue-pause-button").hidden = Boolean(paused);
-
-  if (state.queueError) {
-    $("queue-status").textContent = t("queue-unavailable");
-    $("queue-resume-button").hidden = true;
-    $("queue-pause-button").hidden = true;
-    renderDataError(
-      $("queue-list"),
-      t("queue-load-error", { error: state.queueError }),
-      "queue",
-      refreshQueue,
-    );
-    return;
-  }
-
-  if (!state.queuePrompts.length) {
-    $("queue-list").innerHTML = `<p class="rollup-total">${escapeHtml(t("queue-empty"))}</p>`;
-    return;
-  }
-  $("queue-list").innerHTML = state.queuePrompts
-    .map((prompt, index) => {
-      const position = t("queue-position", { position: index + 1 });
-      return `<li class="queue-row" data-prompt="${escapeHtml(String(prompt.id))}"><span class="queue-position">${escapeHtml(position)}</span><textarea class="queue-text" rows="2" aria-label="${escapeHtml(position)}">${escapeHtml(prompt.text)}</textarea><span class="queue-row-actions"><button type="button" class="row-action" data-queue-action="up" title="${escapeHtml(t("queue-move-up"))}" aria-label="${escapeHtml(t("queue-move-up"))}">↑</button><button type="button" class="row-action" data-queue-action="down" title="${escapeHtml(t("queue-move-down"))}" aria-label="${escapeHtml(t("queue-move-down"))}">↓</button><button type="button" class="row-action" data-queue-action="save" title="${escapeHtml(t("queue-save"))}" aria-label="${escapeHtml(t("queue-save"))}">✓</button><button type="button" class="row-action row-action-danger" data-queue-action="remove" title="${escapeHtml(t("queue-withdraw"))}" aria-label="${escapeHtml(t("queue-withdraw"))}">×</button></span></li>`;
-    })
-    .join("");
-  for (const button of $("queue-list").querySelectorAll("[data-queue-action]")) {
-    button.addEventListener("click", () => void queueRowAction(button));
-  }
-}
-
-async function queueRowAction(button) {
-  const id = state.queueSession;
-  const row = button.closest("[data-prompt]");
-  const prompt = Number(row.dataset.prompt);
-  const index = state.queuePrompts.findIndex((item) => item.id === prompt);
-  const action = button.dataset.queueAction;
-  try {
-    if (action === "remove") await invoke("remove_queued_prompt", { id, prompt });
-    if (action === "save") {
-      await invoke("edit_queued_prompt", { id, prompt, text: row.querySelector(".queue-text").value });
-      showToast(t("queue-saved"), "success");
-    }
-    if (action === "up" && index > 0) {
-      await invoke("reorder_queued_prompt", { id, prompt, to: index - 1 });
-    }
-    if (action === "down" && index < state.queuePrompts.length - 1) {
-      await invoke("reorder_queued_prompt", { id, prompt, to: index + 1 });
-    }
-  } catch (error) {
-    // Usually a race: the prompt fired while the operator was deciding. The
-    // backend names that case, so it is shown rather than swallowed.
-    showToast(String(error));
-  }
-  await refreshQueue();
-}
-
-async function addQueuedPrompt() {
-  const id = state.queueSession;
-  const text = $("queue-input").value.trim();
-  if (!text) {
-    showToast(t("queue-empty-prompt"));
-    return;
-  }
-  try {
-    await invoke("enqueue_prompt", { id, text });
-    $("queue-input").value = "";
-  } catch (error) {
-    showToast(String(error));
-  }
-  await refreshQueue();
-}
-
+// Queue behavior lives in `queuePanel.js`; the shell keeps only its row bindings.
 /**
  * The in-app explanation of the row -> focused-terminal model.
  *
@@ -2771,762 +2090,7 @@ function renderExplainerStates() {
   }).join("");
 }
 
-function createOutputChannel(id) {
-  const generation = state.focusGeneration;
-  const channel = new Channel();
-  channel.onmessage = (data) => writeTerminalBytes(data, id, generation);
-  return channel;
-}
-
-/// The focused pane already contains this in-memory ring after attach. Ask for
-/// the ring plus one older window so the reset-and-replay path includes bytes
-/// the pane did not already show.
-const MAX_SCROLLBACK_BYTES = 512 * 1024;
-const HISTORY_OLDER_BYTES = 128 * 1024;
-const HISTORY_REQUEST_BYTES = MAX_SCROLLBACK_BYTES + HISTORY_OLDER_BYTES;
-
-/// Show or hide the find bar over the focused pane.
-///
-/// Closing clears the search rather than leaving it: xterm keeps its highlight
-/// decorations until told otherwise, so a hidden bar with a live search leaves
-/// the pane marked up for a query the operator can no longer see.
-function toggleFind(next = null) {
-  const bar = $("terminal-find");
-  const open = next === null ? bar.hidden : next;
-  bar.hidden = !open;
-  $("terminal-find-toggle").setAttribute("aria-pressed", String(open));
-  if (open) {
-    $("terminal-find-input").focus();
-    $("terminal-find-input").select();
-    runFind();
-  } else {
-    state.searchAddon?.clearDecorations();
-    $("terminal-find-count").textContent = "";
-    state.terminal?.focus();
-  }
-}
-
-/// Run the current query. `direction` moves to the adjacent match; omitting it
-/// re-runs in place, which is what a keystroke in the field wants.
-function runFind(direction = null) {
-  const needle = $("terminal-find-input").value;
-  if (!state.searchAddon) return;
-  if (!needle) {
-    state.searchAddon.clearDecorations();
-    $("terminal-find-count").textContent = "";
-    return;
-  }
-  // Read from the same tokens `terminalTheme` uses, not written as literals:
-  // decorations are painted into the same canvas no contrast gate can see, so
-  // a hardcoded palette here would be the theming defect again in a place the
-  // guard for it would not have looked.
-  const styles = getComputedStyle(document.documentElement);
-  const token = (name) => styles.getPropertyValue(name).trim();
-  const options = {
-    decorations: {
-      matchOverviewRuler: token("--yellow"),
-      activeMatchColorOverviewRuler: token("--red"),
-      matchBackground: token("--term-selection"),
-      activeMatchBackground: token("--yellow"),
-    },
-  };
-  if (direction === "previous") state.searchAddon.findPrevious(needle, options);
-  else state.searchAddon.findNext(needle, options);
-}
-
-/// Report the addon's own match count.
-///
-/// `resultCount` is -1 while the addon is still scanning a long buffer, and 0
-/// when nothing matched. The two are different answers and the row says which:
-/// showing "0 matches" during a scan is a wrong answer that arrives before the
-/// right one.
-function renderFindCount(results) {
-  const element = $("terminal-find-count");
-  if (!results || results.resultCount < 0) {
-    element.textContent = t("find-searching");
-    return;
-  }
-  if (results.resultCount === 0) {
-    element.textContent = t("find-none");
-    return;
-  }
-  element.textContent = t("find-position", {
-    index: results.resultIndex + 1,
-    total: results.resultCount,
-  });
-}
-
-/// Prepend output the in-memory ring has already dropped.
-///
-/// The terminal is reset and rewritten rather than scrolled backwards: xterm has
-/// no way to insert above existing content, and replaying history followed by
-/// the ring is the only ordering that reads correctly. The live stream keeps
-/// arriving on its own channel throughout.
-async function loadOlderOutput() {
-  const id = state.focused;
-  if (!id || state.historyLoading) return;
-  state.historyLoading = true;
-  try {
-    const generation = state.focusGeneration;
-    const chunks = [];
-    const channel = new Channel();
-    channel.onmessage = (data) => chunks.push(data);
-    await invoke("stream_scrollback_history", {
-      id,
-      maxBytes: HISTORY_REQUEST_BYTES,
-      channel,
-    });
-    // A focus switch while the read was in flight would otherwise paint one
-    // session's history into another session's pane.
-    if (state.focused !== id || state.focusGeneration !== generation) return;
-    const total = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    if (!total) {
-      showToast(t("history-empty"));
-      return;
-    }
-    state.terminal?.reset();
-    for (const chunk of chunks) writeTerminalBytes(chunk, id, generation);
-    showToast(t("history-loaded", { bytes: Math.round(total / 1024) }), "success");
-  } catch (error) {
-    showToast(t("history-load-error", { error: String(error) }));
-  } finally {
-    state.historyLoading = false;
-  }
-}
-
-async function attachSessionOutput(id) {
-  const channel = createOutputChannel(id);
-  state.outputChannel = channel;
-  const session = state.sessions.find((item) => item.id === id);
-  if (session && session.status !== "exited") {
-    await invoke("attach_session_output", { id, channel });
-  } else {
-    await invoke("focus_session", { id });
-    await invoke("subscribe_output", { id, channel });
-    await invoke("stream_scrollback", { id, channel });
-  }
-  await invoke("mark_read", { id });
-}
-
-async function rowAction(action, id, row = null) {
-  try {
-    if (action === "queue") await openQueue(id);
-    if (action === "pin") await invoke("toggle_pin", { id });
-    if (action === "focus") await focusSession(id);
-    if (action === "reply") {
-      const input = row?.querySelector("input[data-reply]");
-      const reply = input?.value.trim();
-      if (!reply) return;
-      const bracketedPaste = `\x1b[200~${reply}\x1b[201~\r`;
-      await invoke("write_session", { id, data: bracketedPaste });
-      await invoke("mark_read", { id });
-      input.value = "";
-      showToast(t("reply-sent"), "success");
-    }
-    if (action === "kill") {
-      await invoke("kill_session", { id });
-      showToast(t("stop-signal-sent"), "success");
-    }
-    if (action === "revive") {
-      await invoke("revive_session", { id });
-      showToast(t("resume-started"), "success");
-    }
-    if (action === "archive") {
-      await invoke("archive_session", { id });
-      showToast(t("archive-stopped"), "success");
-    }
-  } catch (error) {
-    showToast(String(error));
-  }
-}
-
-function defaultSpec() {
-  return {
-    agent: "claude",
-    name: null,
-    cwd: "",
-    model: null,
-    effort: null,
-    permission: "ask",
-    sandbox: null,
-    profile: null,
-    add_dirs: [],
-    resume: { kind: "new" },
-    max_budget_usd: null,
-    max_concurrent_subagents: null,
-    agent_teams: null,
-    web_search: false,
-    initial_prompt: null,
-    extra_args: [],
-    allowed_tools: [],
-    disallowed_tools: [],
-    settings: null,
-    setting_sources: null,
-    mcp_config: [],
-    strict_mcp_config: false,
-    plugin_dirs: [],
-    plugin_urls: [],
-    fallback_model: null,
-    environment: { setup: null, teardown: null, port_base: 42000, port_count: 4 },
-    worktree: false,
-  };
-}
-
-/// A whole-number field, or null when it is blank.
-///
-/// Blank and zero are different requests: blank means the agent's own default,
-/// and zero is refused by the core rather than read as "no cap".
-function optionalCount(id) {
-  const raw = $(id).value.trim();
-  if (!raw) return null;
-  const value = Number(raw);
-  return Number.isInteger(value) ? value : null;
-}
-
-/// The three-state teams choice. `null` leaves it to the agent's own
-/// configuration; the other two state it, because "teams off" is a decision
-/// about a session's cost and should not depend on ambient configuration.
-function teamsChoice(value) {
-  if (value === "on") return true;
-  if (value === "off") return false;
-  return null;
-}
-
-/// One comma-separated field as a list, with empty entries dropped. An empty
-/// entry would reach the agent as a bare flag with nothing after it.
-function commaList(id) {
-  return $(id)
-    .value.split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
-function readSpec() {
-  const agent = $("agent-input").value;
-  const resumeKind = $("resume-input").value;
-  const nativeId = $("resume-id-input").value.trim();
-  const resume = resumeKind === "session" ? { kind: "session", id: nativeId } : resumeKind === "fork" ? { kind: "fork", id: nativeId } : { kind: resumeKind };
-  const budget = $("budget-input").value.trim();
-  const portBase = Number.parseInt($("port-base-input").value, 10);
-  const portCount = Number.parseInt($("port-count-input").value, 10);
-  return {
-    agent,
-    name: $("name-input").value.trim() || null,
-    cwd: $("cwd-input").value.trim(),
-    model: $("model-input").value.trim() || null,
-    effort: $("effort-input").value.trim() || null,
-    permission: $("permission-input").value,
-    sandbox: agent === "codex" ? $("sandbox-input").value : null,
-    profile: agent === "codex" ? $("profile-input").value.trim() || null : null,
-    add_dirs: [...state.extraDirs],
-    resume,
-    // Both agents: the cap is enforced by this tool's ledger, which reads
-    // both agents' transcripts, rather than by a launcher flag only one of
-    // them has and neither honours outside print mode.
-    max_budget_usd: budget ? Number(budget) : null,
-    web_search: agent === "codex" && $("search-input").checked,
-    // Claude-only, and sent only for Claude so switching agents does not carry
-    // a field the core would refuse. Admission governs how many sessions run;
-    // this is the one multiplier a single session controls.
-    max_concurrent_subagents: agent === "claude" ? optionalCount("subagents-input") : null,
-    agent_teams: agent === "claude" ? teamsChoice($("agent-teams-input").value) : null,
-    initial_prompt: $("prompt-input").value.trim() || null,
-    extra_args: [],
-    worktree: $("worktree-input").checked,
-    agent_home: $("agent-home-input").value.trim() || null,
-    // Names only. The core reads each value from this process and refuses a
-    // name that is unset, so an empty entry must not reach it as one.
-    env_passthrough: $("env-passthrough-input")
-      .value.split(",")
-      .map((name) => name.trim())
-      .filter(Boolean),
-    // Claude-only on the versions this build maps. Sent only for Claude so a
-    // Codex launch is not refused for a field the operator left behind when
-    // switching agents — the core refuses these on Codex by design, and that
-    // refusal should describe a choice, not a stale form.
-    allowed_tools: agent === "claude" ? commaList("allowed-tools-input") : [],
-    disallowed_tools: agent === "claude" ? commaList("disallowed-tools-input") : [],
-    settings: agent === "claude" ? $("settings-input").value.trim() || null : null,
-    setting_sources:
-      agent === "claude" ? $("setting-sources-input").value.trim() || null : null,
-    mcp_config: agent === "claude" ? commaList("mcp-config-input") : [],
-    strict_mcp_config: agent === "claude" && $("strict-mcp-input").checked,
-    plugin_dirs: agent === "claude" ? commaList("plugin-dirs-input") : [],
-    plugin_urls: agent === "claude" ? commaList("plugin-urls-input") : [],
-    // Deliberately never set. `claude --help` restricts `--fallback-model` to
-    // `--print`, so the launcher offered a control the agent would ignore; the
-    // core refuses the field by name, and a stored preset that still carries
-    // one is refused rather than launched with a flag that does nothing.
-    fallback_model: null,
-    environment: {
-      setup: $("setup-hook-input").value.trim() || null,
-      teardown: $("teardown-hook-input").value.trim() || null,
-      port_base: Number.isInteger(portBase) ? portBase : 42000,
-      port_count: Number.isInteger(portCount) ? portCount : 4,
-    },
-  };
-}
-
-// A <select> silently discards a value it has no option for, so a preset or a
-// resumed spec naming a permission mode this build does not model would come
-// back as "" and launch with no mode at all. The core keeps such a value
-// (Permission::Custom); this carries it into the list so it round-trips and the
-// operator can see what is about to be launched. Previous carried-in options are
-// dropped first so switching presets does not accumulate them.
-function setPermissionValue(value) {
-  const select = $("permission-input");
-  for (const option of Array.from(select.options)) {
-    if (option.dataset.passthrough === "true") option.remove();
-  }
-  const wanted = value ?? "ask";
-  if (!Array.from(select.options).some((option) => option.value === wanted)) {
-    const option = document.createElement("option");
-    option.value = wanted;
-    option.textContent = t("launcher-permission-custom", { mode: wanted });
-    option.dataset.passthrough = "true";
-    select.append(option);
-  }
-  select.value = wanted;
-}
-
-function writeSpec(spec) {
-  clearFolderValidation();
-  $("agent-input").value = spec.agent ?? "claude";
-  $("name-input").value = spec.name ?? "";
-  // A built-in preset names no folder: which configuration and which project
-  // are separate choices, so applying "Plan first" must not retarget the
-  // session to nowhere. Only a preset that actually carries a folder sets one.
-  if (spec.cwd) $("cwd-input").value = spec.cwd;
-  $("model-input").value = spec.model ?? "";
-  $("effort-input").value = spec.effort ?? "";
-  setPermissionValue(spec.permission);
-  $("sandbox-input").value = spec.sandbox ?? "workspace-write";
-  $("profile-input").value = spec.profile ?? "";
-  $("resume-input").value = spec.resume?.kind ?? "new";
-  $("resume-id-input").value = spec.resume?.id ?? "";
-  $("budget-input").value = spec.max_budget_usd ?? "";
-  $("search-input").checked = Boolean(spec.web_search);
-  $("subagents-input").value = spec.max_concurrent_subagents ?? "";
-  $("agent-teams-input").value = spec.agent_teams === true ? "on" : spec.agent_teams === false ? "off" : "";
-  $("worktree-input").checked = Boolean(spec.worktree);
-  $("agent-home-input").value = spec.agent_home ?? "";
-  $("env-passthrough-input").value = (spec.env_passthrough ?? []).join(", ");
-  $("allowed-tools-input").value = (spec.allowed_tools ?? []).join(", ");
-  $("disallowed-tools-input").value = (spec.disallowed_tools ?? []).join(", ");
-  $("settings-input").value = spec.settings ?? "";
-  $("setting-sources-input").value = spec.setting_sources ?? "";
-  $("mcp-config-input").value = (spec.mcp_config ?? []).join(", ");
-  $("strict-mcp-input").checked = Boolean(spec.strict_mcp_config);
-  $("plugin-dirs-input").value = (spec.plugin_dirs ?? []).join(", ");
-  $("plugin-urls-input").value = (spec.plugin_urls ?? []).join(", ");
-  $("port-base-input").value = spec.environment?.port_base ?? 42000;
-  $("port-count-input").value = spec.environment?.port_count ?? 4;
-  $("setup-hook-input").value = spec.environment?.setup ?? "";
-  $("teardown-hook-input").value = spec.environment?.teardown ?? "";
-  $("prompt-input").value = spec.initial_prompt ?? "";
-  state.extraDirs = spec.add_dirs ?? [];
-  $("extra-dirs-input").value = state.extraDirs.join("; ");
-  syncAgentFields();
-  schedulePreview();
-}
-
-function clearFolderValidation() {
-  const input = $("cwd-input");
-  input.removeAttribute("aria-invalid");
-  input.setCustomValidity("");
-  const message = $("cwd-error");
-  message.hidden = true;
-  message.textContent = "";
-}
-
-function showFolderValidation() {
-  const input = $("cwd-input");
-  const message = $("cwd-error");
-  const text = t("launcher-folder-required");
-  input.setAttribute("aria-invalid", "true");
-  input.setCustomValidity(text);
-  message.textContent = text;
-  message.hidden = false;
-  input.focus();
-}
-
-function capabilityForAgent(agent = $("agent-input").value) {
-  return state.capabilities[agent] ?? null;
-}
-
-function renderCapabilityFields() {
-  const capabilities = capabilityForAgent();
-  const selectedModel = $("model-input").value.trim();
-  const models = Array.isArray(capabilities?.models) ? capabilities.models : [];
-  $("model-suggestions").innerHTML = models
-    .filter((model) => !model.hidden)
-    .map((model) => `<option value="${escapeHtml(model.id)}"></option>`)
-    .join("");
-  const selected = models.find((model) => model.id === selectedModel);
-  const efforts = selected?.supported_efforts?.length
-    ? selected.supported_efforts
-    : (capabilities?.efforts ?? []);
-  $("effort-suggestions").innerHTML = efforts
-    .map((effort) => `<option value="${escapeHtml(effort)}"></option>`)
-    .join("");
-  const warnings = [];
-  if (capabilities?.warning) warnings.push(capabilities.warning);
-  if (selectedModel && models.length && !models.some((model) => model.id === selectedModel)) {
-    warnings.push(`Model ${selectedModel} is not in the detected catalog; it will be passed through.`);
-  }
-  const selectedEffort = $("effort-input").value.trim();
-  if (selectedEffort && efforts.length && !efforts.includes(selectedEffort)) {
-    warnings.push(`Reasoning effort ${selectedEffort} is not advertised for this model; it will be passed through.`);
-  }
-  const note = $("capability-note");
-  note.classList.toggle("field-hidden", warnings.length === 0);
-  note.textContent = warnings.join(" ");
-}
-
-async function loadAgentCapabilities(agent = $("agent-input").value) {
-  const request = ++state.capabilityRequest;
-  renderCapabilityFields();
-  try {
-    const capabilities = await invoke("agent_capabilities", { agent, configuredPath: null });
-    if (request !== state.capabilityRequest) return;
-    state.capabilities[agent] = capabilities;
-  } catch (error) {
-    if (request !== state.capabilityRequest) return;
-    state.capabilities[agent] = {
-      models: [],
-      efforts: [],
-      warning: `Runtime capability probe unavailable: ${String(error)} Custom values remain allowed.`,
-    };
-  }
-  renderCapabilityFields();
-}
-
-function syncAgentFields() {
-  const codex = $("agent-input").value === "codex";
-  document.querySelectorAll(".codex-only").forEach((element) => element.classList.toggle("field-hidden", !codex));
-  document.querySelectorAll(".claude-only").forEach((element) => element.classList.toggle("field-hidden", codex));
-  renderCapabilityFields();
-  // Choosing Claude used to silently rewrite a plan-mode selection to "ask".
-  // It had been there unchanged since the first Tauri shell commit, with no
-  // test and no recorded reason, and it rewrote two of this tool's own built-in
-  // presets the moment the launcher synced its fields.
-  //
-  // Removed 2026-08-07 after verifying against the installed build rather than
-  // the documentation: `claude --help` lists `plan` among the accepted
-  // `--permission-mode` choices, and `claude --permission-mode plan --print`
-  // runs and exits 0. `launch.rs` has always mapped Permission::Plan for both
-  // agents, so the launcher was the only thing that disagreed.
-  document.querySelectorAll(".resume-id-field").forEach((element) => element.classList.toggle("field-hidden", $("resume-input").value === "new" || $("resume-input").value === "last"));
-}
-
-function schedulePreview() {
-  clearTimeout(state.previewTimer);
-  const request = ++state.previewRequest;
-  state.previewTimer = setTimeout(() => updatePreview(request), 180);
-}
-
-async function updatePreview(request) {
-  const spec = readSpec();
-  if (!spec.cwd) {
-    $("preview-output").textContent = t("preview-folder");
-    $("preview-state").textContent = t("preview-waiting");
-    return;
-  }
-  $("preview-state").textContent = t("preview-resolving");
-  try {
-    const command = await invoke("preview_launch", invokeArgs(spec));
-    if (request !== state.previewRequest) return;
-    $("preview-output").textContent = command;
-    $("preview-state").textContent = t("preview-exact");
-  } catch (error) {
-    if (request !== state.previewRequest) return;
-    $("preview-output").textContent = String(error);
-    $("preview-state").textContent = t("preview-refused");
-  }
-}
-
-async function launchCurrentSpec() {
-  const spec = readSpec();
-  if (!spec.cwd) {
-    showFolderValidation();
-    return false;
-  }
-  clearFolderValidation();
-  try {
-    const receipt = await invoke("launch_session", invokeArgs(spec));
-    $("launcher-dialog").close();
-    const agentLabel = spec.agent === "codex" ? "Codex" : "Claude Code";
-    showToast(
-      receipt?.queued
-        ? agentLabel + " session queued for an admission slot"
-        : agentLabel + " session launched",
-      "success",
-    );
-    return true;
-  } catch (error) {
-    showToast(String(error));
-    return false;
-  }
-}
-
-async function loadPresets() {
-  try {
-    state.presets = await invoke("list_presets");
-    const selected = $("preset-select").value;
-    // Built-ins are labelled, not silently mixed in: an operator who cannot see
-    // which ones shipped with the app cannot tell why one of them refuses to be
-    // overwritten.
-    $("preset-select").innerHTML = `<option value="">${escapeHtml(t("button-presets"))}</option>${state.presets
-      .map((preset) => {
-        const label = preset.builtin ? `${preset.name} ${t("preset-builtin-mark")}` : preset.name;
-        const title = preset.description ? ` — ${preset.description}` : "";
-        return `<option value="${escapeHtml(preset.name)}" title="${escapeHtml(`${label}${title}`)}">${escapeHtml(label)}</option>`;
-      })
-      .join("")}`;
-    if (state.presets.some((preset) => preset.name === selected)) $("preset-select").value = selected;
-    $("delete-preset-button").disabled = !$("preset-select").value;
-  } catch (error) {
-    showToast(t("presets-load-error", { error: String(error) }));
-  }
-}
-
-/**
- * Offer the launch configurations the chosen repository declares about itself.
- *
- * Re-read every time the folder changes rather than cached: the file is
- * versioned with the repository, so pulling a branch that changes it should
- * change what the launcher offers.
- *
- * A repository with no templates hides the control entirely — an empty dropdown
- * reads as "this project has none configured yet", which is a different and
- * more distracting claim than not mentioning it.
- */
-async function loadProjectTemplates() {
-  const field = document.querySelector(".project-template-field");
-  const cwd = $("cwd-input").value.trim();
-  state.templates = [];
-  if (!cwd) {
-    field.hidden = true;
-    return;
-  }
-  try {
-    state.templates = await invoke("list_templates", { cwd });
-  } catch (error) {
-    // Said out loud, never swallowed: launching now would apply the operator's
-    // own defaults while they believe the project's were used.
-    field.hidden = true;
-    showToast(t("template-unreadable", { detail: String(error) }));
-    return;
-  }
-  field.hidden = state.templates.length === 0;
-  $("template-select").innerHTML = `<option value="">${escapeHtml(t("template-none"))}</option>${state.templates
-    .map(
-      (template, index) =>
-        `<option value="${index}">${escapeHtml(template.name)}${
-          template.description ? ` — ${escapeHtml(template.description)}` : ""
-        }</option>`,
-    )
-    .join("")}`;
-}
-
-/**
- * Apply the chosen template to the form.
- *
- * The folder is deliberately not touched: it is the repository the template was
- * read from, which is the one choice the operator has already made.
- */
-function applyProjectTemplate() {
-  const index = Number.parseInt($("template-select").value, 10);
-  const template = state.templates[index];
-  if (!template) return;
-  const cwd = $("cwd-input").value.trim();
-  if (template.agent) $("agent-input").value = template.agent;
-  if (template.model) $("model-input").value = template.model;
-  if (template.effort) $("effort-input").value = template.effort;
-  if (template.permission) setPermissionValue(template.permission);
-  if (template.sandbox) $("sandbox-input").value = template.sandbox;
-  if (template.profile) $("profile-input").value = template.profile;
-  if (template.prompt) $("prompt-input").value = template.prompt;
-  $("worktree-input").checked = Boolean(template.worktree);
-  $("search-input").checked = Boolean(template.web_search);
-  state.extraDirs = (template.add_dirs ?? []).map((dir) => `${cwd}/${dir}`);
-  $("extra-dirs-input").value = state.extraDirs.join("; ");
-  syncAgentFields();
-  schedulePreview();
-  showToast(t("template-applied", { name: template.name }), "success");
-}
-
-/**
- * Offer every repository under the registered roots as a launch target.
- *
- * Re-read rather than cached: the point of the list is being current, so a
- * repository cloned five minutes ago is launchable without telling the app.
- *
- * With no root registered the control is hidden entirely — an empty "Known
- * projects" dropdown is a question the operator has no way to answer. The
- * register button beside Browse is what they see instead.
- */
-function renderProjectRoots() {
-  const list = $("project-root-list");
-  if (state.projectRootsError) {
-    renderDataError(
-      list,
-      t("projects-roots-load-error", { error: state.projectRootsError }),
-      "project-roots",
-      loadProjectRoots,
-    );
-    return;
-  }
-  if (!state.projectRoots.length) {
-    list.innerHTML = '<li class="rollup-total">' + escapeHtml(t("projects-roots-empty")) + "</li>";
-    return;
-  }
-  list.innerHTML = state.projectRoots
-    .map((root) => {
-      const value = String(root);
-      const label = t("projects-root-remove", { root: value });
-      return '<li class="project-root-row"><code class="project-root-path" title="' + escapeHtml(value) + '">' + escapeHtml(value) + '</code><button type="button" class="button button-quiet" data-project-root-remove="' + escapeHtml(value) + '" title="' + escapeHtml(label) + '" aria-label="' + escapeHtml(label) + '">' + escapeHtml(t("button-remove")) + "</button></li>";
-    })
-    .join("");
-}
-
-async function loadProjectRoots() {
-  try {
-    state.projectRoots = await invoke("list_project_roots");
-    state.projectRootsError = null;
-  } catch (error) {
-    state.projectRoots = [];
-    state.projectRootsError = String(error);
-  }
-  renderProjectRoots();
-}
-
-async function refreshScannedProjects() {
-  try {
-    state.scannedProjects = await invoke("scan_projects");
-    state.projectsError = null;
-  } catch (error) {
-    state.scannedProjects = [];
-    state.projectsError = String(error);
-  }
-  renderProjects();
-}
-
-async function removeProjectRoot(path) {
-  try {
-    const removed = await invoke("remove_project_root", { path });
-    await loadProjectRoots();
-    await loadKnownProjects();
-    if ($("projects-dialog").open) await refreshScannedProjects();
-    showToast(
-      removed ? t("projects-root-removed", { root: path }) : t("projects-root-not-found", { root: path }),
-      removed ? "success" : "",
-    );
-  } catch (error) {
-    showToast(String(error));
-  }
-}
-
-async function loadKnownProjects() {
-  const field = document.querySelector(".known-projects-field");
-  try {
-    state.projects = await invoke("list_projects");
-  } catch (error) {
-    state.projects = [];
-    showToast(String(error));
-  }
-  field.hidden = state.projects.length === 0;
-  $("register-root-empty-button").hidden = state.projects.length > 0;
-  $("project-select").innerHTML = `<option value="">${escapeHtml(t("project-choose"))}</option>${state.projects
-    .map(
-      (project) =>
-        `<option value="${escapeHtml(project.path)}" title="${escapeHtml(project.path)}">${escapeHtml(project.name)}</option>`,
-    )
-    .join("")}`;
-}
-
-/**
- * Register a folder that holds repositories.
- *
- * Reports how many projects it found. "Registered" alone leaves the operator
- * unable to tell a working root from one pointed at the wrong directory, and
- * the difference only shows up later as an empty dropdown.
- */
-async function registerProjectRoot() {
-  let root;
-  try {
-    root = await invoke("pick_folder");
-  } catch (error) {
-    showToast(String(error));
-    return;
-  }
-  if (!root) return;
-  try {
-    await invoke("add_project_root", { path: root });
-  } catch (error) {
-    showToast(String(error));
-    return;
-  }
-  await Promise.all([loadProjectRoots(), loadKnownProjects()]);
-  if ($("projects-dialog").open) await refreshScannedProjects();
-  const found = state.projects.filter((project) => project.root === root).length;
-  showToast(
-    found ? t("projects-root-added", { root, count: found }) : t("projects-none-found", { root }),
-    found ? "success" : "",
-  );
-}
-
-async function saveCurrentPreset() {
-  const name = $("preset-name-input").value.trim();
-  if (!name) {
-    showToast(t("preset-name-required"));
-    $("preset-name-input").focus();
-    return;
-  }
-  try {
-    await invoke("save_preset", {
-      preset: { name, spec: readSpec(), configured_path: null, builtin: false, description: null },
-    });
-    await loadPresets();
-    $("preset-name-input").value = "";
-    showToast(t("preset-saved", { name }), "success");
-  } catch (error) {
-    showToast(String(error));
-  }
-}
-
-async function deleteSelectedPreset() {
-  const select = $("preset-select");
-  const name = select.value;
-  if (!name) return;
-  try {
-    const removed = await invoke("delete_preset", { name });
-    await loadPresets();
-    showToast(
-      removed ? t("preset-deleted", { name }) : t("preset-not-found", { name }),
-      removed ? "success" : "",
-    );
-  } catch (error) {
-    showToast(String(error));
-  }
-}
-
-function loadSelectedPreset() {
-  const preset = state.presets.find((entry) => entry.name === $("preset-select").value);
-  if (!preset) return;
-  writeSpec(preset.spec);
-  $("launcher-dialog").showModal();
-  void loadAgentCapabilities($("agent-input").value);
-}
-
-function openLauncher() {
-  writeSpec(defaultSpec());
-  void loadKnownProjects();
-  $("launcher-dialog").showModal();
-  $("cwd-input").focus();
-  void loadAgentCapabilities($("agent-input").value);
-}
-
+// Focused terminal history and find controls live in `terminalHistory.js`.
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 40;
 /// Agent TUIs hard-wrap and do not reflow, so a resize arriving mid-drag
@@ -3609,6 +2173,119 @@ const {
   startWorkRun,
 } = workRunPanel;
 
+const workspacePages = createWorkspacePages({
+  $,
+  state,
+  invoke,
+  t,
+  escapeHtml,
+  renderDataError,
+  openWorkspacePage,
+  sortProjects,
+  hasOpenWork,
+  summarizeProjects,
+  openItemsCell,
+  stalenessLabel,
+  renderWorkingSet,
+  renderRestoreOutcomes,
+  summarizeRestore,
+  renderSearchResults,
+  searchSummary,
+  renderSessionHistory,
+  renderWorktrees,
+  focusSession,
+  openLauncher,
+  schedulePreview,
+  loadProjectTemplates,
+  loadProjectRoots,
+  loadStoredPrompts,
+  refreshWorkRun,
+  refreshWorkSchedule,
+  showToast,
+});
+const {
+  renderProjects,
+  openWorkingSets,
+  refreshWorkingSets,
+  restoreWorkingSet,
+  runFleetSearch,
+  openSessionHistory,
+  refreshWorktrees,
+  openProjects,
+} = workspacePages;
+
+const terminalHistory = createTerminalHistory({
+  $,
+  state,
+  invoke,
+  t,
+  showToast,
+  Channel,
+  document,
+  writeTerminalBytes,
+});
+const {
+  toggleFind,
+  runFind,
+  renderFindCount,
+  loadOlderOutput,
+  attachSessionOutput,
+} = terminalHistory;
+
+const operationalPanels = createOperationalPanels({
+  $,
+  state,
+  invoke,
+  t,
+  escapeHtml,
+  systemTimeMs,
+  STATUS_META,
+  PREFLIGHT_META,
+  STATUS_KEYS,
+  countMessage,
+  statusLabel,
+  metaLabel,
+  lifecycleLabel,
+  lifecycleTone,
+  lifecycleDetail,
+  dwell,
+  renderDataError,
+  closeWorkspacePages,
+  syncRailPage,
+  syncReviewVisibility,
+  renderRows,
+  loadSnapshot,
+  showToast,
+  setReviewMode,
+  loadReview,
+  markReviewed,
+  landSession,
+});
+const {
+  renderDiagnostics,
+  renderLogs,
+  syncDiagnosticsVisibility,
+  setDiagnosticsMode,
+  setLogsMode,
+  setScreenReaderMode,
+  appendLogs,
+  syncPreflightVisibility,
+  setPreflightMode,
+  preflightChecksNeedAttention,
+  renderPreflight,
+  loadPreflight,
+  handlePreflightAction,
+  bindEvents: bindOperationalEvents,
+} = operationalPanels;
+
+const daemonEvents = createDaemonEvents({
+  updateSession,
+  removeSession,
+  showAttentionToast,
+  retractAttentionToast,
+});
+const { handleDaemonEvent } = daemonEvents;
+
 const terminalPane = createTerminalPane({
   $,
   state,
@@ -3627,23 +2304,6 @@ const terminalPane = createTerminalPane({
 });
 const { openSessionLink, setupTerminal } = terminalPane;
 
-async function handleDaemonEvent(event) {
-  switch (event.kind) {
-    case "session-updated":
-      updateSession(event.session);
-      break;
-    case "session-removed":
-      removeSession(event.id);
-      break;
-    case "notification":
-      if (event.event?.kind === "raised") showAttentionToast(event.event.notification);
-      if (event.event?.kind === "retracted") retractAttentionToast(event.event.dedup_key);
-      break;
-    default:
-      break;
-  }
-}
-
 function bindEvents() {
   $("new-session-button").addEventListener("click", openLauncher);
   $("empty-new-button").addEventListener("click", openLauncher);
@@ -3658,41 +2318,7 @@ function bindEvents() {
     state.storeQuarantineDismissed = true;
     renderStoreQuarantine();
   });
-  $("preflight-toggle").addEventListener("click", () => {
-    if (state.preflightMode) setPreflightMode(false);
-    else {
-      setPreflightMode(true);
-      void loadPreflight(true);
-    }
-  });
-  $("preflight-recheck").addEventListener("click", () => void loadPreflight(true));
-  $("preflight-close").addEventListener("click", () => setPreflightMode(false));
-  $("preflight-list").addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-preflight-action]");
-    if (!button) return;
-    void handlePreflightAction(button.dataset.preflightAction, button.dataset.preflightId, button);
-  });
-  $("review-toggle").addEventListener("click", () => setReviewMode(!state.reviewMode));
-  $("review-refresh").addEventListener("click", loadReview);
-  $("review-list").addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-review-action]");
-    if (!button) return;
-    if (button.dataset.reviewAction === "mark-reviewed") {
-      void markReviewed(button.dataset.reviewId, button);
-    }
-    if (button.dataset.reviewAction === "land") {
-      void landSession(button.dataset.reviewId, button.dataset.reviewCwd, button);
-    }
-  });
-  $("diagnostics-toggle").addEventListener("click", () => setDiagnosticsMode(!state.diagnosticsMode));
-  $("logs-toggle").addEventListener("click", () => setLogsMode(!state.logsMode));
-  $("screen-reader-toggle").addEventListener("click", () => setScreenReaderMode(!state.screenReaderMode));
-  setScreenReaderMode(state.screenReaderMode);
-  $("diagnostics-host").addEventListener("click", (event) => {
-    if (!event.target.closest("button[data-diagnostics-action=preflight]")) return;
-    setPreflightMode(true);
-    void loadPreflight(true);
-  });
+  bindOperationalEvents();
   $("update-check-button").addEventListener("click", () => void checkForUpdates());
   $("update-open-releases").addEventListener("click", () => void openSessionLink(RELEASES_PAGE));
   $("filter-input").addEventListener("input", renderRows);
@@ -3734,110 +2360,12 @@ function bindEvents() {
       $("filter-input").select();
     }
   });
-  $("agent-input").addEventListener("change", () => {
-    syncAgentFields();
-    void loadAgentCapabilities($("agent-input").value);
-    schedulePreview();
-  });
-  ["cwd-input", "model-input", "name-input", "effort-input", "permission-input", "sandbox-input", "profile-input", "resume-input", "resume-id-input", "budget-input", "port-base-input", "port-count-input", "setup-hook-input", "teardown-hook-input", "prompt-input", "search-input"].forEach((id) => {
-    $(id).addEventListener("input", () => {
-      if (id === "cwd-input") clearFolderValidation();
-      if (id === "resume-input" || id === "model-input" || id === "effort-input") syncAgentFields();
-      schedulePreview();
-    });
-    $(id).addEventListener("change", () => {
-      if (id === "cwd-input") clearFolderValidation();
-      if (id === "resume-input" || id === "model-input" || id === "effort-input") syncAgentFields();
-      schedulePreview();
-    });
-  });
-  $("pick-folder-button").addEventListener("click", async () => {
-    let folder;
-    try {
-      folder = await invoke("pick_folder");
-    } catch (error) {
-      showToast(String(error));
-      return;
-    }
-    if (folder) {
-      $("cwd-input").value = folder;
-      clearFolderValidation();
-      schedulePreview();
-      void loadProjectTemplates();
-    }
-  });
-  $("cwd-input").addEventListener("change", () => void loadProjectTemplates());
-  $("register-root-button").addEventListener("click", () => void registerProjectRoot());
-  $("register-root-empty-button").addEventListener("click", () => void registerProjectRoot());
-  $("project-root-add-button").addEventListener("click", () => void registerProjectRoot());
-  $("project-root-list").addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-project-root-remove]");
-    if (button) void removeProjectRoot(button.dataset.projectRootRemove);
-  });
-  $("project-select").addEventListener("change", () => {
-    const path = $("project-select").value;
-    if (!path) return;
-    $("cwd-input").value = path;
-    clearFolderValidation();
-    schedulePreview();
-    // The chosen project may declare its own templates; the folder changed
-    // without the input's change event firing.
-    void loadProjectTemplates();
-  });
-  $("template-select").addEventListener("change", () => applyProjectTemplate());
-  $("pick-extra-button").addEventListener("click", async () => {
-    let folders;
-    try {
-      folders = await invoke("pick_extra_dirs");
-    } catch (error) {
-      showToast(String(error));
-      return;
-    }
-    if (folders?.length) {
-      state.extraDirs = folders;
-      $("extra-dirs-input").value = folders.join("; ");
-      schedulePreview();
-    }
-  });
-  $("save-preset-button").addEventListener("click", saveCurrentPreset);
-  $("preset-select").addEventListener("change", () => {
-    $("delete-preset-button").disabled = !$("preset-select").value;
-  });
-  $("delete-preset-button").addEventListener("click", () => void deleteSelectedPreset());
-  $("launch-preset-button").addEventListener("click", loadSelectedPreset);
-  $("restore-presets-button").addEventListener("click", async () => {
-    try {
-      const restored = await invoke("restore_builtin_presets");
-      await loadPresets();
-      showToast(
-        restored ? t("presets-restored", { count: restored }) : t("presets-none-hidden"),
-        restored ? "success" : "",
-      );
-    } catch (error) {
-      showToast(String(error));
-    }
-  });
+  bindLauncherEvents();
   $("cancel-launch-button").addEventListener("click", () => $("launcher-dialog").close());
   $("close-launcher-button").addEventListener("click", () => $("launcher-dialog").close());
   $("close-rollup-button").addEventListener("click", () => $("rollup-dialog").close());
   $("close-queue-button").addEventListener("click", () => $("queue-dialog").close());
-  $("queue-add-button").addEventListener("click", () => void addQueuedPrompt());
-  $("queue-pause-button").addEventListener("click", async () => {
-    try {
-      await invoke("pause_queue", { id: state.queueSession });
-    } catch (error) {
-      showToast(String(error));
-    }
-    await refreshQueue();
-  });
-  $("queue-resume-button").addEventListener("click", async () => {
-    try {
-      await invoke("resume_queue", { id: state.queueSession });
-    } catch (error) {
-      showToast(String(error));
-    }
-    await refreshQueue();
-  });
+  bindQueueEvents();
   wireOverflowMenus($("app-menu-button").ownerDocument);
   $("explainer-toggle").addEventListener("click", () => openExplainer());
   $("settings-toggle").addEventListener("click", () => void openSettings());
@@ -3912,11 +2440,6 @@ function bindEvents() {
   $("broadcast-list").addEventListener("change", () => syncBroadcastSelection());
   $("cancel-broadcast-button").addEventListener("click", () => $("broadcast-dialog").close());
   $("send-broadcast-button").addEventListener("click", () => void sendBroadcast());
-  // Launching costs tokens and writes to a real repository, so it is reachable only
-  // from the launch button. The form never submits: implicit submission on Enter in
-  // any field would otherwise spawn an agent the operator never asked for.
-  $("launcher-form").addEventListener("submit", (event) => event.preventDefault());
-  $("launch-button").addEventListener("click", () => void launchCurrentSpec());
   $("terminal-clear").addEventListener("click", () => state.terminal?.clear());
   $("terminal-history").addEventListener("click", () => void loadOlderOutput());
   $("terminal-find-toggle").addEventListener("click", () => toggleFind());
