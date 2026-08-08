@@ -2,7 +2,7 @@
 
 [![version](https://img.shields.io/badge/version-0.21.0-blue.svg)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#requirements)
+[![platform](https://img.shields.io/badge/platform-Windows%20x86__64-lightgrey.svg)](#requirements)
 [![rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
 
 A control surface for running many Claude Code and Codex sessions at once.
@@ -34,7 +34,11 @@ spelled-out status and reported cost, at 50px.
 Thirty is a tracked-session target, not a promise to keep thirty agent processes hot. Local
 measurements on 2026-08-02 showed roughly 509 MB RSS for Claude Code and 322 MB for Codex per
 live process; real work should stay within the machine's memory budget, typically two or three
-parallel agents. The daemon can hibernate idle sessions while retaining their rows.
+parallel agents. What the daemon does with an idle session is demote it rather than unload it:
+every process in an unfocused, unpinned session's job drops to Windows EcoQoS and low memory
+priority, and focusing or pinning restores it. Hibernating a session and rehydrating it on demand
+is not implemented — it is parked pending live evidence that `--resume` restores enough context to
+make it transparent.
 
 Status comes from agent hooks and transcript tailing — pushed, not polled. Polling a pty on a
 timer, which is the common approach, both misses transitions between ticks and burns CPU per
@@ -362,7 +366,14 @@ decision rather than a half-built mechanism nothing selects between.
 
 - Rust 1.88+ (the true floor; see Build for how to re-derive it)
 - Claude Code and/or Codex CLI installed
-- Windows 10 1809+ for ConPTY (macOS and Linux use the platform pty)
+- Windows 10 1809+ for ConPTY
+
+**Platform.** The shipped application is Windows-native: `tauri.conf.json` bundles NSIS and MSI
+only, `cargo deny` graphs `x86_64-pc-windows-msvc`, and the app crate takes `windows-sys`
+unconditionally. `terminalai-core`, `terminalai-daemon` and `terminalai-probe` type-check for the
+`cfg(unix)` paths — `scripts/check-cross-targets.ps1` proves it on every run — so the non-Windows
+story is "the core, daemon and probe compile", not "it runs there". The badge says Windows because
+that is what a release produces.
 
 Verified against Claude Code 2.1.170 and codex-cli 0.146.0 on Windows 11 26100.
 

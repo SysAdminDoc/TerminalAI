@@ -96,13 +96,6 @@ where an item depends on another in this section, its Why says which.
   Acceptance: a release run fails when the installed agent does not accept a golden argv, and fails when a golden emits a flag whose own help text restricts it to a mode this tool does not use. Both failures are reproducible by hand-editing a fixture.
   Complexity: M (wiring is small; the flag-mode half is a help-text parser)
 
-- [ ] P1 — Make the README describe what ships
-  Why: it claims a capability that does not exist in the code and a platform range the bundle cannot produce, and a README that overstates is the cheapest kind of trust to lose.
-  Evidence: `README.md:37` — "The daemon can hibernate idle sessions while retaining their rows" — while hibernation is unimplemented (no match for `hibernat` anywhere outside `README.md` and `Roadmap_Blocked.md`) and parked as R-06 pending live validation. `README.md:5` badges `platform-Windows | macOS | Linux` while `tauri.conf.json` bundles `nsis`/`msi` only, `deny.toml` graphs `x86_64-pc-windows-msvc` only, the app crate takes `windows-sys` unconditionally, and `scripts/check-cross-targets.ps1` excludes the app crate by design.
-  Touches: `README.md`
-  Acceptance: hibernation is described as planned or removed — note that an adjacent mechanism does ship, `set_background_priority` demoting CPU and memory priority on focus change, so the honest fix is a rewrite rather than a deletion — the badge states the platform that is actually bundled, and the non-Windows story is stated once as "core, daemon and probe type-check; the shell is Windows-native".
-  Complexity: S
-
 - [ ] P1 — Re-verify against Claude Code 2.1.226 and land the two version-gated items
   Why: both items in `Roadmap_Blocked.md` were blocked on flags that postdated the installed CLI, and the versions that carry them are now published — so the blocker is an upgrade decision rather than an absence.
   Evidence: https://registry.npmjs.org/@anthropic-ai/claude-code/latest reports **2.1.226** (checked 2026-08-08); this machine runs 2.1.170. `--ax-screen-reader` appears in the changelog at 2.1.208 and is documented from 2.1.181; `--autocompact <auto|tokens>` at 2.1.221. Cross-reference rather than duplicate: "Tell the agent when the operator is using a screen reader" and "Let the operator set the compaction threshold the row now displays" already exist in `Roadmap_Blocked.md` — move them back, do not re-file them.

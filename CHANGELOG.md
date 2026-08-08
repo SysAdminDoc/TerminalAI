@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Changed
+
+- The README describes what ships. It claimed the daemon "can hibernate idle sessions while
+  retaining their rows" — hibernation has no implementation anywhere in the tree and is parked
+  pending live evidence that `--resume` restores enough context — and badged the platform as
+  Windows, macOS and Linux while the bundle produces NSIS and MSI only. The idle-session paragraph
+  now describes the mechanism that does ship, EcoQoS and low memory priority across an unfocused
+  session's job, and the platform is stated once: the shell is Windows-native, and the core, daemon
+  and probe type-check for `cfg(unix)` without that being a claim they run there.
+
 ### Fixed
 
 - Every documented `notification_type` is recognised by name. The `Notification` hook is already
