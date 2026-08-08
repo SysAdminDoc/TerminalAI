@@ -26,6 +26,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Extracted fleet status ordering, metadata and lifecycle semantics into the injectable
   `web/src/sessionStatus.js` module, added behavior tests for the real helper, and made Rust app
   source-contract tests read the complete app module set so command-family moves remain safe.
+- Extracted offline first-run demo state swapping and focused-terminal header/placeholder updates
+  into the injectable `web/src/sessionDemo.js` and `web/src/terminalHeader.js` modules while
+  retaining the existing demo isolation and terminal layout behavior.
 - Extracted snapshot refresh serialization, event replay, preflight outage routing, and focused
   terminal reattachment into the injectable `web/src/snapshotCoordinator.js` module; operational
   panels use a late-bound loader so the boundary remains acyclic.

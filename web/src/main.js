@@ -49,6 +49,8 @@ import { createBroadcastPanel } from "./broadcastPanel.js";
 import { createFleetSummary } from "./fleetSummary.js";
 import { createPinnedPanes } from "./pinnedPanes.js";
 import { createSettingsPage } from "./settingsPage.js";
+import { createSessionDemo } from "./sessionDemo.js";
+import { createTerminalHeader } from "./terminalHeader.js";
 import {
   createFirstRunDemoSessions,
   demoStatusCount,
@@ -1232,94 +1234,7 @@ function removeSession(id) {
   applySessionRemoval(id);
 }
 
-function demoTerminalText(session) {
-  return [
-    `\x1b[38;5;111m${t("demo-terminal-header")}\x1b[0m`,
-    t("demo-terminal-note"),
-    "",
-    t("demo-terminal-status", { status: session?.status ?? "unknown" }),
-    t("demo-terminal-focus"),
-    "",
-  ].join("\r\n");
-}
 
-function renderDemoTerminal(session) {
-  if (!state.demoMode || !session) return;
-  state.terminal?.reset();
-  state.terminal?.write(demoTerminalText(session));
-}
-
-function enterFirstRunDemo() {
-  if (state.demoMode) return;
-  state.demoPrevious = {
-    sessions: state.sessions,
-    focused: state.focused,
-    admission: state.admission,
-  };
-  state.demoMode = true;
-  state.sessions = createFirstRunDemoSessions();
-  state.focused = state.sessions[0]?.id ?? null;
-  state.admission = {
-    ...state.admission,
-    max_live_sessions: 11,
-    live_sessions: state.sessions.length,
-    queued_sessions: state.sessions.filter((session) => session.status === "queued").length,
-    aggregate_cost_usd: state.sessions.reduce((total, session) => total + session.cost_usd, 0),
-  };
-  markFirstRunStep("demo");
-  renderRows();
-  updateTerminalHeader();
-  renderDemoTerminal(state.sessions[0]);
-  showToast(t("demo-status-coverage", { count: demoStatusCount(state.sessions) }), "success");
-}
-
-function exitFirstRunDemo() {
-  if (!state.demoMode) return;
-  const previous = state.demoPrevious ?? { sessions: [], focused: null, admission: state.admission };
-  state.demoMode = false;
-  state.demoPrevious = null;
-  state.sessions = previous.sessions;
-  state.focused = previous.focused;
-  state.admission = previous.admission;
-  state.outputChannel = null;
-  state.terminal?.reset();
-  renderRows();
-  updateTerminalHeader();
-}
-
-// The xterm element is appended after the placeholder inside an overflow-hidden host,
-// so a placeholder left in flow lays the renderer out entirely below the visible box.
-function renderTerminalPlaceholder() {
-  const attached = Boolean(state.focused);
-  $("terminal-placeholder").classList.toggle("view-hidden", attached);
-  $("terminal-host").classList.toggle("terminal-host-attached", attached);
-  // The host only has a usable box once the placeholder is out of flow.
-  if (attached) scheduleFit();
-}
-
-function updateTerminalHeader() {
-  renderTerminalPlaceholder();
-  const session = state.sessions.find((item) => item.id === state.focused);
-  if (!session) {
-    $("terminal-name").textContent = t("empty-no-focused-session");
-    $("terminal-path").textContent = "";
-    $("terminal-status").textContent = t("empty-waiting-for-session");
-    $("terminal-pulse").className = "terminal-pulse";
-    if (state.diagnosticsMode) renderDiagnostics();
-    return;
-  }
-  const meta = STATUS_META[session.status] ?? STATUS_META.exited;
-  const label = lifecycleLabel(session);
-  $("terminal-name").textContent = session.name;
-  $("terminal-path").textContent = session.cwd;
-  $("terminal-status").textContent = t("terminal-status-detail", {
-    status: label,
-    dwell: dwell(session.status_since),
-    agent: session.agent === "codex" ? "Codex" : "Claude Code",
-  });
-  $("terminal-pulse").className = `terminal-pulse pulse-${meta.tone}`;
-  if (state.diagnosticsMode) renderDiagnostics();
-}
 
 function resetTerminal(status = t("empty-waiting-for-session")) {
   if (state.terminal) state.terminal.reset();
@@ -1395,6 +1310,30 @@ function scheduleFit() {
     fitTerminal();
   }, RESIZE_DEBOUNCE_MS);
 }
+
+const terminalHeader = createTerminalHeader({
+  $,
+  dwell,
+  lifecycleLabel,
+  renderDiagnostics: (...args) => renderDiagnostics(...args),
+  scheduleFit,
+  state,
+  STATUS_META,
+  t,
+});
+const { renderTerminalPlaceholder, updateTerminalHeader } = terminalHeader;
+
+const sessionDemo = createSessionDemo({
+  createFirstRunDemoSessions,
+  demoStatusCount,
+  markFirstRunStep,
+  renderRows,
+  showToast,
+  state,
+  t,
+  updateTerminalHeader,
+});
+const { enterFirstRunDemo, exitFirstRunDemo, renderDemoTerminal } = sessionDemo;
 
 // The terminal pane lives in `terminalPane.js`. Bound here rather than
 // imported as plain functions because it reads the live `state` object and the
