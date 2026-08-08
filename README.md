@@ -142,7 +142,7 @@ Working today (`terminalai-probe`, headless):
   change that invalidates a row's folder and branch, and the DPI and restart declarations made
   against the real Windows APIs, the admission limits read from the operator's configuration, and
   the quota window attributed to the sessions that consumed it; 774 with the opt-in app-server
-  transport enabled, plus 402 frontend tests (`npm --prefix web test`) and a real browser pass over
+  transport enabled, plus 407 frontend tests (`npm --prefix web test`) and a real browser pass over
   every dialog, menu and disclosure across a populated fleet in both row densities
   (`npm --prefix web run test:chrome`)
 

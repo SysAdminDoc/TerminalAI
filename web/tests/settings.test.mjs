@@ -3,11 +3,12 @@ import { readFileSync } from "node:fs";
 import { registrySource } from "./registrySource.mjs";
 import test from "node:test";
 import { appSource } from "./appSource.mjs";
+import { appRustSource } from "./appRustSource.mjs";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const main = appSource();
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
-const app = readFileSync(new URL("../../crates/terminalai-app/src/main.rs", import.meta.url), "utf8");
+const app = appRustSource();
 const daemon = readFileSync(
   new URL("../../crates/terminalai-daemon/src/lib.rs", import.meta.url),
   "utf8",

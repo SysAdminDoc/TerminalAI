@@ -5,10 +5,11 @@ import test from "node:test";
 
 import { archivedLabel, folderLabel, renderSessionHistory } from "../src/sessionHistory.js";
 import { appSource } from "./appSource.mjs";
+import { appRustSource } from "./appRustSource.mjs";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const main = appSource();
-const app = readFileSync(new URL("../../crates/terminalai-app/src/main.rs", import.meta.url), "utf8");
+const app = appRustSource();
 const daemon = readFileSync(
   new URL("../../crates/terminalai-daemon/src/lib.rs", import.meta.url),
   "utf8",

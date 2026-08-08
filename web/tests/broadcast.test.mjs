@@ -5,11 +5,12 @@ import test from "node:test";
 
 import { defaultSelection, ineligibleReason, isEligible, summarize, targets } from "../src/broadcast.js";
 import { appSource } from "./appSource.mjs";
+import { appRustSource } from "./appRustSource.mjs";
 
 const main = appSource();
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
-const app = readFileSync(new URL("../../crates/terminalai-app/src/main.rs", import.meta.url), "utf8");
+const app = appRustSource();
 
 const session = (overrides) => ({ id: "s0001", name: "shop", status: "working", ...overrides });
 

@@ -5,6 +5,8 @@ import { renderFixtureRow } from "./rowFixture.mjs";
 
 import { JSDOM } from "jsdom";
 import { appSource } from "./appSource.mjs";
+import { rateLimitedLabel } from "../src/rateLimit.js";
+import { createSessionStatus, STATUS_META } from "../src/sessionStatus.js";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 // The fleet row markup lives in `rowMarkup.js` since it was extracted out of
@@ -14,6 +16,7 @@ const main =
   appSource() +
   readFileSync(new URL("../src/rowMarkup.js", import.meta.url), "utf8");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
+const sessionStatus = createSessionStatus({ t: (key) => key, rateLimitedLabel });
 
 test("fleet container and rows use single-select listbox semantics", () => {
   assert.match(html, /id="fleet-list"[^>]*role="listbox"/);
@@ -33,11 +36,7 @@ test("fleet container and rows use single-select listbox semantics", () => {
 test("fleet row actions remain explicit buttons and attention glyphs stay distinct", () => {
   assert.match(main, /<button type="button" data-action="pin"/);
   assert.match(main, /<button type="button" data-action="focus"/);
-  const approval = main.match(/"needs-approval": \{ glyph: "([^"]+)"/)?.[1];
-  const needsYou = main.match(/"needs-you": \{ glyph: "([^"]+)"/)?.[1];
-  assert.ok(approval);
-  assert.ok(needsYou);
-  assert.notEqual(approval, needsYou);
+  assert.notEqual(STATUS_META["needs-approval"].glyph, STATUS_META["needs-you"].glyph);
 });
 
 test("fleet updates announce actionable transitions and defer priority reordering", () => {
@@ -93,14 +92,15 @@ test("a session the supervisor gave up on does not read like one that finished",
   // Both terminal phases arrive as status "exited", so the row has to consult
   // the phase; without this it renders one label for a crash loop and a
   // completed job alike.
-  assert.match(main, /session\?\.phase === "failed"/);
-  assert.match(main, /session\?\.phase === "finished"/);
-  assert.match(main, /function lifecycleTone\(/);
-  assert.match(main, /function lifecycleDetail\(/);
-
+  assert.equal(sessionStatus.lifecycleLabel({ phase: "failed", restarts: 2 }), "status-failed");
+  assert.equal(sessionStatus.lifecycleLabel({ phase: "finished" }), "status-finished");
+  assert.equal(
+    sessionStatus.lifecycleDetail({ phase: "failed", restarts: 2, last_exit_code: 7 }),
+    "status-failed-detail-code",
+  );
+  assert.equal(sessionStatus.lifecycleDetail({ phase: "finished" }), "status-finished-detail");
   // The failure is coloured as one. Grey would say "nothing to see here".
-  const tone = main.slice(main.indexOf("function lifecycleTone("));
-  assert.match(tone.slice(0, tone.indexOf("\n}")), /phase === "failed"\) return "red"/);
+  assert.equal(sessionStatus.lifecycleTone({ phase: "failed" }, STATUS_META.exited), "red");
 
   // Every key the two paths reach exists, with the arguments they pass.
   for (const key of [
@@ -123,10 +123,10 @@ test("a stalled session is marked, explained, and sorted above healthy working r
   const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
   // The dwell timer was formatted and never thresholded, so the session stuck
   // longest sorted last within Working.
-  assert.match(main, /session\?\.stalled\) return t\("status-stalled"/);
-  assert.match(main, /const STALL_THRESHOLD_MINUTES = 15;/);
+  const stalled = { status: "working", stalled: true };
+  assert.equal(sessionStatus.lifecycleLabel(stalled), "status-stalled");
   // The mark carries its own threshold; an unexplained badge is not a signal.
-  assert.match(main, /status-stalled-detail", \{ minutes: STALL_THRESHOLD_MINUTES \}/);
+  assert.equal(sessionStatus.lifecycleDetail(stalled), "status-stalled-detail");
   assert.match(ftl, /^status-stalled = /m);
   assert.match(ftl, /^status-stalled-detail = .*\{ \$minutes \}/m);
 });

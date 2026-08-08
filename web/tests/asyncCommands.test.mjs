@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { appRustSource } from "./appRustSource.mjs";
 
-const app = readFileSync(new URL("../../crates/terminalai-app/src/main.rs", import.meta.url), "utf8");
+const app = appRustSource();
 
 test("slow Tauri commands are async and share the blocking executor", () => {
   for (const name of [

@@ -23,6 +23,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Added the headless `terminalai-probe fleet-stress` gate and
   `scripts/verify-fleet-stress.ps1`: a deterministic 30-session profile that reports startup,
   hook/snapshot latency, CPU/RSS, bounded queues and scrollback, plus store recovery evidence.
+- Extracted fleet status ordering, metadata and lifecycle semantics into the injectable
+  `web/src/sessionStatus.js` module, added behavior tests for the real helper, and made Rust app
+  source-contract tests read the complete app module set so command-family moves remain safe.
 
 ## [0.23.0] — 2026-08-08
 

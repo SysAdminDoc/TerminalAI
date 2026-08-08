@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { appSource } from "./appSource.mjs";
+import { appRustSource } from "./appRustSource.mjs";
 
 import {
   REPEAT_CHOICES,
@@ -15,7 +16,11 @@ import {
 const main = appSource();
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
-const app = readFileSync(new URL("../../crates/terminalai-app/src/main.rs", import.meta.url), "utf8");
+const app = appRustSource();
+const workflow = readFileSync(
+  new URL("../../crates/terminalai-app/src/workflows.rs", import.meta.url),
+  "utf8",
+);
 const schedule = readFileSync(
   new URL("../../crates/terminalai-core/src/schedule.rs", import.meta.url),
   "utf8",
@@ -157,8 +162,8 @@ test("a scheduled firing goes through the same path as the button beside it", ()
   // The whole safety argument: dirty trees, admission, the spend ceiling and
   // the expired-credential hold are enforced by the on-demand path, so a
   // scheduled run must not have a second launch path of its own.
-  const firing = app.slice(app.indexOf("fn scheduled_firing"));
-  const body = firing.slice(0, firing.indexOf("\nfn finish_work_run_session"));
+  const firing = workflow.slice(workflow.indexOf("fn scheduled_firing"));
+  const body = firing.slice(0, firing.indexOf("\npub(crate) fn finish_work_run_session"));
   assert.match(body, /start_work_run_with\(/);
   assert.doesNotMatch(body, /Request::Launch/);
   assert.match(body, /previous_run_blocking\(/);
