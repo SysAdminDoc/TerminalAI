@@ -29,7 +29,6 @@ const COMMANDS: &[&str] = &[
     "set_admission",
     "land_session",
     "preview_launch",
-    "resolve_agent",
     "agent_capabilities",
     "launch_session",
     "write_session",

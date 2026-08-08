@@ -104,11 +104,6 @@ impl PricingTable {
         self
     }
 
-    pub fn with_model(mut self, model: impl Into<String>, rates: TokenRates) -> Self {
-        self.models.insert(model.into(), rates);
-        self
-    }
-
     fn rates_for(&self, model: Option<&str>) -> TokenRates {
         let Some(name) = model else {
             return self.default;

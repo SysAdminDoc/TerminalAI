@@ -593,25 +593,6 @@ fn preview_launch(
 }
 
 #[tauri::command]
-fn resolve_agent(
-    agent: Agent,
-    configured_path: Option<PathBuf>,
-    state: State<'_, AppState>,
-) -> Result<Response, String> {
-    let client = daemon_client(&state)?;
-    match daemon_response(
-        &client,
-        Request::Resolve {
-            agent,
-            configured_path,
-        },
-    )? {
-        Response::Error { message } => Err(message),
-        response => Ok(response),
-    }
-}
-
-#[tauri::command]
 fn agent_capabilities(
     agent: Agent,
     configured_path: Option<PathBuf>,
@@ -2523,7 +2504,6 @@ fn run_app() -> Result<(), String> {
             set_admission,
             land_session,
             preview_launch,
-            resolve_agent,
             agent_capabilities,
             launch_session,
             write_session,

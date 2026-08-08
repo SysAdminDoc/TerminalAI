@@ -297,6 +297,11 @@ impl SessionRegistry {
         };
         if removed {
             spool_forget(&self.inner, id);
+            // The transcript reader is per session id and keeps its file offset
+            // and accumulator. Nothing dropped it, so a daemon that supervised
+            // a hundred sessions over a week held a hundred readers for rows
+            // that no longer existed.
+            self.forget_transcript(id);
             self.emit(RegistryEvent::SessionRemoved { id: id.clone() });
         }
         self.emit_notification_changes(notifications);
@@ -727,6 +732,38 @@ pub(super) fn restart_scheduler_loop(receiver: Receiver<RestartTask>, inner: Wea
 
 #[cfg(test)]
 mod tests {
+    use crate::registry::testing::live_entry;
+
+    #[test]
+    fn removing_a_row_drops_the_transcript_reader_it_owned() {
+        // The readers are keyed by session id and each holds a file offset and
+        // a pricing accumulator. Nothing dropped them, so a daemon that
+        // supervised a hundred sessions over a week kept a hundred readers for
+        // rows that no longer existed.
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        live_entry(&registry, id.clone(), crate::agent::Agent::Claude, None);
+        // Give it a reader by polling once against an empty home: discovery
+        // finds nothing, and the tail is created and kept all the same.
+        let home = std::env::temp_dir().join(format!(
+            "terminalai-forget-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).expect("scratch");
+        registry.poll_transcripts(&home);
+        assert_eq!(registry.transcript_reader_count(), 1);
+
+        registry.remove_entry(&id);
+        assert_eq!(
+            registry.transcript_reader_count(),
+            0,
+            "the reader outlived the row"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     use super::*;
     use crate::agent::{Agent, AgentBinary, Origin};
     

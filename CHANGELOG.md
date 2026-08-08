@@ -36,6 +36,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   a message wrapping its own `<em>` flattened the hint into body text. Both are split, and a third
   check fails if a `data-i18n` element ever gains children again.
 
+- Eight functions with no callers are gone, and one turned out to be a leak worth wiring instead.
+  `SessionStatus::colour` was a second status-to-colour table nothing consulted while the frontend
+  used its own; `in_state_for`, `in_status_for`, `PriceTable::with_model`, `auth_holds` and
+  `from_store_with_domain` were unreferenced; and `resolve_agent` was the one Tauri command the
+  frontend never invoked, so it is gone along with its manifest entry and all three ACL grants.
+
+  `forget_transcript` was the exception. Transcript readers are keyed by session id and each holds a
+  file offset and a pricing accumulator, and nothing ever dropped one — a daemon that supervised a
+  hundred sessions over a week kept a hundred readers for rows that no longer existed. It is now
+  called from `remove_entry`, with a test that counts them.
+
 - The probe's help is generated from its dispatch table. It was a hand-written constant beside a
   `match`, and the two had drifted: twenty-nine subcommands dispatched, twenty-six advertised, with
   `auth`, `exec` and `limits` reachable and undocumented — `auth` in the README too. Adding an arm

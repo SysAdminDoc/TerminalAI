@@ -315,8 +315,27 @@ impl SessionRegistry {
         count
     }
 
+    /// How many transcript readers are held, live rows or not.
+    ///
+    /// Exists so the leak below can be asserted rather than reasoned about: the
+    /// readers are private, and "nothing dropped them" is exactly the kind of
+    /// claim that is true until it silently is not.
+    #[cfg(test)]
+    pub(crate) fn transcript_reader_count(&self) -> usize {
+        self.inner
+            .tails
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len()
+    }
+
     /// Drop a finished session's transcript reader.
-    pub fn forget_transcript(&self, id: &SessionId) {
+    ///
+    /// Called from `remove_entry`. The readers are keyed by session id and each
+    /// holds a file offset and a pricing accumulator; nothing dropped them, so a
+    /// daemon that supervised a hundred sessions over a week kept a hundred
+    /// readers for rows that no longer existed.
+    pub(crate) fn forget_transcript(&self, id: &SessionId) {
         self.inner
             .tails
             .lock()

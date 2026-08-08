@@ -108,23 +108,6 @@ pub enum SessionStatus {
 }
 
 impl SessionStatus {
-    /// Colour token for the UI theme (Catppuccin Mocha names).
-    pub fn colour(self) -> &'static str {
-        match self {
-            SessionStatus::Exited => "overlay0",
-            SessionStatus::Queued => "overlay0",
-            SessionStatus::Unknown => "overlay0",
-            SessionStatus::Starting => "sapphire",
-            SessionStatus::Idle => "surface2",
-            SessionStatus::Thinking => "mauve",
-            SessionStatus::Working => "yellow",
-            SessionStatus::RateLimited => "red",
-            SessionStatus::NeedsApproval => "peach",
-            SessionStatus::AwaitingInput => "yellow",
-            SessionStatus::NeedsYou => "peach",
-        }
-    }
-
     /// Whether the session still has a process behind it. Used to route hook
     /// events to a session, so a rate-limited session must stay live here — it
     /// is still running and will report again when its window resets.
@@ -921,20 +904,6 @@ impl Session {
         }
         now.duration_since(self.status_since)
             .is_ok_and(|held| held >= STALL_THRESHOLD)
-    }
-
-    pub fn in_state_for(&self) -> Duration {
-        SystemTime::now()
-            .duration_since(self.state_since)
-            .unwrap_or_default()
-    }
-
-    /// How long the session has held its current status — the number that tells
-    /// you at a glance which agent is wedged.
-    pub fn in_status_for(&self) -> Duration {
-        SystemTime::now()
-            .duration_since(self.status_since)
-            .unwrap_or_default()
     }
 
     pub fn set_last_line(&mut self, line: &str) {

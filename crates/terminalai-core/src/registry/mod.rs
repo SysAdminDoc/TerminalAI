@@ -404,13 +404,6 @@ impl SessionRegistry {
         Self::from_store_with_admission(snapshot, AdmissionConfig::default())
     }
 
-    pub fn from_store_with_domain(
-        snapshot: SessionStoreSnapshot,
-        domain: Arc<dyn AgentDomain>,
-    ) -> Self {
-        Self::from_store_with_domain_and_admission(snapshot, domain, AdmissionConfig::default())
-    }
-
     pub fn from_store_with_admission(
         snapshot: SessionStoreSnapshot,
         admission: AdmissionConfig,
@@ -527,17 +520,6 @@ impl SessionRegistry {
 
     pub fn agent_auth(&self, agent: crate::agent::Agent) -> Option<crate::auth::AgentAuth> {
         lock_state(&self.inner).auth.get(&agent).cloned()
-    }
-
-    /// Whether work for this agent should hold rather than start.
-    ///
-    /// Only an explicit expiry holds. `Unknown` deliberately does not: a probe
-    /// that could not run must never be able to stop the fleet.
-    pub fn auth_holds(&self, agent: crate::agent::Agent) -> bool {
-        lock_state(&self.inner)
-            .auth
-            .get(&agent)
-            .is_some_and(|auth| auth.state == crate::auth::AuthState::Expired)
     }
 
     /// Replace the daemon-wide admission policy without a restart.

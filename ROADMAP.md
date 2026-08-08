@@ -87,10 +87,3 @@ where an item depends on another in this section, its Why says which.
   Complexity: L
 
 ### P3
-
-- [ ] P3 — Delete the code with no callers, or wire it up
-  Why: eight public functions have no references anywhere, tests included. None can produce a wrong answer — nothing calls them — which is the argument for deleting rather than maintaining them.
-  Evidence: `SessionStatus::colour()` (`crates/terminalai-core/src/session.rs:112`) is a second status-to-colour table that no caller consults while the frontend uses its own `STATUS_META`; `in_state_for`/`in_status_for` (`session.rs:890`, `:898`); `PriceTable::with_model()` (`transcript.rs:107`); `agent_auth`/`auth_holds` (`registry/mod.rs:522`, `:530`); `from_store_with_domain` (`:401`); `forget_transcript` (`registry/sampling.rs:220`). Separately, `resolve_agent` is the only one of 69 Tauri commands never invoked from `web/` — the frontend gets the same answer from `agent_capabilities` and `preview_launch`.
-  Touches: `crates/terminalai-core/src/session.rs`, `transcript.rs`, `registry/mod.rs`, `registry/sampling.rs`, `crates/terminalai-app/src/main.rs`, `crates/terminalai-app/build.rs`, the three capability files
-  Acceptance: each is removed. Keeping any of them requires a caller in the same change, and wiring `colour()` through to the frontend is a separate item with its own estimate, not a way to close this one. Removing `resolve_agent` also removes its manifest entry and all three ACL grants, which the build-time gate already enforces.
-  Complexity: S
