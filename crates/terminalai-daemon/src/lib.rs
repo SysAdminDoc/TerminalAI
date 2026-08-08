@@ -78,7 +78,9 @@ use terminalai_core::{AdmissionConfig, RegistryEvent, SessionRegistry};
 
 #[cfg(all(windows, test))]
 use client::current_user_pipe_sddl;
-use client::{current_user_pipe_descriptor, handle_connection, socket_name};
+#[cfg(windows)]
+use client::current_user_pipe_descriptor;
+use client::{handle_connection, socket_name};
 #[cfg(test)]
 use dispatch::{
     dispatch, dispatch_with_endpoint, dispatch_with_quarantine, external_sessions_from,

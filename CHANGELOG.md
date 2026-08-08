@@ -91,6 +91,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   byte-only behavior. Its whole-workspace startup budget is 60 seconds so the heavier opt-in
   feature suite can exercise the same profile without turning scheduler pressure into a false
   release failure. The full core suite remains 530/530.
+- Fixed the first Unix cross-target compile leak found by the new gate: the daemon's Windows-only
+  named-pipe security descriptor is now imported only under `cfg(windows)`, while Linux and ARM64
+  type checks remain explicit and warning-only for platform-specific dead code.
 
 ## [0.23.0] — 2026-08-08
 
