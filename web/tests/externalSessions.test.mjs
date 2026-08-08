@@ -3,10 +3,12 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { JSDOM } from "jsdom";
-import { appSource } from "./appSource.mjs";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-const main = appSource();
+const external = readFileSync(
+  new URL("../src/externalSessions.js", import.meta.url),
+  "utf8",
+).replace(/\r\n/g, "\n");
 
 /**
  * Sessions started outside TerminalAI are shown because pretending they do not
@@ -31,22 +33,28 @@ test("external rows carry no actionable control", () => {
   assert.equal(view.querySelectorAll("button, input, select, textarea, a[href]").length, 0);
 
   // The renderer must not grow one either.
-  const renderer = main.match(/function renderExternal\(\)[\s\S]*?\n\}/);
+  const renderer = external.slice(
+    external.indexOf("function renderExternal"),
+    external.indexOf("async function loadExternal"),
+  );
   assert.ok(renderer, "renderExternal must exist");
-  assert.doesNotMatch(renderer[0], /<button/, "external rows must not render buttons");
-  assert.doesNotMatch(renderer[0], /data-action=/, "external rows must not carry actions");
-  assert.doesNotMatch(renderer[0], /role="option"/, "external rows are not selectable");
+  assert.doesNotMatch(renderer, /<button/, "external rows must not render buttons");
+  assert.doesNotMatch(renderer, /data-action=/, "external rows must not carry actions");
+  assert.doesNotMatch(renderer, /role="option"/, "external rows are not selectable");
 });
 
 test("a failed lookup never renders as an empty machine", () => {
   // The dominant failure mode in this field is reporting idle from the absence
   // of a signal. An unreadable registry must say so.
-  assert.match(main, /state\.externalError = t\("external-load-error"/);
-  assert.match(main, /if \(state\.externalError\) \{/);
+  assert.match(external, /state\.externalError = t\("external-load-error"/);
+  assert.match(external, /if \(state\.externalError\) \{/);
 });
 
 test("ended sessions are dropped and unknown ones are counted, not hidden", () => {
-  const renderer = main.match(/function renderExternal\(\)[\s\S]*?\n\}/)[0];
+  const renderer = external.slice(
+    external.indexOf("function renderExternal"),
+    external.indexOf("async function loadExternal"),
+  );
   assert.match(renderer, /session\.state !== "ended"/);
   assert.match(renderer, /session\.state === "unknown"/);
   assert.match(renderer, /unknown/);
@@ -57,16 +65,16 @@ test("an external row shows the agent's own state, not just process liveness", (
   // status vocabulary, and used to collapse it to "is the pid alive" - so a row
   // read "Running" while the agent had said it was blocked on a permission
   // prompt.
-  assert.match(main, /function externalReportedLabel\(/);
-  assert.match(main, /session\?\.reported_state/);
-  assert.match(main, /session\?\.waiting_for/);
-  assert.match(main, /const stateText = reported \? `\$\{metaLabel\(meta\)\} · \$\{reported\}` : metaLabel\(meta\)/);
+  assert.match(external, /function externalReportedLabel\(/);
+  assert.match(external, /session\?\.reported_state/);
+  assert.match(external, /session\?\.waiting_for/);
+  assert.match(external, /const stateText = reported\s*\?[\s\S]*metaLabel\(meta\);/);
 
   // Silence stays silence: no reported state leaves process liveness alone
   // rather than inventing an idle row.
-  const start = main.indexOf("function externalReportedLabel(");
-  const body = main.slice(start, main.indexOf("\n}", start));
-  assert.match(body, /if \(!state\) return "";/);
+  const start = external.indexOf("function externalReportedLabel(");
+  const body = external.slice(start, external.indexOf("\n  }", start));
+  assert.match(body, /if \(!reportedState\) return "";/);
 
   const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
   for (const key of ["external-blocked-on", "external-reported-by-agent"]) {

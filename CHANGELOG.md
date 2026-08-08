@@ -38,6 +38,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Extracted review rendering, loading, landing, and review-state actions into the injectable
   `web/src/reviewPage.js` module; migrated review and cost source-contract assertions to the
   module boundary so future shell moves keep testing the behavior they cover.
+- Extracted the read-only external-session panel into `web/src/externalSessions.js`; its source
+  assertions now follow the module and continue to enforce failed-lookup, agent-reported-state,
+  and non-actionable-row behavior.
 - Split the stylesheet into import-ordered `tokens`, `foundation`, `pages`, and `shell` layers;
   frontend style assertions now resolve the same assembled cascade through `web/tests/cssSource.mjs`.
 
