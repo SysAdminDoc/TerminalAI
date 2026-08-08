@@ -432,6 +432,11 @@ spend-no-ceiling = No fleet spend ceiling is set.
 cost-explained = Spent so far, derived from this session's own transcript
 cost-budget-of = Spent so far, against this session's { $budget } cap
 cost-budget-spent = The { $budget } cap is spent — this session keeps running but is no longer given queued or broadcast work
+rollup-render-error = The fleet spend rollup could not be drawn.
+broadcast-render-error = The broadcast target list could not be drawn.
+approvals-render-error = The approvals inbox could not be drawn.
+explainer-render-error = The state explanations could not be drawn.
+fleet-search-error = The search failed: { $error }
 terminal-attach-failed = The fleet loaded, but this session's terminal could not be reattached: { $error }
 team-explained = This row is a team lead: { $count ->
     [one] one teammate

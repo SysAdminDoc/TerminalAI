@@ -317,6 +317,27 @@ function renderDataError(container, message, action, retry) {
   if (button?.dataset.retryAction === action) button.addEventListener("click", () => void retry());
 }
 
+/// Render into a dialog, and put the failure in that dialog if it throws.
+///
+/// Four of these surfaces render from state the window already holds, so they
+/// have no loading state and correctly never had one — but they had no error
+/// state either, and a renderer that throws leaves an open dialog with an empty
+/// body and nothing said. The operator's read of that is "it is still loading",
+/// which it is not and never will be.
+///
+/// Deliberately not a loading state as well. Adding one where the data is
+/// already in memory would show a spinner that is never true.
+function renderGuarded(container, message, action, retry, render) {
+  try {
+    render();
+  } catch (error) {
+    // Logged as well as shown: the message on screen is for the operator, and
+    // the stack is for whoever has to find out why.
+    console.error(`${action} failed to render`, error);
+    renderDataError(container, `${message} ${error}`, action, retry);
+  }
+}
+
 function invokeArgs(spec) {
   return { spec, configuredPath: null };
 }
@@ -2035,9 +2056,9 @@ function renderRollup() {
 }
 
 function openRollup() {
-  renderRollup();
   const dialog = $("rollup-dialog");
   if (!dialog.open) dialog.showModal();
+  renderGuarded($("rollup-body"), t("rollup-render-error"), "openRollup", openRollup, renderRollup);
 }
 
 /**
@@ -2066,9 +2087,15 @@ function renderBroadcast() {
 
 function openBroadcast() {
   state.broadcastSelection = defaultSelection(state.sessions);
-  renderBroadcast();
   const dialog = $("broadcast-dialog");
   if (!dialog.open) dialog.showModal();
+  renderGuarded(
+    $("broadcast-list"),
+    t("broadcast-render-error"),
+    "openBroadcast",
+    openBroadcast,
+    renderBroadcast,
+  );
 }
 
 function readBroadcastSelection() {
@@ -2200,7 +2227,13 @@ function renderProjects() {
 function openApprovals() {
   const dialog = $("approvals-dialog");
   if (!dialog.open) dialog.showModal();
-  renderApprovalInbox();
+  renderGuarded(
+    $("approvals-body"),
+    t("approvals-render-error"),
+    "openApprovals",
+    openApprovals,
+    renderApprovalInbox,
+  );
 }
 
 function renderApprovalInbox() {
@@ -2374,8 +2407,16 @@ async function runFleetSearch() {
       });
     }
   } catch (error) {
+    // A retry, not just the text. This one has a real backend behind it, so a
+    // failure is often transient and re-running is exactly what the operator
+    // would do -- and had to do by retyping.
     count.textContent = "";
-    body.innerHTML = `<p class="rollup-total">${escapeHtml(String(error))}</p>`;
+    renderDataError(
+      body,
+      t("fleet-search-error", { error: String(error) }),
+      "runFleetSearch",
+      runFleetSearch,
+    );
   } finally {
     button.disabled = false;
   }
@@ -2612,12 +2653,22 @@ async function addQueuedPrompt() {
  * status added later cannot appear on a row while missing from the explanation.
  */
 function openExplainer() {
+  const dialog = $("explainer-dialog");
+  if (!dialog.open) dialog.showModal();
+  renderGuarded(
+    $("explainer-states"),
+    t("explainer-render-error"),
+    "openExplainer",
+    openExplainer,
+    renderExplainerStates,
+  );
+}
+
+function renderExplainerStates() {
   $("explainer-states").innerHTML = STATUS_KEYS.map((status) => {
     const meta = STATUS_META[status];
     return `<div class="explainer-state"><dt><span class="state-chip tone-${escapeHtml(meta.tone)}"><span class="state-chip-glyph" aria-hidden="true">${meta.glyph}</span><span>${escapeHtml(t(meta.short))}</span></span></dt><dd>${escapeHtml(t(`${meta.short}-explained`))}</dd></div>`;
   }).join("");
-  const dialog = $("explainer-dialog");
-  if (!dialog.open) dialog.showModal();
 }
 
 function createOutputChannel(id) {

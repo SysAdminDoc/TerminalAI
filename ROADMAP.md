@@ -100,13 +100,6 @@ where an item depends on another in this section, its Why says which.
   Acceptance: every user-facing string in the launcher goes through the catalog, and the i18n test fails when a text-bearing element inside a dialog has no `data-i18n` attribute and no runtime writer — the check that would have caught this.
   Complexity: M
 
-- [ ] P2 — Give the four state-less dialogs a way to fail
-  Why: four surfaces render from state the window already holds and therefore have no loading state, which is right — but they also have no error state, so a renderer that throws leaves an empty dialog with nothing said.
-  Evidence: `#explainer-dialog`, `#approvals-dialog`, `#broadcast-dialog` and `#rollup-dialog` have neither a loading nor an error path; `renderDataError(container, message, action, retry)` already exists at `web/src/main.js:285` and is used at five other sites. The search dialog catches its error but surfaces it only as a toast, leaving the body blank.
-  Touches: `web/src/main.js`, `web/src/approvals.js`, `web/src/broadcast.js`, `web/src/rollup.js`, `web/src/i18n/terminalai.ftl`
-  Acceptance: each of the five renders a stated failure in its own body rather than nothing, verified by a test that makes each renderer throw. Loading states are deliberately not added where the data is already in memory, and that decision is recorded in the module docs. Scope is these five; the seven other surfaces `RESEARCH.md` counts as missing a state are missing only a loading state on data that does arrive asynchronously, and are not filed.
-  Complexity: S
-
 ### P3
 
 - [ ] P3 — Close the gap between what the probe dispatches and what it documents

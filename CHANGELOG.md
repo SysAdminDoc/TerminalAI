@@ -34,6 +34,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- The four state-less dialogs can now say they failed. The rollup, broadcast, approvals and
+  explainer dialogs render from state the window already holds, so they have no loading state and
+  correctly never had one — but they had no error state either, and a renderer that threw left an
+  open dialog with an empty body. The operator's read of that is "still loading", which it is not
+  and never will be. Each now opens first and renders through a guard, so a failure appears as a
+  stated alert with a retry inside the dialog it belongs to, and the stack reaches the console.
+  Loading states are deliberately still not added where the data is already in memory. The fleet
+  search, which does have a backend behind it, gains the same retry instead of a bare line of text.
+
 - The WebdriverIO end-to-end gate passes, and its screenshots show the shipping window. It had
   never rendered the fleet, for three separate reasons stacked on each other. The build was a dev
   shell (fixed in v0.21.0). Then the mocks were never seen by the application: WebdriverIO's Tauri
