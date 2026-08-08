@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-08-08
+
 ### Added
 
 - The launch goldens are checked in the release gate, and the check now asks whether a flag
