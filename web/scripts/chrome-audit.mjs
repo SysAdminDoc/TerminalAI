@@ -50,6 +50,7 @@ const SURFACES = [
   // A view rather than a dialog, but hidden until asked for all the same, and
   // it carries the landing controls.
   { name: "review view", kind: "view", selector: "#review-view" },
+  { name: "preflight", kind: "view", selector: "#preflight-view" },
   { name: "app overflow menu", kind: "menu", selector: "#app-menu" },
   { name: "tools overflow menu", kind: "menu", selector: "#tools-menu" },
   { name: "launcher", kind: "dialog", selector: "#launcher-dialog" },

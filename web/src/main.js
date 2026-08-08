@@ -286,6 +286,79 @@ const state = {
 
 const $ = (id) => document.getElementById(id);
 
+const RAIL_DIALOG_PAGES = Object.freeze({
+  "projects-dialog": "projects",
+  "prompt-dialog": "prompts",
+  "broadcast-dialog": "broadcast",
+  "approvals-dialog": "approvals",
+  "search-dialog": "search",
+  "working-sets-dialog": "working-sets",
+  "history-dialog": "history",
+  "settings-dialog": "settings",
+  "explainer-dialog": "explainer",
+});
+
+function syncRailPage(page) {
+  for (const item of document.querySelectorAll(".rail-item[data-rail-page]")) {
+    const active = item.dataset.railPage === page;
+    item.classList.toggle("rail-item-active", active);
+    if (active) item.setAttribute("aria-current", "page");
+    else item.removeAttribute("aria-current");
+  }
+}
+
+function closeWorkspacePages() {
+  for (const dialog of document.querySelectorAll("dialog.workspace-page[open]")) dialog.close();
+}
+
+/// Menu destinations are pages inside the persistent shell. They still use a
+/// dialog element for the existing focus and accessibility contracts, but open
+/// non-modally so the rail and top-level controls remain available.
+function openWorkspacePage(dialog) {
+  if (!dialog) return;
+  for (const other of document.querySelectorAll("dialog.workspace-page[open]")) {
+    if (other !== dialog) other.close();
+  }
+  if (state.preflightMode) setPreflightMode(false);
+  if (!dialog.open) dialog.show();
+  syncRailPage(dialog.dataset.workspacePage ?? RAIL_DIALOG_PAGES[dialog.id] ?? "fleet");
+}
+
+/// Keep the visual navigation spine in step with the workspace pages. The
+/// overflow menu remains a compatibility path for keyboard users and tests;
+/// the rail is the persistent route through the same handlers.
+function wireRailNavigation() {
+  const items = [...document.querySelectorAll(".rail-item[data-rail-page]")];
+  if (!items.length) return;
+  for (const item of items) {
+    item.addEventListener("click", () => {
+      const page = item.dataset.railPage;
+      syncRailPage(page);
+      const target = item.dataset.railTarget;
+      if (target) $(target)?.click();
+      else {
+        closeWorkspacePages();
+        if (state.preflightMode) setPreflightMode(false);
+      }
+    });
+  }
+  const syncFromDialogs = () => {
+    if (state.preflightMode) {
+      syncRailPage("preflight");
+      return;
+    }
+    const open = [...document.querySelectorAll("dialog.workspace-page[open]")].at(-1);
+    syncRailPage(open ? RAIL_DIALOG_PAGES[open.id] ?? "fleet" : "fleet");
+  };
+  if (typeof MutationObserver === "function") {
+    const observer = new MutationObserver(syncFromDialogs);
+    for (const dialog of document.querySelectorAll("dialog")) {
+      observer.observe(dialog, { attributes: true, attributeFilter: ["open"] });
+    }
+  }
+  syncFromDialogs();
+}
+
 function terminalBytes(payload) {
   if (payload instanceof ArrayBuffer) return new Uint8Array(payload);
   if (ArrayBuffer.isView(payload)) return new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength);
@@ -407,6 +480,16 @@ function optionalNumber(id) {
   return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
+function updateLimitUsageCard(name, used, limit, format = (value) => String(Math.round(value))) {
+  const value = Number(used) || 0;
+  const ceiling = Number(limit);
+  const bounded = Number.isFinite(ceiling) && ceiling > 0;
+  $(`settings-${name}-usage`).textContent = `${format(value)} / ${bounded ? format(ceiling) : "∞"}`;
+  const progress = $(`settings-${name}-progress`);
+  progress.max = bounded ? ceiling : Math.max(value, 1);
+  progress.value = Math.min(value, progress.max);
+}
+
 async function openSettings() {
   try {
     const settings = await invoke("admission_config");
@@ -425,8 +508,18 @@ async function openSettings() {
     note.textContent = fromEnvironment.length
       ? t("settings-from-environment", { names: fromEnvironment.join(", ") })
       : "";
+    const live = Number(state.admission?.live_sessions) || 0;
+    const spend = Number(state.admission?.spend_window_usd ?? state.admission?.aggregate_cost_usd) || 0;
+    const memoryMb = state.sessions.reduce((total, session) => total + (Number(session.memory_bytes) || 0), 0) / 1048576;
+    updateLimitUsageCard("live", live, settings.max_live_sessions);
+    updateLimitUsageCard("spend", spend, settings.spend_ceiling_usd, (value) => formatCost(value));
+    updateLimitUsageCard("memory", memoryMb, settings.memory_budget_mb, (value) => `${Math.round(value)} MB`);
+    updateLimitUsageCard("process", 0, settings.max_processes_per_session);
+    $("settings-process-usage").textContent = settings.max_processes_per_session == null
+      ? "∞"
+      : `≤ ${settings.max_processes_per_session}`;
     $("settings-error").hidden = true;
-    $("settings-dialog").showModal();
+    openWorkspacePage($("settings-dialog"));
   } catch (error) {
     showToast(String(error));
   }
@@ -713,12 +806,14 @@ function appendLogs(entries) {
 
 function syncPreflightVisibility() {
   const active = state.preflightMode;
+  if (active) closeWorkspacePages();
   ["fleet-state-strip", "column-labels", "fleet-list", "fleet-order-notice", "empty-state", "review-view"].forEach((id) => {
     $(id).classList.toggle("view-hidden", active);
   });
   $("preflight-view").classList.toggle("view-hidden", !active);
   $("preflight-toggle").setAttribute("aria-pressed", String(active));
   $("preflight-toggle").classList.toggle("wide-toggle-active", active);
+  syncRailPage(active ? "preflight" : "fleet");
   if (active) renderPreflight();
 }
 
@@ -2088,7 +2183,7 @@ function renderBroadcast() {
 function openBroadcast() {
   state.broadcastSelection = defaultSelection(state.sessions);
   const dialog = $("broadcast-dialog");
-  if (!dialog.open) dialog.showModal();
+  openWorkspacePage(dialog);
   renderGuarded(
     $("broadcast-list"),
     t("broadcast-render-error"),
@@ -2226,7 +2321,7 @@ function renderProjects() {
 /// here can disagree with the rows behind it.
 function openApprovals() {
   const dialog = $("approvals-dialog");
-  if (!dialog.open) dialog.showModal();
+  openWorkspacePage(dialog);
   renderGuarded(
     $("approvals-body"),
     t("approvals-render-error"),
@@ -2241,6 +2336,11 @@ function renderApprovalInbox() {
   if (!dialog.open) return;
   const waiting = pendingApprovals(state.sessions);
   $("approvals-count").textContent = t("approvals-count", { count: waiting.length });
+  const railApprovalCount = $("rail-approval-count");
+  if (railApprovalCount) {
+    railApprovalCount.textContent = String(waiting.length);
+    railApprovalCount.hidden = waiting.length === 0;
+  }
   const body = $("approvals-body");
   // The inbox follows the fleet, so it re-renders whenever any session
   // changes — and a session unrelated to this one changing must not wipe an
@@ -2313,7 +2413,7 @@ async function sendApproval(id) {
 /// Show the saved layouts.
 async function openWorkingSets() {
   const dialog = $("working-sets-dialog");
-  if (!dialog.open) dialog.showModal();
+  openWorkspacePage(dialog);
   await refreshWorkingSets();
 }
 
@@ -2424,7 +2524,7 @@ async function runFleetSearch() {
 
 async function openSessionHistory() {
   const dialog = $("history-dialog");
-  if (!dialog.open) dialog.showModal();
+  openWorkspacePage(dialog);
   $("history-body").innerHTML = `<p class="rollup-total">${escapeHtml(t("loading"))}</p>`;
   let archives = [];
   try {
@@ -2496,7 +2596,7 @@ async function refreshWorktrees() {
 
 async function openProjects() {
   const dialog = $("projects-dialog");
-  if (!dialog.open) dialog.showModal();
+  openWorkspacePage(dialog);
   // Scanning reads a file per project, so the dialog opens first and fills in
   // rather than blocking on a few hundred reads before anything appears.
   $("projects-body").innerHTML = `<p class="rollup-total">${escapeHtml(t("loading"))}</p>`;
@@ -2654,7 +2754,7 @@ async function addQueuedPrompt() {
  */
 function openExplainer() {
   const dialog = $("explainer-dialog");
-  if (!dialog.open) dialog.showModal();
+  openWorkspacePage(dialog);
   renderGuarded(
     $("explainer-states"),
     t("explainer-render-error"),
@@ -3487,6 +3587,7 @@ const workRunPanel = createWorkRunPanel({
   t,
   escapeHtml,
   hasOpenWork,
+  openWorkspacePage,
 });
 const {
   renderWorkRun,
@@ -3744,7 +3845,7 @@ function bindEvents() {
   $("close-history-button").addEventListener("click", () => $("history-dialog").close());
   $("fleet-search-toggle").addEventListener("click", () => {
     const dialog = $("search-dialog");
-    if (!dialog.open) dialog.showModal();
+    openWorkspacePage(dialog);
     $("fleet-search-input").focus();
     $("fleet-search-input").select();
   });
@@ -3833,6 +3934,7 @@ function bindEvents() {
       showToast(String(error));
     }
   });
+  wireRailNavigation();
 }
 
 async function start() {

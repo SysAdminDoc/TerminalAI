@@ -123,7 +123,7 @@ test("the dialog opens before the scan rather than after it", () => {
   // blocking on that before anything appears reads as the button not working.
   const open = main.slice(main.indexOf("async function openProjects"));
   const body = open.slice(0, open.indexOf("\nfunction createOutputChannel"));
-  const shows = body.indexOf("dialog.showModal()");
+  const shows = body.indexOf("openWorkspacePage(dialog)");
   const scans = body.indexOf('invoke("scan_projects")');
   assert.ok(shows > 0 && shows < scans, "the scan runs before the dialog is shown");
 });

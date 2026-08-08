@@ -8,6 +8,51 @@
   </head>
   <body>
     <div id="app">
+      <aside class="app-rail" aria-label="TerminalAI navigation">
+        <div class="rail-brand" aria-label="TerminalAI">
+          <div class="brand-mark rail-brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div class="rail-brand-wordmark">Terminal<span>AI</span></div>
+        </div>
+        <nav class="rail-nav" aria-label="Workspace pages">
+          <button class="rail-item rail-item-active" type="button" data-rail-page="fleet" aria-current="page">
+            <span class="rail-icon" aria-hidden="true">◈</span><span data-i18n="button-fleet">Fleet</span>
+          </button>
+          <button class="rail-item" type="button" data-rail-page="preflight" data-rail-target="preflight-toggle">
+            <span class="rail-icon" aria-hidden="true">✓</span><span data-i18n="button-preflight-short">Preflight</span>
+          </button>
+          <button class="rail-item" type="button" data-rail-page="projects" data-rail-target="projects-toggle">
+            <span class="rail-icon" aria-hidden="true">▦</span><span data-i18n="button-projects-short">Projects</span>
+          </button>
+          <button class="rail-item" type="button" data-rail-page="prompts" data-rail-target="prompts-toggle">
+            <span class="rail-icon" aria-hidden="true">✦</span><span data-i18n="button-prompts-short">Prompts</span>
+          </button>
+          <button class="rail-item" type="button" data-rail-page="broadcast" data-rail-target="broadcast-toggle">
+            <span class="rail-icon" aria-hidden="true">⌁</span><span data-i18n="button-broadcast-short">Broadcast</span>
+          </button>
+          <button class="rail-item" type="button" data-rail-page="approvals" data-rail-target="approvals-toggle">
+            <span class="rail-icon" aria-hidden="true">◉</span><span data-i18n="button-approvals-short">Approvals</span><span class="rail-badge" id="rail-approval-count" hidden>0</span>
+          </button>
+          <button class="rail-item" type="button" data-rail-page="search" data-rail-target="fleet-search-toggle">
+            <span class="rail-icon" aria-hidden="true">⌕</span><span data-i18n="button-search-short">Search</span>
+          </button>
+          <button class="rail-item" type="button" data-rail-page="working-sets" data-rail-target="working-sets-toggle">
+            <span class="rail-icon" aria-hidden="true">◇</span><span data-i18n="button-working-sets-short">Layouts</span>
+          </button>
+          <button class="rail-item" type="button" data-rail-page="history" data-rail-target="history-toggle">
+            <span class="rail-icon" aria-hidden="true">◷</span><span data-i18n="button-history-short">History</span>
+          </button>
+          <button class="rail-item" type="button" data-rail-page="settings" data-rail-target="settings-toggle">
+            <span class="rail-icon" aria-hidden="true">⊙</span><span data-i18n="button-settings-short">Limits</span>
+          </button>
+          <button class="rail-item rail-item-help" type="button" data-rail-page="explainer" data-rail-target="explainer-toggle">
+            <span class="rail-icon" aria-hidden="true">?</span><span data-i18n="menu-explainer">How this screen works</span>
+          </button>
+        </nav>
+        <div class="rail-footer">
+          <span class="rail-status-dot" aria-hidden="true"></span>
+          <span><strong>LOCAL DAEMON</strong><small>control plane online</small></span>
+        </div>
+      </aside>
       <header class="topbar">
         <div class="brand-lockup">
           <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
@@ -126,13 +171,20 @@
       </main>
     </div>
 
-    <dialog id="explainer-dialog" class="launcher-dialog explainer-dialog" aria-label="How the fleet screen works" data-i18n-aria-label="explainer-title">
+    <dialog id="explainer-dialog" class="launcher-dialog explainer-dialog workspace-page" data-workspace-page="explainer" aria-label="How the fleet screen works" data-i18n-aria-label="explainer-title">
       <div class="dialog-head"><h2 data-i18n="explainer-title">How the fleet screen works</h2></div>
       <div class="explainer-body">
-        <section><h3 data-i18n="explainer-rows-heading">Rows are not terminals</h3><p data-i18n="explainer-rows">Each row is a compact status line, not a terminal. That is what lets around thirty sessions share one screen — a terminal needs a lot of space, and a status line needs 28 pixels.</p></section>
-        <section><h3 data-i18n="explainer-focus-heading">One session at a time gets a terminal</h3><p data-i18n="explainer-focus">Clicking a row focuses it and attaches the terminal below. Pin up to three more to watch them live alongside it. Everything else keeps running and keeps reporting.</p></section>
-        <section><h3 data-i18n="explainer-attention-heading">The fleet tells you when it needs you</h3><p data-i18n="explainer-attention">Sessions sort by how much they need you. When one asks a question or wants permission, it moves to the top and you can answer straight from its row without focusing it.</p></section>
-        <section><h3 data-i18n="explainer-states-heading">What the states mean</h3><dl id="explainer-states" class="explainer-states"></dl></section>
+        <div class="explainer-flow">
+          <section><h3 data-i18n="explainer-rows-heading">Rows are not terminals</h3><p data-i18n="explainer-rows">Each row is a compact status line, not a terminal. That is what lets around thirty sessions share one screen — a terminal needs a lot of space, and a status line needs 28 pixels.</p></section>
+          <section><h3 data-i18n="explainer-focus-heading">One session at a time gets a terminal</h3><p data-i18n="explainer-focus">Clicking a row focuses it and attaches the terminal below. Pin up to three more to watch them live alongside it. Everything else keeps running and keeps reporting.</p></section>
+          <section><h3 data-i18n="explainer-attention-heading">The fleet tells you when it needs you</h3><p data-i18n="explainer-attention">Sessions sort by how much they need you. When one asks a question or wants permission, it moves to the top and you can answer straight from its row without focusing it.</p></section>
+          <section><h3 data-i18n="explainer-monitor-heading">Monitor and ship</h3><p data-i18n="explainer-monitor">Keep the focused terminal beside the fleet, watch cost and dwell, and move completed work through review with its context intact.</p></section>
+        </div>
+        <div class="explainer-reference-grid">
+          <section><h3 data-i18n="explainer-states-heading">What the states mean</h3><dl id="explainer-states" class="explainer-states"></dl></section>
+          <section><h3 data-i18n="explainer-safety-heading">Safety boundaries</h3><p data-i18n="explainer-safety">Approvals stay explicit, broadcasts show who is eligible before sending, and limits refuse new work without terminating sessions already running.</p></section>
+          <section><h3 data-i18n="explainer-reading-heading">Reading the fleet</h3><p data-i18n="explainer-reading">Task, progress, dwell, cost, and the last meaningful line tell you where attention belongs before you open terminal output.</p></section>
+        </div>
       </div>
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-primary" id="close-explainer-button" data-i18n="button-close">Close</button></div></div>
     </dialog>
@@ -146,7 +198,7 @@
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-quiet" id="queue-pause-button" data-i18n="queue-pause">Pause queue</button><button type="button" class="button button-quiet" id="queue-resume-button" data-i18n="queue-resume" hidden>Resume queue</button><button type="button" class="button button-secondary" id="close-queue-button" data-i18n="button-close">Close</button><button type="button" class="button button-primary" id="queue-add-button" data-i18n="queue-add-button">Queue it</button></div></div>
     </dialog>
 
-    <dialog id="projects-dialog" class="launcher-dialog rollup-dialog" aria-label="Projects and their roadmaps" data-i18n-aria-label="label-projects-dialog">
+    <dialog id="projects-dialog" class="launcher-dialog rollup-dialog workspace-page" data-workspace-page="projects" aria-label="Projects and their roadmaps" data-i18n-aria-label="label-projects-dialog">
       <div class="dialog-head"><h2 data-i18n="projects-title">Projects</h2><span id="projects-coverage" class="rollup-coverage"></span></div>
       <div class="broadcast-body">
         <section class="project-roots-panel" aria-label="Registered project roots" data-i18n-aria-label="projects-roots-title"><div class="project-roots-heading"><span class="eyebrow" data-i18n="projects-roots-title">REGISTERED ROOTS</span><button type="button" class="button button-quiet" id="project-root-add-button" data-i18n="projects-root-add">Register root</button></div><ul id="project-root-list" class="project-root-list" role="list" aria-label="Registered project roots" data-i18n-aria-label="projects-roots-title"></ul></section>
@@ -156,7 +208,7 @@
       <div class="work-run-bar"><label class="field"><span data-i18n="work-prompt">Run this prompt</span><select id="work-prompt-select"></select></label><button type="button" class="button button-primary" id="work-start-button" data-i18n="work-start">Run across listed projects</button></div><div class="work-run-bar"><label class="field"><span data-i18n="work-repeat">Repeat this run</span><select id="work-repeat-select"></select></label><button type="button" class="button button-quiet" id="work-schedule-pause-button" data-i18n="work-schedule-pause" hidden>Hold schedule</button><button type="button" class="button button-quiet" id="work-schedule-resume-button" data-i18n="work-schedule-resume" hidden>Resume schedule</button></div><p id="work-schedule-status" class="rollup-total" hidden></p><div id="work-run-body" class="work-run-body" hidden></div><div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-quiet" id="work-pause-button" data-i18n="work-pause" hidden>Pause run</button><button type="button" class="button button-quiet" id="work-resume-button" data-i18n="work-resume" hidden>Resume run</button><button type="button" class="button button-quiet" id="work-clear-button" data-i18n="work-clear" hidden>Clear run</button><button type="button" class="button button-secondary" id="close-projects-button" data-i18n="button-close">Close</button></div></div>
     </dialog>
 
-    <dialog id="history-dialog" class="launcher-dialog rollup-dialog" aria-label="Finished sessions" data-i18n-aria-label="session-history-title">
+    <dialog id="history-dialog" class="launcher-dialog rollup-dialog workspace-page" data-workspace-page="history" aria-label="Finished sessions" data-i18n-aria-label="session-history-title">
       <div class="dialog-head"><h2 data-i18n="session-history-title">Finished sessions</h2><span id="history-count" class="rollup-coverage"></span></div>
       <div class="broadcast-body">
         <p class="settings-note" data-i18n="session-history-note">What this supervisor archived, newest first. Only the layout and the exact command are kept — never the output.</p>
@@ -168,7 +220,7 @@
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-history-button" data-i18n="button-close">Close</button></div></div>
     </dialog>
 
-    <dialog id="approvals-dialog" class="launcher-dialog rollup-dialog" aria-label="Approvals" data-i18n-aria-label="approvals-title">
+    <dialog id="approvals-dialog" class="launcher-dialog rollup-dialog workspace-page" data-workspace-page="approvals" aria-label="Approvals" data-i18n-aria-label="approvals-title">
       <div class="dialog-head"><h2 data-i18n="approvals-title">Approvals</h2><span id="approvals-count" class="rollup-coverage" role="status" aria-live="polite"></span></div>
       <div class="broadcast-body">
         <p class="settings-note" data-i18n="approvals-note">Every session waiting on you, the one that has been waiting longest first. Nothing here approves anything on your behalf: there is no approve-all and no bypass mode, and what you type is sent to that session's prompt exactly as if you had typed it there. A session whose request cannot be described is still listed — that is the one to go and look at.</p>
@@ -177,7 +229,7 @@
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-approvals-button" data-i18n="button-close">Close</button></div></div>
     </dialog>
 
-    <dialog id="working-sets-dialog" class="launcher-dialog rollup-dialog" aria-label="Working sets" data-i18n-aria-label="working-sets-title">
+    <dialog id="working-sets-dialog" class="launcher-dialog rollup-dialog workspace-page" data-workspace-page="working-sets" aria-label="Working sets" data-i18n-aria-label="working-sets-title">
       <div class="dialog-head"><h2 data-i18n="working-sets-title">Working sets</h2><span id="working-sets-count" class="rollup-coverage" role="status" aria-live="polite"></span></div>
       <div class="broadcast-body">
         <p class="settings-note" data-i18n="working-sets-note">A named layout of many sessions, relaunched as one action. Restoring starts each session through the ordinary launch path, so the admission gate, the memory budget, the spend ceiling and the dirty-tree refusal all still apply — a session they refuse is reported, not forced. A private checkout is created fresh; a layout never adopts the one the original session had.</p>
@@ -187,7 +239,7 @@
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-working-sets-button" data-i18n="button-close">Close</button></div></div>
     </dialog>
 
-    <dialog id="search-dialog" class="launcher-dialog rollup-dialog" aria-label="Search the fleet" data-i18n-aria-label="fleet-search-title">
+    <dialog id="search-dialog" class="launcher-dialog rollup-dialog workspace-page" data-workspace-page="search" aria-label="Search the fleet" data-i18n-aria-label="fleet-search-title">
       <div class="dialog-head"><h2 data-i18n="fleet-search-title">Search the fleet</h2><span id="fleet-search-count" class="rollup-coverage" role="status" aria-live="polite"></span></div>
       <div class="broadcast-body">
         <p class="settings-note" data-i18n="fleet-search-note">Searches the output each session still has on disk, which is a bounded tail — the beginning of a long run is genuinely gone. Colour and cursor sequences are removed before matching, so what is searched is what was legible.</p>
@@ -197,7 +249,7 @@
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-search-button" data-i18n="button-close">Close</button></div></div>
     </dialog>
 
-    <dialog id="prompt-dialog" class="launcher-dialog prompt-dialog" aria-label="Prompt library" data-i18n-aria-label="prompt-library-title">
+    <dialog id="prompt-dialog" class="launcher-dialog prompt-dialog workspace-page" data-workspace-page="prompts" aria-label="Prompt library" data-i18n-aria-label="prompt-library-title">
       <div class="dialog-head"><h2 data-i18n="prompt-library-title">Prompt library</h2><span id="prompt-library-count" class="rollup-coverage"></span></div>
       <div class="prompt-library-grid">
         <section class="stored-prompt-panel" aria-label="Stored prompts" data-i18n-aria-label="prompt-library-title"><div id="stored-prompt-list" class="stored-prompt-list" role="list"></div></section>
@@ -206,7 +258,7 @@
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-prompt-button" data-i18n="button-close">Close</button></div></div>
     </dialog>
 
-    <dialog id="broadcast-dialog" class="launcher-dialog broadcast-dialog" aria-label="Broadcast a prompt" data-i18n-aria-label="label-broadcast">
+    <dialog id="broadcast-dialog" class="launcher-dialog broadcast-dialog workspace-page" data-workspace-page="broadcast" aria-label="Broadcast a prompt" data-i18n-aria-label="label-broadcast">
       <div class="dialog-head"><h2 data-i18n="broadcast-title">Broadcast a prompt</h2><span id="broadcast-coverage" class="rollup-coverage"></span></div>
       <div class="broadcast-body">
         <fieldset class="broadcast-targets"><legend data-i18n="broadcast-targets">Send to</legend><div id="broadcast-list" role="group"></div></fieldset>
@@ -221,17 +273,23 @@
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-rollup-button" data-i18n="button-close">Close</button></div></div>
     </dialog>
 
-    <dialog id="settings-dialog" class="launcher-dialog" aria-label="Fleet limits" data-i18n-aria-label="settings-title">
+    <dialog id="settings-dialog" class="launcher-dialog workspace-page" data-workspace-page="settings" aria-label="Fleet limits" data-i18n-aria-label="settings-title">
       <div class="dialog-head"><h2 data-i18n="settings-title">Fleet limits</h2></div>
+      <div class="limits-overview" aria-label="Current fleet limit usage" data-i18n-aria-label="settings-usage-title">
+        <article class="limit-usage-card"><span data-i18n="settings-max-live">Live sessions</span><strong id="settings-live-usage"></strong><progress id="settings-live-progress" max="1" value="0"></progress></article>
+        <article class="limit-usage-card"><span data-i18n="settings-spend-ceiling">Fleet spend ceiling (USD)</span><strong id="settings-spend-usage"></strong><progress id="settings-spend-progress" max="1" value="0"></progress></article>
+        <article class="limit-usage-card"><span data-i18n="settings-memory-budget">Fleet memory budget (MB)</span><strong id="settings-memory-usage"></strong><progress id="settings-memory-progress" max="1" value="0"></progress></article>
+        <article class="limit-usage-card"><span data-i18n="settings-max-processes">Processes per session</span><strong id="settings-process-usage"></strong><progress id="settings-process-progress" max="1" value="0"></progress></article>
+      </div>
       <div class="settings-body">
         <p class="settings-note" data-i18n="settings-note">Applied to the running daemon straight away. A limit refuses new sessions; it never stops one that is already running. Leave a field empty for no limit.</p>
-        <label class="settings-field"><span data-i18n="settings-max-live">Live sessions</span><input id="settings-max-live" type="number" min="1" step="1" /></label>
-        <label class="settings-field"><span data-i18n="settings-default-budget">Default session budget (USD)</span><input id="settings-default-budget" type="number" min="0" step="0.5" /></label>
-        <label class="settings-field"><span data-i18n="settings-spend-ceiling">Fleet spend ceiling (USD)</span><input id="settings-spend-ceiling" type="number" min="0" step="1" /></label>
-        <label class="settings-field"><span data-i18n="settings-spend-window">Spend window (hours)</span><input id="settings-spend-window" type="number" min="1" step="1" /></label>
-        <label class="settings-field"><span data-i18n="settings-memory-budget">Fleet memory budget (MB)</span><input id="settings-memory-budget" type="number" min="0" step="256" /></label>
-        <label class="settings-field"><span data-i18n="settings-memory-cap">Per-session memory cap (MB)</span><input id="settings-memory-cap" type="number" min="0" step="256" /></label>
-        <label class="settings-field"><span data-i18n="settings-max-processes">Processes per session</span><input id="settings-max-processes" type="number" min="1" step="1" /></label>
+        <label class="settings-field"><span class="settings-field-copy"><span data-i18n="settings-max-live">Live sessions</span><small data-i18n="settings-max-live-detail">Maximum number of sessions allowed to be running.</small></span><input id="settings-max-live" type="number" min="1" step="1" /></label>
+        <label class="settings-field"><span class="settings-field-copy"><span data-i18n="settings-default-budget">Default session budget (USD)</span><small data-i18n="settings-default-budget-detail">Budget applied to each new session at start.</small></span><input id="settings-default-budget" type="number" min="0" step="0.5" /></label>
+        <label class="settings-field"><span class="settings-field-copy"><span data-i18n="settings-spend-ceiling">Fleet spend ceiling (USD)</span><small data-i18n="settings-spend-ceiling-detail">Total spend allowed across the fleet within the selected window.</small></span><input id="settings-spend-ceiling" type="number" min="0" step="1" /></label>
+        <label class="settings-field"><span class="settings-field-copy"><span data-i18n="settings-spend-window">Spend window (hours)</span><small data-i18n="settings-spend-window-detail">Rolling time window for fleet spend enforcement.</small></span><input id="settings-spend-window" type="number" min="1" step="1" /></label>
+        <label class="settings-field"><span class="settings-field-copy"><span data-i18n="settings-memory-budget">Fleet memory budget (MB)</span><small data-i18n="settings-memory-budget-detail">Total sampled process memory available across the fleet.</small></span><input id="settings-memory-budget" type="number" min="0" step="256" /></label>
+        <label class="settings-field"><span class="settings-field-copy"><span data-i18n="settings-memory-cap">Per-session memory cap (MB)</span><small data-i18n="settings-memory-cap-detail">Maximum sampled process memory a single session may consume.</small></span><input id="settings-memory-cap" type="number" min="0" step="256" /></label>
+        <label class="settings-field"><span class="settings-field-copy"><span data-i18n="settings-max-processes">Processes per session</span><small data-i18n="settings-max-processes-detail">Maximum tracked child processes per session.</small></span><input id="settings-max-processes" type="number" min="1" step="1" /></label>
         <p id="settings-environment-note" class="settings-note" hidden></p>
         <p id="settings-error" class="settings-error" role="alert" hidden></p>
       </div>

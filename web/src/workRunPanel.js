@@ -17,7 +17,18 @@
 import { REPEAT_CHOICES, scheduleStatus } from "./workSchedule.js";
 
 export function createWorkRunPanel(deps) {
-  const { $, state, invoke, showToast, t, escapeHtml, hasOpenWork } = deps;
+  const {
+    $,
+    state,
+    invoke,
+    showToast,
+    t,
+    escapeHtml,
+    hasOpenWork,
+    openWorkspacePage = (dialog) => {
+      if (!dialog.open) dialog.showModal();
+    },
+  } = deps;
 
   const WORK_STATE_LABEL = {
     pending: "work-state-pending",
@@ -380,7 +391,7 @@ export function createWorkRunPanel(deps) {
 
   function openPromptLibrary() {
     const dialog = $("prompt-dialog");
-    if (!dialog.open) dialog.showModal();
+    openWorkspacePage(dialog);
     void loadStoredPrompts();
   }
 
