@@ -4,6 +4,10 @@ import test from "node:test";
 import { appSource } from "./appSource.mjs";
 
 const main = appSource();
+const reviewPage = readFileSync(
+  new URL("../src/reviewPage.js", import.meta.url),
+  "utf8",
+).replace(/\r\n/g, "\n");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 const land = readFileSync(
   new URL("../../crates/terminalai-core/src/land.rs", import.meta.url),
@@ -56,7 +60,7 @@ test("an unknown refusal is still shown rather than swallowed", () => {
 });
 
 test("a refusal stays on the review entry and the button becomes usable again", () => {
-  const fn = main.slice(main.indexOf("async function landSession"));
+  const fn = reviewPage.slice(reviewPage.indexOf("async function landSession"));
   const body = fn.slice(0, fn.indexOf("\n/// Turn a structured refusal"));
   assert.match(body, /const reason = t\("review-land-refused"/);
   assert.match(body, /entry\.land_error = reason;/);
@@ -68,7 +72,7 @@ test("a refusal stays on the review entry and the button becomes usable again", 
 });
 
 test("the review renderer keeps landing refusals visible beside the diff", () => {
-  const render = main.slice(main.indexOf("function renderReviewEntry"), main.indexOf("\nfunction ports"));
+  const render = reviewPage.slice(reviewPage.indexOf("function renderReviewEntry"));
   assert.match(render, /const reviewError = entry\.error \|\| entry\.land_error;/);
   assert.match(render, /escapeHtml\(reviewError\)/);
   assert.match(render, /class="review-error" role="alert"/);

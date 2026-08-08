@@ -16,7 +16,7 @@ test("terminal output uses the dedicated channel and agent events stay off the w
 });
 
 test("row costs delegate to the rollup formatter", () => {
-  const cost = main.slice(main.indexOf("function cost"), main.indexOf("function reviewNumber"));
+  const cost = main.slice(main.indexOf("function cost"), main.indexOf("function costTitle"));
   assert.match(cost, /formatCost\(value\)/);
   assert.doesNotMatch(cost, /toFixed\(2\)/);
 });

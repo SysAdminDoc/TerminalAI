@@ -5,6 +5,10 @@ import { appSource } from "./appSource.mjs";
 import { cssSource } from "./cssSource.mjs";
 
 const main = appSource();
+const reviewPage = readFileSync(
+  new URL("../src/reviewPage.js", import.meta.url),
+  "utf8",
+).replace(/\r\n/g, "\n");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 const styles = cssSource();
 
@@ -39,8 +43,14 @@ test("queue lookup failures do not render an empty queue", () => {
 });
 
 test("review lookup failures replace the blank review with an alert and retry", () => {
-  const load = sliceBetween("async function loadReview", "function setReviewMode");
-  const render = sliceBetween("function renderReview", "function renderReviewEntry");
+  const load = reviewPage.slice(
+    reviewPage.indexOf("async function loadReview"),
+    reviewPage.indexOf("async function landSession"),
+  );
+  const render = reviewPage.slice(
+    reviewPage.indexOf("function renderReview"),
+    reviewPage.indexOf("function renderReviewEntry"),
+  );
 
   assert.match(load, /state\.reviewError = null;/);
   assert.match(load, /state\.reviewError = String\(error\);/);
