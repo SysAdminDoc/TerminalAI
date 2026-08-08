@@ -208,10 +208,30 @@ pub fn run(sessions: usize, events_per_session: usize) -> Result<FleetStressRepo
             break;
         }
         if Instant::now() >= startup_deadline {
+            let pending = registry
+                .snapshot()
+                .into_iter()
+                .filter(|session| session.pid.is_none())
+                .map(|session| {
+                    format!(
+                        "{}={:?}/{:?}: {}",
+                        session.name, session.status, session.phase, session.last_line
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
             registry.shutdown();
-            return Err(format!("only {started}/{sessions} synthetic sessions started"));
+            return Err(format!(
+                "only {started}/{sessions} synthetic sessions started; pending: {pending}"
+            ));
         }
-        std::thread::yield_now();
+        // `snapshot` takes the same state lock as the start workers. A tight
+        // yield-and-relock loop can starve the final worker on Windows' mutex
+        // scheduler, leaving a perfectly healthy row in Preparing until the
+        // budget expires. A millisecond backoff preserves the budget while
+        // giving the worker a real scheduling opportunity and keeps the gate's
+        // CPU profile representative.
+        std::thread::sleep(Duration::from_millis(1));
     }
     let startup_ms = elapsed_ms(startup_started.elapsed());
 

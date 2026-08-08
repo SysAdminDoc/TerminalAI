@@ -85,6 +85,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Added `scripts/prepare-release-assets.ps1`, which derives the exact versioned NSIS/MSI artifacts,
   hashes, commit provenance, and MSI ProductCode/UpgradeCode from the built release instead of
   trusting filenames or a hand-maintained package manifest.
+- Stabilized the release test gate under Windows load: the 30-session synthetic profile now backs
+  off while polling its shared registry lock, branch semantics retry bounded Git lookups in tests,
+  and the ConPTY ETX contract accepts both current Windows control-event behavior and the older
+  byte-only behavior. The full core suite remains 530/530.
 
 ## [0.23.0] — 2026-08-08
 

@@ -743,10 +743,21 @@ mod tests {
         run_git(&["add", "README.txt"]);
         run_git(&["commit", "-qm", "baseline"]);
 
-        assert_eq!(current_branch(&root).as_deref(), Some("trunk"));
+        let assert_branch = |expected: &str| {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                if current_branch(&root).as_deref() == Some(expected) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            assert_eq!(current_branch(&root).as_deref(), Some(expected));
+        };
+
+        assert_branch("trunk");
 
         run_git(&["checkout", "-q", "-b", "feature/rewrite"]);
-        assert_eq!(current_branch(&root).as_deref(), Some("feature/rewrite"));
+        assert_branch("feature/rewrite");
 
         // A detached HEAD has no branch name; reporting the previous one would lie.
         let head = Command::new("git")

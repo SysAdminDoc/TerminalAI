@@ -175,8 +175,11 @@ else {
 
     $readme = Get-Content -Path (Join-Path $repoRoot 'README.md') -Raw
 
-    $defaultTests = Measure-CargoTests @('test', '--workspace')
-    $allFeatureTests = Measure-CargoTests @('test', '--workspace', '--all-features')
+    # The fleet stress profile deliberately starts thirty worker sessions. Keep
+    # the harness serial so unrelated test binaries cannot starve one of those
+    # workers on a busy release host; this changes scheduling, not coverage.
+    $defaultTests = Measure-CargoTests @('test', '--workspace', '--', '--test-threads=1')
+    $allFeatureTests = Measure-CargoTests @('test', '--workspace', '--all-features', '--', '--test-threads=1')
 
     $frontendOutput = & npm --prefix (Join-Path $repoRoot 'web') test 2>&1
     if ($LASTEXITCODE -ne 0) {

@@ -122,7 +122,7 @@ Working today (`terminalai-probe`, headless):
 - Shows how full each session's context window is when that is measurable, and an em dash when it
   is not — the window is reported by the agent, never inferred. Compaction appears in the status
   history instead of looking like a stall
-- 769 default Rust tests over agent identification and resolution against an injected filesystem,
+ - 775 default Rust tests over agent identification and resolution against an injected filesystem,
   the flag mapping, real-pty boundary and blocking exit wait, supervision state machine, registry,
   diagnostics, review aggregation and reviewed-mark expiry, the land gate against real
   repositories, environment leases, transcript tailing, the MCP boundary, cost model and vendored
@@ -141,8 +141,8 @@ Working today (`terminalai-probe`, headless):
   blocks on to reach another, origin mode against the conformance corpus, the working-directory
   change that invalidates a row's folder and branch, and the DPI and restart declarations made
   against the real Windows APIs, the admission limits read from the operator's configuration, and
-  the quota window attributed to the sessions that consumed it; 774 with the opt-in app-server
-  transport enabled, plus 408 frontend tests (`npm --prefix web test`) and a real browser pass over
+   the quota window attributed to the sessions that consumed it; 775 with the opt-in app-server
+   transport enabled, plus 409 frontend tests (`npm --prefix web test`) and a real browser pass over
   every dialog, menu and disclosure across a populated fleet in both row densities
   (`npm --prefix web run test:chrome`)
 
