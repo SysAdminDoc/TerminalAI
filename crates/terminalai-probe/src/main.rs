@@ -56,7 +56,7 @@ USAGE:
                            [--session <id> [--archive-on-success]]
   terminalai-probe hook    <claude|codex>    (read one hook JSON object from stdin)
   terminalai-probe hooks   <status|preview|install|remove> <claude|codex> [options]
-  terminalai-probe verify-goldens [--goldens <dir>]  (does the installed CLI accept the golden argv?)
+  terminalai-probe verify-goldens [--goldens <dir>]  (does the installed CLI accept -- and act on -- the golden argv?)
   terminalai-probe cpu-idle [--sessions <n>] [--seconds <s>] [--poll]
   terminalai-probe hygiene  [--sessions <n>] [--json] [--output <path>]
 
@@ -2224,9 +2224,25 @@ fn cmd_verify_goldens(args: &[String]) -> i32 {
             .filter(|flag| !terminalai_core::help::help_lists_flag(&help, flag))
             .map(str::to_owned)
             .collect();
+        // Listed is not the same as applicable. A flag whose own help says it
+        // works only under another mode is accepted, ignored, and silently does
+        // nothing -- which is what `--max-budget-usd` did in an interactive argv
+        // for two releases while this check reported clean.
+        let restricted: Vec<GoldenRestriction> = terminalai_core::help::mode_restricted_flags(
+            &help,
+            &golden.expected_args,
+            &golden.value_args,
+        )
+        .into_iter()
+        .filter(|(flag, _)| !golden.passthrough_args.iter().any(|extra| extra == flag))
+        .map(|(flag, requires)| GoldenRestriction {
+            flag: flag.to_owned(),
+            requires,
+        })
+        .collect();
         let checked = mapped.len();
         let passthrough = used.len() - checked;
-        if !unlisted.is_empty() {
+        if !unlisted.is_empty() || !restricted.is_empty() {
             worst = worst.max(3);
         }
         reports.push(GoldenReport {
@@ -2236,6 +2252,7 @@ fn cmd_verify_goldens(args: &[String]) -> i32 {
             flags_checked: checked,
             passthrough_skipped: passthrough,
             unlisted,
+            restricted,
         });
     }
 
@@ -2257,6 +2274,16 @@ fn cmd_verify_goldens(args: &[String]) -> i32 {
             println!("  every flag is listed by the installed CLI");
         } else {
             println!("  NOT listed by the installed CLI: {}", report.unlisted.join(", "));
+        }
+        if report.restricted.is_empty() {
+            println!("  every flag applies in the mode this argv is in");
+        } else {
+            for restriction in &report.restricted {
+                println!(
+                    "  ACCEPTED BUT IGNORED: {} works only with {}, which this argv does not use",
+                    restriction.flag, restriction.requires
+                );
+            }
         }
     }
     worst
@@ -2291,6 +2318,16 @@ struct GoldenReport {
     flags_checked: usize,
     passthrough_skipped: usize,
     unlisted: Vec<String>,
+    /// Flags the CLI lists and would then ignore, because its own help
+    /// restricts them to a mode this argv is not in.
+    restricted: Vec<GoldenRestriction>,
+}
+
+#[derive(Debug, Serialize)]
+struct GoldenRestriction {
+    flag: String,
+    /// The mode flag the help says it needs.
+    requires: String,
 }
 
 /// The agent's own `--help`, as the operator's shell would see it.

@@ -31,8 +31,6 @@
     "golden-plugin",
     "--plugin-url",
     "https://example.invalid/plugin.zip",
-    "--fallback-model",
-    "sonnet",
     "--resume",
     "claude-session-1",
     "--fork-session",

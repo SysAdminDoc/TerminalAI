@@ -89,13 +89,6 @@ where an item depends on another in this section, its Why says which.
 
 ### P1
 
-- [ ] P1 — Run `verify-goldens` in the release gate, and teach it what a flag's mode means
-  Why: the check that asks whether the installed agent accepts our argv is wired to nothing, and it could not have caught the budget defect above because it compares flag names against `--help` without reading the constraints `--help` states next to them.
-  Evidence: `terminalai-probe verify-goldens` is documented (its own `USAGE` at `crates/terminalai-probe/src/main.rs:59`, and `CLAUDE.md:69`) but invoked by nothing — no file under `scripts/` or `web/scripts/`, no `package.json` script, no cargo alias, and `.github/` contains no workflows. `claude --help` prints the constraint inline — "(only works with --print)" — but on a wrapped continuation line, and `help_lists_flag` (`crates/terminalai-core/src/help.rs:85`) searches the whole help string for a token with no per-flag block to attach a constraint to, so the second half of this item is a parser rewrite rather than a predicate tweak.
-  Touches: `crates/terminalai-probe/src/main.rs`, `crates/terminalai-core/src/help.rs`, `scripts/verify-release-metadata.ps1` or a new gate step it invokes
-  Acceptance: a release run fails when the installed agent does not accept a golden argv, and fails when a golden emits a flag whose own help text restricts it to a mode this tool does not use. Both failures are reproducible by hand-editing a fixture.
-  Complexity: M (wiring is small; the flag-mode half is a help-text parser)
-
 - [ ] P1 — Re-verify against Claude Code 2.1.226 and land the two version-gated items
   Why: both items in `Roadmap_Blocked.md` were blocked on flags that postdated the installed CLI, and the versions that carry them are now published — so the blocker is an upgrade decision rather than an absence.
   Evidence: https://registry.npmjs.org/@anthropic-ai/claude-code/latest reports **2.1.226** (checked 2026-08-08); this machine runs 2.1.170. `--ax-screen-reader` appears in the changelog at 2.1.208 and is documented from 2.1.181; `--autocompact <auto|tokens>` at 2.1.221. Cross-reference rather than duplicate: "Tell the agent when the operator is using a screen reader" and "Let the operator set the compaction threshold the row now displays" already exist in `Roadmap_Blocked.md` — move them back, do not re-file them.

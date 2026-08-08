@@ -71,7 +71,11 @@ fn canonical_spec(agent: Agent, cwd: &Path) -> LaunchSpec {
             .map(PathBuf::from)
             .collect(),
         plugin_urls: claude_only(agent, &["https://example.invalid/plugin.zip"]),
-        fallback_model: (agent == Agent::Claude).then(|| "sonnet".to_owned()),
+        // Neither agent expresses this: Codex has no such flag, and Claude's
+        // own help restricts it to `--print`. Left out of the canonical spec
+        // because setting it is now a refusal for both, which
+        // `every_claude_only_option_is_refused_for_codex` asserts by name.
+        fallback_model: None,
         initial_prompt: Some("--dangerously-skip-permissions".into()),
         extra_args: vec!["--verbose".into()],
         ..Default::default()

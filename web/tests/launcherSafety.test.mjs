@@ -166,7 +166,6 @@ test("the tool, settings, MCP and plugin fields exist and round-trip", () => {
     "strict-mcp-input",
     "plugin-dirs-input",
     "plugin-urls-input",
-    "fallback-model-input",
   ];
   for (const id of ids) {
     const element = dom.window.document.getElementById(id);
@@ -187,6 +186,18 @@ test("the tool, settings, MCP and plugin fields exist and round-trip", () => {
   for (const id of ids) {
     assert.ok(readSpec.includes(id), `${id} is never read into a spec`);
   }
+});
+
+// `--fallback-model` used to sit in that list. It is gone from the launcher
+// because `claude --help` restricts it to `--print`, so the control offered a
+// behaviour the agent would accept and ignore in every session this tool runs.
+// Nothing replaces it: this tool cannot retry a turn on another model itself, so
+// the honest answer is not to offer the choice.
+test("the launcher offers no control for a flag the agent would ignore", () => {
+  const { dom } = launcherForm();
+  assert.equal(dom.window.document.getElementById("fallback-model-input"), null);
+  const readSpec = main.slice(main.indexOf("function readSpec"), main.indexOf("function setPermissionValue"));
+  assert.match(readSpec, /fallback_model: null/);
 });
 
 // A plugin URL fetches and runs remote code. The label has to say so where the

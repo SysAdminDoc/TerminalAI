@@ -499,6 +499,12 @@ terminalai-probe hooks status claude --executable .\target\release\terminalai.ex
 terminalai-probe hooks install claude --executable .\target\release\terminalai.exe
 terminalai-probe hooks remove claude --executable .\target\release\terminalai.exe
 
+# Ask the installed CLIs whether they accept — and act on — the argv the launch
+# goldens pin. Also runs as the fifth claim of the release gate. A flag whose own
+# help restricts it to a mode this tool does not use is reported as
+# accepted-but-ignored rather than passing because it exists.
+terminalai-probe verify-goldens
+
 # Expose the fleet to an MCP client over stdio. Read-only unless both halves
 # of the write gate are given.
 terminalai-probe mcp

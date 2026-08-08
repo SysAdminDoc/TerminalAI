@@ -18,9 +18,13 @@ This checks the four claims a release makes about itself:
 3. No version section repeats a `###` subsection, which is what happens when a
    later commit appends to a released section instead of opening a new one.
 4. The test counts stated in README.md match what the suites actually report.
+5. The installed agents still accept -- and still act on -- the argv the launch
+   goldens pin. `terminalai-probe verify-goldens` existed for a release and was
+   invoked by nothing, which is how `--max-budget-usd` and `--fallback-model`
+   shipped in an interactive command line that both CLIs ignore.
 
-Claim 4 runs both suites, so it is the slow half. `-SkipTests` omits it for a
-quick metadata check; the release gate must not.
+Claims 4 and 5 run real work, so they are the slow half. `-SkipTests` omits them
+for a quick metadata check; the release gate must not.
 
 Non-zero exit means do not publish.
 
@@ -205,6 +209,39 @@ else {
         }
         else {
             Add-Problem "README states no count for $($claim.Label)"
+        }
+    }
+}
+
+# --- 5. the installed agents accept and act on the golden argv -------------
+
+if ($SkipTests) {
+    Write-Host 'Golden argv    (skipped)'
+}
+else {
+    Write-Host 'Golden argv'
+
+    # Built rather than assumed present: this gate must not silently pass
+    # because the binary from some earlier build happened to be lying around.
+    & cargo build --release -p terminalai-probe 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Add-Problem 'terminalai-probe would not build, so the goldens were never checked'
+    }
+    else {
+        $probe = Join-Path $repoRoot 'target/release/terminalai-probe.exe'
+        $report = & $probe verify-goldens 2>&1
+        $status = $LASTEXITCODE
+        switch ($status) {
+            0 { Add-Pass 'every golden flag is listed by the installed CLI and applies in the mode it is used in' }
+            # 2 is "the question could not be asked" -- an agent that is not
+            # installed, or printed no help. Not a pass: a release certified
+            # against nothing is the failure this whole check exists for.
+            2 {
+                Add-Problem "the goldens could not be checked against an installed agent:`n$($report -join "`n")"
+            }
+            default {
+                Add-Problem "the installed CLI disagrees with a launch golden:`n$($report -join "`n")"
+            }
         }
     }
 }

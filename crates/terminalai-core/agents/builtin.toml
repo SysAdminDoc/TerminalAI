@@ -30,7 +30,10 @@ probe = "claude-print-json"
 # slot: it is applied at spawn time rather than as a flag. There is no
 # `max-budget-usd` slot either: `claude --help` restricts that flag to `--print`,
 # and nothing this tool launches is in print mode, so the cap is held in the
-# ledger instead of being spelled into an argv that ignores it.
+# ledger instead of being spelled into an argv that ignores it. `fallback-model`
+# is absent for the same reason and has no ledger equivalent -- this tool cannot
+# retry a turn on another model -- so a spec that sets it is refused by name
+# rather than launched with a flag the agent will ignore.
 order = [
     "model",
     "effort",
@@ -46,7 +49,6 @@ order = [
     "strict-mcp-config",
     "plugin-dirs",
     "plugin-urls",
-    "fallback-model",
     "resume",
 ]
 
@@ -70,7 +72,6 @@ mcp-config = { flag = "--mcp-config" }
 strict-mcp-config = { flag = "--strict-mcp-config", switch = true }
 plugin-dirs = { flag = "--plugin-dir" }
 plugin-urls = { flag = "--plugin-url" }
-fallback-model = { flag = "--fallback-model" }
 
 [agent.flags.permission]
 emit = { flag = "--permission-mode" }

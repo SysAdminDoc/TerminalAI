@@ -2804,8 +2804,11 @@ function readSpec() {
     strict_mcp_config: agent === "claude" && $("strict-mcp-input").checked,
     plugin_dirs: agent === "claude" ? commaList("plugin-dirs-input") : [],
     plugin_urls: agent === "claude" ? commaList("plugin-urls-input") : [],
-    fallback_model:
-      agent === "claude" ? $("fallback-model-input").value.trim() || null : null,
+    // Deliberately never set. `claude --help` restricts `--fallback-model` to
+    // `--print`, so the launcher offered a control the agent would ignore; the
+    // core refuses the field by name, and a stored preset that still carries
+    // one is refused rather than launched with a flag that does nothing.
+    fallback_model: null,
     environment: {
       setup: $("setup-hook-input").value.trim() || null,
       teardown: $("teardown-hook-input").value.trim() || null,
@@ -2865,7 +2868,6 @@ function writeSpec(spec) {
   $("strict-mcp-input").checked = Boolean(spec.strict_mcp_config);
   $("plugin-dirs-input").value = (spec.plugin_dirs ?? []).join(", ");
   $("plugin-urls-input").value = (spec.plugin_urls ?? []).join(", ");
-  $("fallback-model-input").value = spec.fallback_model ?? "";
   $("port-base-input").value = spec.environment?.port_base ?? 42000;
   $("port-count-input").value = spec.environment?.port_count ?? 4;
   $("setup-hook-input").value = spec.environment?.setup ?? "";

@@ -5,6 +5,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Added
+
+- The launch goldens are checked in the release gate, and the check now asks whether a flag
+  *applies* rather than only whether it exists. `terminalai-probe verify-goldens` had shipped a
+  release ago and was invoked by nothing — no script, no npm script, no cargo alias, no workflow —
+  so the one check that asks the installed CLI whether it accepts our argv only ran when somebody
+  remembered. `scripts/verify-release-metadata.ps1` now runs it as its fifth claim, and an agent
+  that is not installed or prints no help is a failure rather than a pass: a release certified
+  against nothing is the failure the gate exists for.
+
+  The check itself could not have caught the budget defect, because it compared flag names against
+  the help text as one flat string while the constraint — "(only works with --print)" — sits on a
+  wrapped continuation line beside the flag. `help.rs` now groups a help text into per-option blocks
+  by indentation and reads the restriction out of the block, so a flag whose own documentation binds
+  it to a mode this argv is not in is reported as accepted-but-ignored. It found `--fallback-model`
+  on its first run.
+
 ### Fixed
 
 - A worktree the agent removed stops being named by its row. `WorktreeCreate` was managed and
@@ -14,18 +31,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   confirmed against the filesystem rather than read from a payload field: the event says a removal
   happened, and whether *this* session's checkout is the one that went is a question only the
   directory can answer. A removal elsewhere changes nothing.
-
-### Changed
-
-- The README describes what ships. It claimed the daemon "can hibernate idle sessions while
-  retaining their rows" — hibernation has no implementation anywhere in the tree and is parked
-  pending live evidence that `--resume` restores enough context — and badged the platform as
-  Windows, macOS and Linux while the bundle produces NSIS and MSI only. The idle-session paragraph
-  now describes the mechanism that does ship, EcoQoS and low memory priority across an unfocused
-  session's job, and the platform is stated once: the shell is Windows-native, and the core, daemon
-  and probe type-check for `cfg(unix)` without that being a claim they run there.
-
-### Fixed
 
 - Every documented `notification_type` is recognised by name. The `Notification` hook is already
   managed, so its payloads were arriving; the classifier searched them for substrings, which meant
@@ -69,6 +74,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   while an explicit send still goes through, so an operator who decides to carry on can. The row's
   cost turns red and names the figure it was measured against. `budget_enforced_agents` now names
   every agent, because the enforcement is this tool's own rather than a claim about someone's flags.
+
+### Changed
+
+- The launcher no longer offers a fallback model. `claude --help` restricts `--fallback-model` to
+  `--print` in the same words it restricts the budget flag, so the control set an argument the agent
+  accepted and ignored in every session this tool runs. Unlike the budget there is no ledger
+  equivalent — this tool cannot retry a turn on another model — so the flag is gone from the Claude
+  manifest and the field is refused by name rather than launched with something that does nothing.
+  Found by the goldens gate on its first wired run.
+
+- The README describes what ships. It claimed the daemon "can hibernate idle sessions while
+  retaining their rows" — hibernation has no implementation anywhere in the tree and is parked
+  pending live evidence that `--resume` restores enough context — and badged the platform as
+  Windows, macOS and Linux while the bundle produces NSIS and MSI only. The idle-session paragraph
+  now describes the mechanism that does ship, EcoQoS and low memory priority across an unfocused
+  session's job, and the platform is stated once: the shell is Windows-native, and the core, daemon
+  and probe type-check for `cfg(unix)` without that being a claim they run there.
 
 ## [0.21.0] — 2026-08-08
 

@@ -117,6 +117,161 @@ pub fn unlisted_flags<'a>(help: &str, args: &'a [String], values: &[String]) -> 
         .collect()
 }
 
+/// One option as `--help` presents it: the flags it declares, and the whole of
+/// its description including the lines it wrapped onto.
+///
+/// The continuation lines are the point. A CLI states a flag's constraints in
+/// prose beside it — "only works with --print" — and at the width these tools
+/// print at, that phrase routinely lands on the *next* line. A check that reads
+/// help as one flat string can find the flag and can find the constraint, and
+/// has no way to know they belong together.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HelpOption {
+    /// Every flag spelling on the option line, long and short.
+    pub flags: Vec<String>,
+    /// The option line and its continuations, joined with single spaces.
+    pub text: String,
+}
+
+/// Split a help text into per-option blocks.
+///
+/// The rule is indentation, which is what these CLIs actually use: a line whose
+/// first non-space character starts a flag *and* which is no more indented than
+/// the option it follows begins a new option; a more-indented line continues the
+/// current one; a blank line ends it.
+///
+/// Deliberately not a parser for any one CLI's formatting. Anything it fails to
+/// group produces a block with no constraint in it, which is the same answer the
+/// check gave before this existed — the failure mode is silence, not a wrong
+/// claim.
+pub fn help_options(help: &str) -> Vec<HelpOption> {
+    let mut options: Vec<HelpOption> = Vec::new();
+    let mut current: Option<(usize, HelpOption)> = None;
+    for line in help.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if let Some((_, option)) = current.take() {
+                options.push(option);
+            }
+            continue;
+        }
+        let indent = line.len() - line.trim_start().len();
+        let starts_option = option_flags(trimmed).is_some();
+        let continues = current
+            .as_ref()
+            .is_some_and(|(open_indent, _)| indent > *open_indent);
+        if starts_option && !continues {
+            if let Some((_, option)) = current.take() {
+                options.push(option);
+            }
+            current = Some((
+                indent,
+                HelpOption {
+                    flags: option_flags(trimmed).unwrap_or_default(),
+                    text: trimmed.to_owned(),
+                },
+            ));
+        } else if let Some((_, option)) = current.as_mut() {
+            option.text.push(' ');
+            option.text.push_str(trimmed);
+        }
+    }
+    if let Some((_, option)) = current.take() {
+        options.push(option);
+    }
+    options
+}
+
+/// The flags an option line declares, or `None` when the line is not one.
+///
+/// Stops at the first token that is not a flag, so `-e, --effort <level>  how
+/// hard to think` yields `-e` and `--effort` and not the words after them.
+fn option_flags(trimmed: &str) -> Option<Vec<String>> {
+    if !trimmed.starts_with('-') {
+        return None;
+    }
+    let mut flags = Vec::new();
+    for token in trimmed.split_whitespace() {
+        let token = token.trim_end_matches(',');
+        if !looks_like_flag(token) {
+            break;
+        }
+        flags.push(flag_name(token).to_owned());
+    }
+    (!flags.is_empty()).then_some(flags)
+}
+
+/// Phrases a CLI uses to say a flag binds only in some other mode.
+///
+/// Deliberately narrow. A loose pattern — "requires", "with" — matches ordinary
+/// prose and would report flags that are perfectly usable, and a check that
+/// cries wolf gets removed from the gate. These are the spellings observed in
+/// the CLIs this tool launches; anything else reads as unrestricted, which is
+/// the same answer as before this existed.
+const RESTRICTION_PHRASES: [&str; 4] = [
+    "only works with",
+    "only valid with",
+    "only available with",
+    "can only be used with",
+];
+
+/// The flag an option says it only works alongside, if it says so.
+///
+/// Returns the *other* flag, so the caller can ask the question that matters: is
+/// that mode one this tool's argv is actually in.
+pub fn mode_requirement(option: &HelpOption) -> Option<String> {
+    let lowered = option.text.to_ascii_lowercase();
+    let start = RESTRICTION_PHRASES
+        .iter()
+        .filter_map(|phrase| lowered.find(phrase).map(|at| at + phrase.len()))
+        .min()?;
+    let mut tokens = lowered[start..].split_whitespace();
+    let mut found = None;
+    for token in tokens.by_ref() {
+        let trimmed = token.trim_end_matches([')', ',', ';', '.']);
+        if looks_like_flag(trimmed) {
+            found = Some(trimmed.to_owned());
+            break;
+        }
+        // Stop at the end of the clause: a flag named in the next sentence is
+        // about something else.
+        if token.ends_with('.') {
+            break;
+        }
+    }
+    found
+}
+
+/// Flags this argv uses whose own help text restricts them to a mode this argv
+/// is not in.
+///
+/// The gap this closes is not hypothetical: `--max-budget-usd` was emitted into
+/// an interactive command line for two releases while `claude --help` said, on
+/// the wrapped continuation line beside it, "only works with --print". The flag
+/// existed, so the listing check passed, and the cap it promised bound nothing.
+///
+/// Each result is the flag and the mode flag it needs. An empty result is the
+/// only good answer.
+pub fn mode_restricted_flags<'a>(
+    help: &str,
+    args: &'a [String],
+    values: &[String],
+) -> Vec<(&'a str, String)> {
+    let used = flags_used(args, values);
+    let options = help_options(help);
+    used.iter()
+        .filter_map(|flag| {
+            let option = options
+                .iter()
+                .find(|option| option.flags.iter().any(|listed| listed == flag))?;
+            let required = mode_requirement(option)?;
+            // Satisfied is fine. The report is about a flag whose mode this
+            // command line is not in, not about every flag that has one.
+            (!used.iter().any(|other| *other == required)).then_some((*flag, required))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,6 +360,82 @@ mod tests {
         // `start == 0` has no preceding character to inspect, and getting that
         // boundary wrong reports a documented flag as missing.
         assert!(help_lists_flag("--verbose  say more", "--verbose"));
+    }
+
+    #[test]
+    fn an_option_and_its_wrapped_description_are_read_as_one_block() {
+        // The shape `claude --help` prints on 2.1.170, where the constraint
+        // lands on the continuation line. A check that reads the help as one
+        // flat string can see the flag and can see the constraint and has no way
+        // to know they belong to each other.
+        let help = concat!(
+            "  --model <name>             the model to use\n",
+            "  --max-budget-usd <amount>  Maximum dollar amount to spend on\n",
+            "                             API calls (only works with --print)\n",
+            "  --verbose                  say more\n",
+        );
+        let options = help_options(help);
+        let budget = options
+            .iter()
+            .find(|option| option.flags.iter().any(|flag| flag == "--max-budget-usd"))
+            .expect("the option is found");
+        assert!(budget.text.contains("only works with --print"), "{budget:?}");
+        assert_eq!(mode_requirement(budget).as_deref(), Some("--print"));
+        // And the option after it is its own block rather than part of the
+        // wrapped description above.
+        let verbose = options
+            .iter()
+            .find(|option| option.flags.iter().any(|flag| flag == "--verbose"))
+            .expect("the next option is separate");
+        assert!(!verbose.text.contains("budget"), "{verbose:?}");
+    }
+
+    #[test]
+    fn short_and_long_spellings_on_one_line_are_both_claimed_by_it() {
+        let options = help_options("  -e, --effort <level>  how hard to think\n");
+        assert_eq!(options.len(), 1);
+        assert_eq!(options[0].flags, vec!["-e", "--effort"]);
+    }
+
+    #[test]
+    fn a_flag_restricted_to_a_mode_this_argv_is_not_in_is_reported() {
+        // The defect this exists for: the flag was listed, so the listing check
+        // passed, and it was emitted into an interactive command line where the
+        // CLI ignores it.
+        let help = concat!(
+            "  --print                    run non-interactively\n",
+            "  --max-budget-usd <amount>  cap spend\n",
+            "                             (only works with --print)\n",
+        );
+        let interactive = owned(&["--max-budget-usd", "5"]);
+        assert_eq!(
+            mode_restricted_flags(help, &interactive, &owned(&["5"])),
+            vec![("--max-budget-usd", "--print".to_owned())],
+        );
+        // And satisfied is not a finding.
+        let printing = owned(&["--print", "--max-budget-usd", "5"]);
+        assert!(mode_restricted_flags(help, &printing, &owned(&["5"])).is_empty());
+    }
+
+    #[test]
+    fn ordinary_prose_beside_a_flag_is_not_read_as_a_restriction() {
+        // A loose pattern reports flags that work perfectly, and a check that
+        // cries wolf gets removed from the gate.
+        let help = concat!(
+            "  --model <name>  the model to use with this session\n",
+            "  --resume <id>   requires an existing session id\n",
+        );
+        let args = owned(&["--model", "opus", "--resume", "abc"]);
+        let values = owned(&["opus", "abc"]);
+        assert!(mode_restricted_flags(help, &args, &values).is_empty());
+    }
+
+    #[test]
+    fn a_flag_the_help_does_not_describe_at_all_reports_no_restriction() {
+        // Absence is the listing check's finding, not this one's. Reporting it
+        // twice would make one failure look like two.
+        let args = owned(&["--ax-screen-reader"]);
+        assert!(mode_restricted_flags("  --model <name>\n", &args, &[]).is_empty());
     }
 
     #[test]
