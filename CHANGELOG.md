@@ -38,6 +38,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Extracted fleet row creation, keyboard movement, action dispatch, and incremental DOM updates
   into the injectable `web/src/fleetRowState.js` module; returned `rowAction` from the terminal
   history boundary so row controls no longer rely on an unbound closure.
+- Extracted urgency-aware grouping, structured status/agent filters, and group-chip rendering
+  into the injectable `web/src/fleetGrouping.js` module; filter contracts now read that boundary.
 - Extracted snapshot refresh serialization, event replay, preflight outage routing, and focused
   terminal reattachment into the injectable `web/src/snapshotCoordinator.js` module; operational
   panels use a late-bound loader so the boundary remains acyclic.
