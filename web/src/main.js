@@ -1,4 +1,4 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { Channel, invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
@@ -43,6 +43,35 @@ const WDIO_BUILD = import.meta.env.VITE_TERMINALAI_WDIO === "1";
 if (WDIO_BUILD) {
   await import("@wdio/tauri-plugin");
 }
+
+/// Every command this window sends to the backend.
+///
+/// Normally the bundled `@tauri-apps/api` binding. Under the end-to-end build,
+/// a command the harness has mocked is answered by the mock instead.
+///
+/// This indirection is why that harness spent a release looking like it worked
+/// and did not. WebdriverIO's Tauri plugin registers mocks in
+/// `window.__wdio_mocks__` and *tries* to intercept `window.__TAURI__.core.invoke`
+/// by redefining it — which fails silently on this WebView2 and leaves the
+/// global pointing at the real backend. Probed inside a live run on 2026-08-08,
+/// `window.__TAURI__.core.invoke` was still
+/// `async (e, n = {}, t) => window.__TAURI_INTERNALS__.invoke(e, n, t)` with
+/// eight mocks registered beside it. So the plugin only routes mocks inside its
+/// own `browser.tauri.execute` wrapper; the application never saw one, every
+/// `fleet_snapshot` reached a daemon the wdio build deliberately does not have,
+/// and the window sat in its daemon-unavailable state while the mocks recorded
+/// zero calls.
+///
+/// Reading the map per call rather than binding once is deliberate: the spec
+/// registers mocks after the window has loaded and adds more between steps.
+/// Anything unmocked still reaches the real backend, so this cannot quietly
+/// turn a missing mock into a passing assertion.
+const invoke = WDIO_BUILD
+  ? (command, args) => {
+      const mock = window.__wdio_mocks__?.[command];
+      return mock ? Promise.resolve(mock(args)) : tauriInvoke(command, args);
+    }
+  : tauriInvoke;
 
 const STATUS_ORDER = {
   "needs-approval": 8,
@@ -1847,8 +1876,26 @@ async function loadSnapshotNow() {
   state.snapshotLoading = true;
   state.snapshotEvents = [];
   renderSnapshotLoading();
+  // Only the snapshot call itself decides whether the daemon is reachable.
+  // Everything after it -- reattaching the focused pane, redrawing the header --
+  // can fail for its own reasons, and treating those as "the daemon is gone"
+  // sent the whole window to the first-run check while the fleet it had just
+  // loaded sat behind it. The state that produced it is real: a focused id
+  // naming a session the snapshot does not contain.
+  let snapshot;
   try {
-    const snapshot = await invoke("fleet_snapshot");
+    snapshot = await invoke("fleet_snapshot");
+  } catch (error) {
+    state.preflightReason = `Daemon unavailable: ${error}`;
+    state.preflightMode = true;
+    syncPreflightVisibility();
+    syncReviewVisibility();
+    state.snapshotLoading = false;
+    renderSnapshotLoading();
+    void loadPreflight(true);
+    return;
+  }
+  try {
     const pendingEvents = state.snapshotEvents;
     state.snapshotEvents = [];
     state.sessions = snapshot.sessions ?? [];
@@ -1877,11 +1924,9 @@ async function loadSnapshotNow() {
       renderRows();
     }
   } catch (error) {
-    state.preflightReason = `Daemon unavailable: ${error}`;
-    state.preflightMode = true;
-    syncPreflightVisibility();
-    syncReviewVisibility();
-    void loadPreflight(true);
+    // The fleet is loaded and correct; one pane did not reattach. Say so where
+    // the operator is looking rather than replacing the window they were using.
+    showToast(t("terminal-attach-failed", { error: String(error) }));
   } finally {
     state.snapshotLoading = false;
     renderSnapshotLoading();

@@ -34,6 +34,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Fixed
 
+- The WebdriverIO end-to-end gate passes, and its screenshots show the shipping window. It had
+  never rendered the fleet, for three separate reasons stacked on each other. The build was a dev
+  shell (fixed in v0.21.0). Then the mocks were never seen by the application: WebdriverIO's Tauri
+  plugin registers them in `window.__wdio_mocks__` and tries to intercept
+  `window.__TAURI__.core.invoke`, and that redefinition fails silently on this WebView2 — probed
+  inside a live run, the global was still the real binding with eight mocks registered beside it. So
+  every `fleet_snapshot` reached a daemon the test build deliberately does not have. The wdio build
+  now consults the mock map first and falls through to the real binding, so an unmocked command
+  cannot quietly become a passing assertion.
+
+  The third cause was in the application and is a real defect at any time: `loadSnapshotNow` wrapped
+  the snapshot call and the focused-pane reattach in one `try`, so a pane that failed to attach was
+  reported as "daemon unavailable" and replaced the fleet the window had just loaded. Only the
+  snapshot call decides that now; a pane that cannot reattach says so in a toast. The run also keeps
+  its screenshots instead of deleting them, because a green gate with nothing to look at leaves the
+  question it exists to answer on trust.
+
 - A worktree the agent removed stops being named by its row. `WorktreeCreate` was managed and
   answered with a placement, but its counterpart was neither managed nor listed as deliberately
   unmanaged — so when the agent cleaned a checkout up, the row went on naming a directory that no

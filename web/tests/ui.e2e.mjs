@@ -46,7 +46,11 @@ const session = {
   reviewed: false,
 };
 
-const fleet = (sessions = [session], focused = "s0001") => ({
+// `focused` defaults to the session in the fixture and to nothing when there is
+// none: a fleet with no sessions cannot have a focused one, and asking the
+// window to reattach a pane for a session the snapshot does not contain is a
+// state the daemon never produces.
+const fleet = (sessions = [session], focused = sessions[0]?.id ?? null) => ({
   sessions,
   focused,
   admission: {
@@ -109,6 +113,11 @@ async function dispatchClick(selector) {
   }, selector);
 }
 
+/// A capture of the real shipping window, kept after the run.
+///
+/// The screenshots are the point of driving WebView2 rather than jsdom, so the
+/// runner no longer deletes them on the way out — a green run with nothing to
+/// look at still leaves "does the shipping shell render the fleet" on trust.
 async function assertScreenshot(name) {
   const target = path.join(artifactRoot, name);
   await browser.saveScreenshot(target);

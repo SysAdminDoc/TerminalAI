@@ -164,6 +164,11 @@ try {
   assert.ok(existsSync(exitPath), "isolated E2E runner did not write an exit code");
   testStatus = Number.parseInt(readFileSync(exitPath, "utf8"), 10);
   assert.equal(testStatus, 0, readFileSync(path.join(artifacts, "wdio.log"), "utf8"));
+  // The screenshots are the point of driving the real shell rather than jsdom.
+  // Deleting them on the way out left a green run with nothing to look at, so
+  // the one question the gate exists to answer -- does the shipping window
+  // actually render the fleet -- still had to be taken on trust.
+  console.log(`[terminalai-e2e] screenshots: ${artifacts}`);
 } catch (error) {
   if (launched?.processId) taskkill(launched.processId);
   const logPath = path.join(artifacts, "wdio.log");
@@ -180,7 +185,6 @@ try {
     }
   }
   rmSync(localAppData, { recursive: true, force: true });
-  rmSync(artifacts, { recursive: true, force: true });
 }
 
 process.exitCode = testStatus;
