@@ -79,13 +79,6 @@ where an item depends on another in this section, its Why says which.
 
 ### P2
 
-- [ ] P2 — Find out whether a teammate's hooks arrive as the lead's
-  Why: a teammate launched by a team lead inherits the lead's environment, including the hook token the daemon matches on — so a `Notification` or `SubagentStop` from a separate agent instance may be landing on the lead's row and moving a status that is not about it. Nothing today can tell the two apart, and the answer decides whether the notification arms added on 2026-08-08 need scoping.
-  Evidence: hook matching requires `entry.session.hook_token` (`crates/terminalai-core/src/registry/ingest.rs`), which is placed in the session's environment at launch; `https://code.claude.com/docs/en/agent-teams` says teammates are separate Claude Code instances started by the lead. `agent_completed` currently sets the lead's row to `AwaitingInput` by name — the same mapping the substring match produced before — and if teammate completions arrive on that token, a lead still working would be reported as waiting.
-  Touches: `crates/terminalai-core/src/registry/ingest.rs`, `crates/terminalai-core/src/hooks.rs`
-  Acceptance: a real team run is observed and the finding recorded either way. If teammate hooks do arrive on the lead's token, they carry something that distinguishes them and the notification arms use it; if they do not, that is stated in the ingest module docs so the question is not reopened.
-  Complexity: S
-
 - [ ] P2 — Let a launch bound its own fan-out
   Why: admission governs sessions, spend and memory, but a single session can now spawn a team and up to 20 concurrent subagents — the one resource multiplier the launcher cannot express. Depends on the job-memory item above, whose process count is the only way to see whether a cap took effect.
   Evidence: `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` (default 20, Claude Code 2.1.216), `CLAUDE_CODE_MAX_SUBAGENTS_PER_SESSION` (default 200, 2.1.212), `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` (https://code.claude.com/docs/en/agent-teams). None appears in `safe_environment_keys()` (`crates/terminalai-core/src/environment.rs:325`), a 17-entry Windows allowlist — correct by default, but it means the caps are reachable only through the generic passthrough and nothing in the fleet's own governance knows about them.
@@ -129,10 +122,3 @@ where an item depends on another in this section, its Why says which.
   Touches: `crates/terminalai-core/src/session.rs`, `transcript.rs`, `registry/mod.rs`, `registry/sampling.rs`, `crates/terminalai-app/src/main.rs`, `crates/terminalai-app/build.rs`, the three capability files
   Acceptance: each is removed. Keeping any of them requires a caller in the same change, and wiring `colour()` through to the frontend is a separate item with its own estimate, not a way to close this one. Removing `resolve_agent` also removes its manifest entry and all three ACL grants, which the build-time gate already enforces.
   Complexity: S
-
-- [ ] P3 — Make the hooks preflight prove itself rather than read a file
-  Why: the check reports "installed" from the settings file and from managed policy, which is a claim about configuration, not evidence that a hook fires and reaches the daemon. Cannot start until the Claude Code upgrade item above lands — `--init-only` does not exist on 2.1.170.
-  Evidence: the `hooks` check (`crates/terminalai-app/src/main.rs:1495`, `:1600-1650`) inspects installed state and blocking policy only. `claude --init-only` — "run Setup and SessionStart hooks, then exit without starting a conversation" (https://code.claude.com/docs/en/cli-reference) — would make the hook actually fire; it is absent from `claude --help` on 2.1.170, so this depends on the 2.1.226 upgrade item above.
-  Touches: `crates/terminalai-app/src/main.rs`, `crates/terminalai-daemon/src/http_hooks.rs`
-  Acceptance: the preflight check reports "installed and firing" only after the daemon observed a hook from a real `--init-only` run, distinguishes that from "installed, not yet proven", and never blocks startup on the probe failing.
-  Complexity: M

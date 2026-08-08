@@ -287,3 +287,39 @@ disagreement. Note for whoever picks it up: both sources are client-side estimat
 the provider's accounting and the wording must not imply otherwise — the same rule the quota-window
 breakdown shipped under in v0.20.0.
 
+## Whether a teammate's hooks arrive as the lead's
+
+Blocked 2026-08-08 on evidence this machine cannot produce. Agent teams is opt-in and experimental
+(`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`) and is not enabled here — `~/.claude/teams` does not
+exist — so there is no team to observe. Settling it needs a real team run under a supervised
+session, which is an operator decision about their own Claude Code, not a drain's.
+
+What closes it: one supervised session running a team, with the daemon's hook log read while a
+teammate finishes. Then either the teammate's `Notification` and `SubagentStop` arrive carrying the
+lead's `hook_token` — in which case the arms added on 2026-08-08 need something that distinguishes
+them — or they do not, and that is recorded in the ingest module docs so the question stops being
+reopened.
+
+Original item:
+
+- [ ] P2 — Find out whether a teammate's hooks arrive as the lead's
+  Why: a teammate launched by a team lead inherits the lead's environment, including the hook token the daemon matches on — so a `Notification` or `SubagentStop` from a separate agent instance may be landing on the lead's row and moving a status that is not about it. Nothing today can tell the two apart, and the answer decides whether the notification arms added on 2026-08-08 need scoping.
+  Evidence: hook matching requires `entry.session.hook_token` (`crates/terminalai-core/src/registry/ingest.rs`), which is placed in the session's environment at launch; `https://code.claude.com/docs/en/agent-teams` says teammates are separate Claude Code instances started by the lead. `agent_completed` currently sets the lead's row to `AwaitingInput` by name — the same mapping the substring match produced before — and if teammate completions arrive on that token, a lead still working would be reported as waiting.
+  Touches: `crates/terminalai-core/src/registry/ingest.rs`, `crates/terminalai-core/src/hooks.rs`
+  Acceptance: a real team run is observed and the finding recorded either way. If teammate hooks do arrive on the lead's token, they carry something that distinguishes them and the notification arms use it; if they do not, that is stated in the ingest module docs so the question is not reopened.
+  Complexity: S
+
+## Make the hooks preflight prove itself rather than read a file
+
+Blocked 2026-08-08 on the same upgrade as the two version-gated items above: `claude --init-only`
+does not exist on 2.1.170, and it is the only way to make a hook actually fire without starting a
+conversation. Cannot start until the operator upgrades.
+
+Original item:
+
+- [ ] P3 — Make the hooks preflight prove itself rather than read a file
+  Why: the check reports "installed" from the settings file and from managed policy, which is a claim about configuration, not evidence that a hook fires and reaches the daemon. Cannot start until the Claude Code upgrade item above lands — `--init-only` does not exist on 2.1.170.
+  Evidence: the `hooks` check (`crates/terminalai-app/src/main.rs:1495`, `:1600-1650`) inspects installed state and blocking policy only. `claude --init-only` — "run Setup and SessionStart hooks, then exit without starting a conversation" (https://code.claude.com/docs/en/cli-reference) — would make the hook actually fire; it is absent from `claude --help` on 2.1.170, so this depends on the 2.1.226 upgrade item above.
+  Touches: `crates/terminalai-app/src/main.rs`, `crates/terminalai-daemon/src/http_hooks.rs`
+  Acceptance: the preflight check reports "installed and firing" only after the daemon observed a hook from a real `--init-only` run, distinguishes that from "installed, not yet proven", and never blocks startup on the probe failing.
+  Complexity: M
