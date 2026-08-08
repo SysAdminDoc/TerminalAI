@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ## [Unreleased]
 
+### Fixed
+
+- A worktree the agent removed stops being named by its row. `WorktreeCreate` was managed and
+  answered with a placement, but its counterpart was neither managed nor listed as deliberately
+  unmanaged — so when the agent cleaned a checkout up, the row went on naming a directory that no
+  longer existed until the daemon restarted. `WorktreeRemove` is now managed, and the removal is
+  confirmed against the filesystem rather than read from a payload field: the event says a removal
+  happened, and whether *this* session's checkout is the one that went is a question only the
+  directory can answer. A removal elsewhere changes nothing.
+
 ### Changed
 
 - The README describes what ships. It claimed the daemon "can hibernate idle sessions while

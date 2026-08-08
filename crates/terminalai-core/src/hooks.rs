@@ -65,6 +65,13 @@ pub enum HookSignal {
     /// The one hook that lets this supervisor own a checkout the agent made
     /// rather than discovering it later as a stray.
     WorktreeCreate,
+    /// The agent removed a worktree.
+    ///
+    /// The counterpart to [`Self::WorktreeCreate`]: the supervisor answers the
+    /// creation with a placement and then surveys the root for strays, but
+    /// nothing told it when the agent cleaned one up — so the row went on naming
+    /// a checkout that no longer existed.
+    WorktreeRemove,
     Notification { notification: HookNotification },
     /// A provider quota is refusing work. Reported by the agent, never inferred
     /// from a session going quiet — silence is indistinguishable from a long
@@ -549,6 +556,7 @@ fn parse_lifecycle_signal(
         "subagentstart" | "subagent_start" => HookSignal::SubagentStart,
         "cwdchanged" | "cwd_changed" => HookSignal::CwdChanged,
         "worktreecreate" | "worktree_create" => HookSignal::WorktreeCreate,
+        "worktreeremove" | "worktree_remove" => HookSignal::WorktreeRemove,
         "subagentstop" | "subagent_stop" => HookSignal::SubagentStop,
         "notification" => HookSignal::Notification {
             notification: parse_notification(notification_name),

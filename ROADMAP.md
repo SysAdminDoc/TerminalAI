@@ -110,13 +110,6 @@ where an item depends on another in this section, its Why says which.
   Acceptance: a row that is a team lead names its teammates in the wide row; a session with no team, no assigned session id, or an unreadable team file reports nothing rather than "1" or "0"; a team directory left behind by a session that has ended is not attributed to a live row. The *count* of processes belongs to the job-memory item above — this one adds names, not a second number.
   Complexity: M
 
-- [ ] P1 — Manage `WorktreeRemove` so the survey stops naming checkouts that are gone
-  Why: the supervisor answers `WorktreeCreate` with a placement and then surveys the root for strays, but nothing tells it when the agent removed one — so a checkout the agent cleaned up can still be offered for reaping.
-  Evidence: `WorktreeRemove` is a documented hook event (https://code.claude.com/docs/en/hooks) and is absent from both `CLAUDE_EVENTS` and the `DELIBERATELY_UNMANAGED` list in `crates/terminalai-core/src/hook_config.rs:48-103` — so it is unhandled rather than deliberately unhandled, which is exactly the distinction that list exists to record.
-  Touches: `crates/terminalai-core/src/hook_config.rs`, `crates/terminalai-core/src/hooks.rs`, `crates/terminalai-core/src/registry/provisioning.rs`
-  Acceptance: a removal reported by the agent updates the survey without a rescan, and a `WorktreeRemove` for a path this tool does not own changes nothing. If it is decided not to manage it, it joins `DELIBERATELY_UNMANAGED` with its reason instead.
-  Complexity: S
-
 ### P2
 
 - [ ] P2 — Find out whether a teammate's hooks arrive as the lead's

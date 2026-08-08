@@ -282,6 +282,31 @@ impl SessionRegistry {
                 // the row learns about the checkout when the agent reports it,
                 // and this hook is the request, not the report.
                 HookSignal::WorktreeCreate => {}
+                // Deliberately not read from the payload. The event says a
+                // removal happened; the filesystem says whether *this* session's
+                // checkout is the one that went, and it is the authority either
+                // way. A removal of a path this tool does not own leaves the
+                // session's own directory in place and therefore changes
+                // nothing — which is the behaviour required, reached without
+                // trusting a field whose spelling is not pinned by a fixture.
+                HookSignal::WorktreeRemove => {
+                    let gone = entry
+                        .session
+                        .worktree
+                        .as_ref()
+                        .is_some_and(|worktree| !worktree.path.is_dir());
+                    if gone {
+                        let worktree = entry.session.worktree.take();
+                        if let Some(worktree) = worktree {
+                            tracing::info!(
+                                session = %entry.session.id,
+                                path = %worktree.path.display(),
+                                branch = %worktree.branch,
+                                "the agent removed this session's worktree"
+                            );
+                        }
+                    }
+                }
                 // Both compaction signals record an event as well as a status,
                 // because the status usually does not move: an agent compacting
                 // mid-turn is Thinking on both sides of a pause that can run to

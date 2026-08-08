@@ -343,6 +343,113 @@ pub(super) fn run_lease_command(
 mod tests {
     use super::*;
     use crate::registry::testing::spool_scratch;
+    use crate::registry::testing::{apply_test_hook, live_entry};
+
+    /// A directory that exists until this is dropped.
+    struct Scratch(std::path::PathBuf);
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn scratch(name: &str) -> Scratch {
+        let dir = std::env::temp_dir().join(format!(
+            "terminalai-worktree-remove-{}-{name}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch");
+        Scratch(dir)
+    }
+
+    /// One live row holding a checkout at `path`.
+    fn row_with_worktree(registry: &SessionRegistry, id: &SessionId, path: &std::path::Path) {
+        live_entry(registry, id.clone(), crate::agent::Agent::Claude, None);
+        let mut state = lock_state(&registry.inner);
+        let entry = state.entries.get_mut(id).expect("row");
+        entry.session.worktree = Some(crate::worktree::Worktree {
+            repo: path.parent().expect("parent").to_path_buf(),
+            path: path.to_path_buf(),
+            branch: crate::worktree::branch_for(&id.0),
+        });
+    }
+
+    fn report_removal(registry: &SessionRegistry) {
+        assert!(apply_test_hook(
+            registry,
+            crate::hooks::HookEvent {
+                agent: crate::agent::Agent::Claude,
+                session_id: None,
+                cwd: Some(std::path::Path::new(".").to_path_buf()),
+                signal: crate::hooks::HookSignal::WorktreeRemove,
+                progress: None,
+                approval: None,
+            }
+        ));
+    }
+
+    #[test]
+    fn a_checkout_the_agent_removed_stops_being_named_by_its_row() {
+        // The supervisor answers `WorktreeCreate` with a placement and then
+        // surveys the root for strays, but nothing reported the other
+        // direction — so a row went on naming a directory that was gone, and
+        // only a restart corrected it.
+        let scratch = scratch("removed");
+        let checkout = scratch.0.join("session-1");
+        std::fs::create_dir_all(&checkout).expect("checkout");
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        row_with_worktree(&registry, &id, &checkout);
+
+        report_removal(&registry);
+        assert!(
+            registry.snapshot()[0].worktree.is_some(),
+            "the directory is still there, so nothing was removed"
+        );
+
+        std::fs::remove_dir_all(&checkout).expect("the agent removes it");
+        report_removal(&registry);
+        assert_eq!(
+            registry.snapshot()[0].worktree,
+            None,
+            "the row still names a checkout that is gone"
+        );
+    }
+
+    #[test]
+    fn a_removal_of_a_checkout_this_tool_does_not_own_changes_nothing() {
+        // The event carries no ownership claim, and the agent removes worktrees
+        // of its own. What decides is whether *this* session's directory is the
+        // one that went.
+        let scratch = scratch("other");
+        let mine = scratch.0.join("session-1");
+        let theirs = scratch.0.join("somebody-elses");
+        std::fs::create_dir_all(&mine).expect("mine");
+        std::fs::create_dir_all(&theirs).expect("theirs");
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        row_with_worktree(&registry, &id, &mine);
+
+        std::fs::remove_dir_all(&theirs).expect("the agent removes its own");
+        report_removal(&registry);
+        assert_eq!(
+            registry.snapshot()[0].worktree.as_ref().map(|w| w.path.clone()),
+            Some(mine),
+            "a removal elsewhere took this row's checkout with it"
+        );
+    }
+
+    #[test]
+    fn a_row_that_never_had_a_checkout_is_untouched_by_a_removal() {
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        live_entry(&registry, id, crate::agent::Agent::Claude, None);
+        report_removal(&registry);
+        assert_eq!(registry.snapshot()[0].worktree, None);
+    }
 
     #[test]
     fn lease_command_child_probe() {

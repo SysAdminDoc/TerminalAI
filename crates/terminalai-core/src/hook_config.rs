@@ -68,6 +68,9 @@ const CLAUDE_EVENTS: &[&str] = &[
     // Answered with a path, so a checkout the agent makes lands under this
     // tool's worktree root instead of becoming a stray for the survey to find.
     "WorktreeCreate",
+    // The other half. Without it the row went on naming a checkout the agent
+    // had already removed, and the only thing that corrected it was a restart.
+    "WorktreeRemove",
 ];
 
 /// Events this tool deliberately does not manage, and why.
