@@ -36,6 +36,7 @@ import { createRowRenderer } from "./rowMarkup.js";
 import { createTerminalPane } from "./terminalPane.js";
 import { createWorkRunPanel } from "./workRunPanel.js";
 import { createRollupPage } from "./rollupPage.js";
+import { createExplainerPage } from "./explainerPage.js";
 import { createLauncher } from "./launcher.js";
 import { createQueuePanel } from "./queuePanel.js";
 import { createWorkspacePages } from "./workspacePages.js";
@@ -704,6 +705,15 @@ const rollupPage = createRollupPage({
   t,
 });
 const { openRollup, renderRollup } = rollupPage;
+
+const explainerPage = createExplainerPage({
+  $,
+  escapeHtml,
+  openWorkspacePage,
+  renderGuarded,
+  t,
+});
+const { openExplainer, renderExplainerStates } = explainerPage;
 
 function sortedSessions() {
   return [...state.sessions].sort((a, b) => {
@@ -1704,36 +1714,6 @@ async function focusSessionNow(id) {
 // Workspace utility pages live in `workspacePages.js`.
 
 // Queue behavior lives in `queuePanel.js`; the shell keeps only its row bindings.
-/**
- * The in-app explanation of the row -> focused-terminal model.
- *
- * The one thing that makes this tool different is also the thing nobody
- * guesses from looking at it: a row is not a terminal. An operator who assumes
- * it is spends their first minutes wondering why clicking a row does not open
- * anything, and concludes the app is broken rather than dense on purpose.
- *
- * The state list is generated from the same table the rows are drawn from, so a
- * status added later cannot appear on a row while missing from the explanation.
- */
-function openExplainer() {
-  const dialog = $("explainer-dialog");
-  openWorkspacePage(dialog);
-  renderGuarded(
-    $("explainer-states"),
-    t("explainer-render-error"),
-    "openExplainer",
-    openExplainer,
-    renderExplainerStates,
-  );
-}
-
-function renderExplainerStates() {
-  $("explainer-states").innerHTML = STATUS_KEYS.map((status) => {
-    const meta = STATUS_META[status];
-    return `<div class="explainer-state"><dt><span class="state-chip tone-${escapeHtml(meta.tone)}"><span class="state-chip-glyph" aria-hidden="true">${meta.glyph}</span><span>${escapeHtml(t(meta.short))}</span></span></dt><dd>${escapeHtml(t(`${meta.short}-explained`))}</dd></div>`;
-  }).join("");
-}
-
 // Focused terminal history and find controls live in `terminalHistory.js`.
 const DEFAULT_COLS = 120;
 const DEFAULT_ROWS = 40;

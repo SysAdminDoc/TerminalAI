@@ -17,6 +17,10 @@ const rollupPage = readFileSync(
   new URL("../src/rollupPage.js", import.meta.url),
   "utf8",
 ).replace(/\r\n/g, "\n");
+const explainerPage = readFileSync(
+  new URL("../src/explainerPage.js", import.meta.url),
+  "utf8",
+).replace(/\r\n/g, "\n");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 const styles = cssSource();
 
@@ -115,6 +119,8 @@ test("every state-less dialog renders its own failure rather than nothing", () =
         ? broadcastPanel
         : opener === "openRollup"
           ? rollupPage
+          : opener === "openExplainer"
+            ? explainerPage
           : main;
     const from = source.indexOf(`function ${opener}() {`);
     assert.notEqual(from, -1, `${opener} is gone; this test is reading nothing`);

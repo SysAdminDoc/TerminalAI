@@ -46,6 +46,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   while event wiring remains in the shell coordinator.
 - Extracted the spend rollup tables, coverage/window breakdown, and guarded dialog entry into
   `web/src/rollupPage.js`; rollup source assertions now read the owning page module.
+- Extracted the row-model explainer and its guarded page entry into `web/src/explainerPage.js`,
+  keeping the explainer's status vocabulary sourced from the shared fleet metadata.
 - Split the stylesheet into import-ordered `tokens`, `foundation`, `pages`, and `shell` layers;
   frontend style assertions now resolve the same assembled cascade through `web/tests/cssSource.mjs`.
 
