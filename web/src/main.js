@@ -12,18 +12,15 @@ import { pendingApprovals, renderApprovals, requestLine, waitingSince } from "./
 import { renderRestoreOutcomes, renderWorkingSet, summarizeRestore } from "./workingSets.js";
 import { reconcileGroupChip, reconcileKeyedRows } from "./fleetRows.js";
 import { countMessage, localizeDom, relativeDwell, t } from "./i18n.js";
-import { quotaLabel, quotaUnreportedLabel, rateLimitTitle, rateLimitedLabel } from "./rateLimit.js";
+import { rateLimitedLabel } from "./rateLimit.js";
 import {
   createSessionStatus,
   STATUS_KEYS,
   STATUS_META,
   STATUS_ORDER,
 } from "./sessionStatus.js";
-import { spendCeiling, spendCeilingTitle } from "./spendCeiling.js";
 import {
   formatCost,
-  pricingFreshness,
-  PRICING_STALE_AFTER_DAYS,
 } from "./rollup.js";
 import { hasOpenWork, openItemsCell, sortProjects, stalenessLabel, summarize as summarizeProjects } from "./projects.js";
 import { renderSessionHistory } from "./sessionHistory.js";
@@ -49,6 +46,8 @@ import { createEventBindings } from "./eventBindings.js";
 import { createReviewPage } from "./reviewPage.js";
 import { createExternalSessions } from "./externalSessions.js";
 import { createBroadcastPanel } from "./broadcastPanel.js";
+import { createFleetSummary } from "./fleetSummary.js";
+import { createPinnedPanes } from "./pinnedPanes.js";
 import { createSettingsPage } from "./settingsPage.js";
 import {
   createFirstRunDemoSessions,
@@ -653,189 +652,26 @@ function memory(bytes) {
   return `${Math.round(value / (1024 * 1024))} MB`;
 }
 
-function renderSummary() {
-  // Matches the daemon's admission count, which excludes rate-limited sessions:
-  // they hold no slot, so counting them as live would contradict the queue.
-  const live = state.sessions.filter((session) => !["exited", "queued", "rate-limited"].includes(session.status)).length;
-  const limited = state.sessions.filter((session) => session.status === "rate-limited");
-  const queued = state.sessions.filter((session) => session.status === "queued").length;
-  const needsAttention = state.sessions.filter((session) => ["needs-you", "needs-approval", "awaiting-input"].includes(session.status)).length;
-  const working = state.sessions.filter((session) => ["working", "thinking"].includes(session.status)).length;
-  const reporting = state.sessions.filter((session) => session.cost_usd !== null && session.cost_usd !== undefined);
-  const spend = reporting.reduce((total, session) => total + (Number(session.cost_usd) || 0), 0);
-  const spendLabel = reporting.length ? `$${spend.toFixed(2)}` : "—";
-  // A price table has a date; a figure priced against an unnamed table cannot be
-  // checked. Say which one produced this number.
-  const pricingVersion = state.admission.pricing_version || "no price table";
-  // A price table has a date, and until now nothing aged it: a table months out
-  // of date reported spend with exactly the same confidence as a current one.
-  const freshness = pricingFreshness(state.admission, Date.now());
-  const ageNote =
-    freshness.state === "undated"
-      ? t("pricing-age-undated")
-      : freshness.state === "stale"
-        ? t("pricing-age-stale", { days: freshness.days, threshold: PRICING_STALE_AFTER_DAYS })
-        : t("pricing-age-current", { days: freshness.days });
-  const reportingNote = reporting.length
-    ? t("pricing-reporting", {
-        pricing: pricingVersion,
-        reporting: reporting.length,
-        sessions: state.sessions.length,
-      })
-    : t("pricing-none", { pricing: pricingVersion });
-  const spendTitle = `${reportingNote}. ${ageNote}`;
-  const maxLive = state.admission.max_live_sessions ?? 3;
-  // The ceiling is fleet-wide and refuses admission; it never stops a running
-  // session, so it belongs beside the spend figure rather than in the row list.
-  const ceiling = spendCeiling(state.admission);
-  const ceilingTitle = spendCeilingTitle(state.admission, t);
-  const limitedSummary = limited.length
-    ? '<span class="summary-separator">/</span><span class="summary-item summary-limited" title="' + escapeHtml(rateLimitTitle(limited, t)) + '">' + escapeHtml(countMessage("count-rate-limited", limited.length)) + "</span>"
-    : "";
-  // Headroom, not refusal. The agents report this continuously and the fleet
-  // used to drop it at this boundary, so it could only say "rate limited" after
-  // work had already stopped - with the number that would have warned first
-  // sitting on the session all along.
-  const quota = quotaLabel(state.sessions, t);
-  const quotaSummary = '<span class="summary-separator">/</span><span class="summary-item'
-    + (quota && quota.percent >= 80 ? " summary-limited" : "")
-    + '" title="' + escapeHtml(quota ? quota.title : quotaUnreportedLabel(t)) + '">'
-    + escapeHtml(quota ? t("fleet-quota", { percent: quota.percent }) : t("fleet-quota-unreported"))
-    + "</span>";
-  const summaryMarkup =
-    '<span class="summary-item"><b>' + live + "/" + maxLive + "</b> " + escapeHtml(t("fleet-live")) + "</span>" +
-    '<span class="summary-separator">/</span><span class="summary-item">' + escapeHtml(countMessage("count-queued", queued)) + "</span>" +
-    '<span class="summary-separator">/</span><span class="summary-item summary-attention">' + escapeHtml(countMessage("count-needs-attention", needsAttention)) + "</span>" +
-    '<span class="summary-separator">/</span><span class="summary-item">' + escapeHtml(countMessage("count-active", working)) + "</span>" +
-    limitedSummary +
-    quotaSummary +
-    '<span class="summary-separator">/</span><button type="button" class="summary-item summary-spend' + (ceiling && ceiling.blocked ? " summary-limited" : "") + '" id="fleet-spend" title="' + escapeHtml(spendTitle + " " + ceilingTitle) + '" aria-label="' + escapeHtml(t("button-open-rollup")) + '"><b>' + spendLabel + "</b> " + escapeHtml(t("fleet-spent")) + (ceiling ? " " + escapeHtml("(" + ceiling.percent + "% of cap)") : "") + "</button>";
-  const summary = $("fleet-summary");
-  if (summary.innerHTML !== summaryMarkup) summary.innerHTML = summaryMarkup;
-  const droppedEvents = Number(state.admission.dropped_events) || 0;
-  const fleetCountText = droppedEvents
-    ? countMessage("count-session", state.sessions.length) + " · " + t("event-drops", { count: droppedEvents })
-    : t("tracked-sessions", { count: state.sessions.length });
-  const fleetCount = $("fleet-count");
-  if (fleetCount.textContent !== fleetCountText) fleetCount.textContent = fleetCountText;
-  const counts = Object.fromEntries(STATUS_KEYS.map((status) => [status, 0]));
-  for (const session of state.sessions) {
-    if (session.status in counts) counts[session.status] += 1;
-  }
-  const stateMarkup = STATUS_KEYS.map((status) => {
-    const meta = STATUS_META[status];
-    // `data-status` names the key, not the label. The browser audit reads it to
-    // discover every status the fleet models and builds its fixture from that,
-    // so a status added here is contrast-checked without anyone updating the
-    // gate — a gate whose coverage is a hand-written list certifies whatever is
-    // missing from it.
-    return '<span class="state-chip tone-' + escapeHtml(meta.tone) + '" data-status="' + escapeHtml(status) + '" role="listitem" title="' + escapeHtml(metaLabel(meta)) + ': ' + escapeHtml(counts[status]) + '" aria-label="' + escapeHtml(metaLabel(meta)) + ': ' + escapeHtml(counts[status]) + '"><span class="state-chip-glyph" aria-hidden="true">' + meta.glyph + '</span><b>' + counts[status] + '</b><span>' + escapeHtml(t(meta.short)) + "</span></span>";
-  }).join("");
-  const stateStrip = $("fleet-state-strip");
-  if (stateStrip.innerHTML !== stateMarkup) stateStrip.innerHTML = stateMarkup;
-}
+const fleetSummary = createFleetSummary({
+  $,
+  escapeHtml,
+  metaLabel,
+  state,
+  t,
+});
+const { renderSummary } = fleetSummary;
 
-/// How often pinned panes re-read their grid.
-///
-/// Slower than the focused terminal's live stream on purpose: a pinned pane is
-/// for noticing that something changed, not for reading along. Each read is one
-/// small daemon call returning already-parsed text.
-const PINNED_POLL_MS = 1000;
-/// The daemon refuses a fourth pin; the UI states the same number so the two
-/// cannot drift apart silently.
-const MAX_PINNED = 3;
+const pinnedPanes = createPinnedPanes({
+  $,
+  document,
+  invoke,
+  lifecycleLabel,
+  state,
+  STATUS_META,
+  t,
+});
+const { renderPinnedSplit, startPinnedPolling } = pinnedPanes;
 
-function pinnedSessions() {
-  return state.sessions.filter((session) => session.pinned).slice(0, MAX_PINNED);
-}
-
-/// Render the split view beneath the focused terminal.
-///
-/// Panes are keyed by session id and reconciled rather than rebuilt, so a
-/// snapshot arriving for one pane cannot scroll or blank another.
-function renderPinnedSplit() {
-  const host = $("pinned-split");
-  const pinned = pinnedSessions();
-  host.hidden = pinned.length === 0;
-  host.classList.toggle("pinned-split-active", pinned.length > 0);
-  if (!pinned.length) {
-    host.replaceChildren();
-    state.pinnedGrids.clear();
-    return;
-  }
-  reconcileKeyedRows(
-    host,
-    pinned,
-    (session) => session.id,
-    (session) => {
-      const pane = document.createElement("article");
-      pane.className = "pinned-pane";
-      pane.dataset.id = session.id;
-      pane.innerHTML =
-        '<header class="pinned-pane-head"><span class="pinned-pane-name"></span>' +
-        '<span class="pinned-pane-status"></span></header><pre class="pinned-pane-grid"></pre>';
-      return pane;
-    },
-    (pane, session) => {
-      pane.querySelector(".pinned-pane-name").textContent = session.name;
-      const status = pane.querySelector(".pinned-pane-status");
-      status.textContent = lifecycleLabel(session);
-      status.className = `pinned-pane-status tone-${(STATUS_META[session.status] ?? STATUS_META.exited).tone}`;
-      const grid = pane.querySelector(".pinned-pane-grid");
-      const snapshot = state.pinnedGrids.get(session.id);
-      // Until the first snapshot lands the pane says so rather than showing an
-      // empty box that reads as "this session printed nothing".
-      grid.textContent = snapshot ?? t("pinned-waiting");
-      grid.classList.toggle("pinned-pane-grid-waiting", !snapshot);
-    },
-    () => false,
-  );
-}
-
-/// Read each pinned session's grid and redraw the split view.
-async function refreshPinnedGrids() {
-  const pinned = pinnedSessions();
-  if (!pinned.length) return;
-  const results = await Promise.all(
-    pinned.map(async (session) => {
-      try {
-        const grid = await invoke("grid_snapshot", { id: session.id });
-        // Trailing blank rows are most of an idle grid; dropping them keeps a
-        // pane the height of its content instead of a fixed 40 lines.
-        const lines = Array.isArray(grid?.lines) ? [...grid.lines] : [];
-        while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
-        return [session.id, lines.join("\n")];
-      } catch {
-        // A session that exited between the poll and the read is not an error
-        // worth a toast; the row already says so.
-        return [session.id, null];
-      }
-    }),
-  );
-  let changed = false;
-  for (const [id, text] of results) {
-    if (text === null) continue;
-    if (state.pinnedGrids.get(id) !== text) {
-      state.pinnedGrids.set(id, text);
-      changed = true;
-    }
-  }
-  // Drop grids for sessions that are no longer pinned, so unpinning and
-  // repinning does not show a stale frame from minutes ago.
-  const live = new Set(pinned.map((session) => session.id));
-  for (const id of [...state.pinnedGrids.keys()]) {
-    if (!live.has(id)) {
-      state.pinnedGrids.delete(id);
-      changed = true;
-    }
-  }
-  if (changed) renderPinnedSplit();
-}
-
-function startPinnedPolling() {
-  if (state.pinnedTimer) return;
-  state.pinnedTimer = setInterval(() => void refreshPinnedGrids(), PINNED_POLL_MS);
-}
 
 const GROUP_MODES = ["none", "folder", "agent", "status"];
 const STATUS_FILTERS = {

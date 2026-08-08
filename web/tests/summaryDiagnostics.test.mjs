@@ -4,8 +4,12 @@ import test from "node:test";
 import { appSource } from "./appSource.mjs";
 
 const main = appSource();
+const fleetSummary = readFileSync(
+  new URL("../src/fleetSummary.js", import.meta.url),
+  "utf8",
+).replace(/\r\n/g, "\n");
 
-const summary = main.slice(main.indexOf("function renderSummary"), main.indexOf("\n/// How often pinned panes"));
+const summary = fleetSummary.slice(fleetSummary.indexOf("function renderSummary"));
 const diagnostics = main.slice(main.indexOf("function renderDiagnostics"), main.indexOf("\nfunction formatReason"));
 
 test("fleet summary and state counts skip unchanged DOM writes", () => {

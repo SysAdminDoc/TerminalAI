@@ -4,6 +4,10 @@ import test from "node:test";
 import { appSource, shellSource } from "./appSource.mjs";
 
 const main = appSource();
+const summary = readFileSync(
+  new URL("../src/fleetSummary.js", import.meta.url),
+  "utf8",
+).replace(/\r\n/g, "\n");
 const helpers = readFileSync(new URL("../src/rateLimit.js", import.meta.url), "utf8");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 
@@ -21,14 +25,14 @@ test("the fleet's live count excludes rate-limited sessions", () => {
   // The daemon drops them from its admission count so a queued session can take
   // the slot; a header that still counted them would contradict the queue.
   assert.match(
-    main,
+    summary,
     /!\["exited", "queued", "rate-limited"\]\.includes\(session\.status\)/,
   );
 });
 
 test("the header reports how many are limited and when the soonest reopens", () => {
-  assert.match(main, /countMessage\("count-rate-limited", limited\.length\)/);
-  assert.match(main, /rateLimitTitle\(limited, t\)/);
+  assert.match(summary, /countMessage\("count-rate-limited", limited\.length\)/);
+  assert.match(summary, /rateLimitTitle\(limited, t\)/);
   // Behaviour of the helper itself is covered in rateLimitLabels.test.mjs.
   assert.match(helpers, /Math\.min\(\.\.\.resets\)/);
 });
@@ -36,7 +40,7 @@ test("the header reports how many are limited and when the soonest reopens", () 
 test("the limited row and header labels come from one place", () => {
   // They were duplicated in main.js, where neither could be executed by a test —
   // only grepped. Both now resolve through the extracted module.
-  assert.match(main, /import \{[^}]*rateLimitTitle, rateLimitedLabel \} from "\.\/rateLimit\.js";/);
+  assert.match(main, /import \{ rateLimitedLabel \} from "\.\/rateLimit\.js";/);
   assert.match(main, /return rateLimitedLabel\(session, t\);/);
   // The shell alone, not the whole renderer: `rateLimit.js` is where
   // `resetMillis` is supposed to live, so asserting its absence across every
@@ -62,8 +66,8 @@ test("every rate-limit string used by the renderer exists in the catalog", () =>
 });
 
 test("quota headroom is read through the extracted module, not open-coded", () => {
-  assert.match(main, /import \{ quotaLabel, quotaUnreportedLabel, rateLimitTitle, rateLimitedLabel \} from "\.\/rateLimit\.js";/);
-  assert.match(main, /quotaLabel\(state\.sessions, t\)/);
+  assert.match(summary, /import \{ quotaLabel, quotaUnreportedLabel, rateLimitTitle \} from "\.\/rateLimit\.js";/);
+  assert.match(summary, /quotaLabel\(state\.sessions, t\)/);
   // Behaviour of the helpers is covered in rateLimitLabels.test.mjs.
   assert.match(helpers, /export function worstQuota/);
   for (const key of ["fleet-quota", "fleet-quota-unreported", "quota-used", "quota-reset-unreported", "quota-unreported"]) {

@@ -32,6 +32,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Extracted admission settings loading, validation, usage cards, and save/refresh behavior into
   the injectable `web/src/settingsPage.js` module; settings source contracts now follow that
   page boundary.
+- Extracted fleet summary accounting and pinned grid-preview reconciliation into the injectable
+  `web/src/fleetSummary.js` and `web/src/pinnedPanes.js` modules; summary, quota, and pinned-pane
+  source contracts now follow their owning boundaries.
 - Extracted URL validation, agent and hook readiness, daemon checks, and Start-Menu repair into
   `crates/terminalai-app/src/preflight.rs` while keeping the existing Tauri command surface and
   app-level behavior tests green.
