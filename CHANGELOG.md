@@ -36,6 +36,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
   a message wrapping its own `<em>` flattened the hint into body text. Both are split, and a third
   check fails if a `data-i18n` element ever gains children again.
 
+- The probe's help is generated from its dispatch table. It was a hand-written constant beside a
+  `match`, and the two had drifted: twenty-nine subcommands dispatched, twenty-six advertised, with
+  `auth`, `exec` and `limits` reachable and undocumented — `auth` in the README too. Adding an arm
+  without a help line no longer compiles, and the README's probe section now names every command.
+
 - A launch can bound its own fan-out. Admission governs how many sessions run, what they may spend
   and what they may hold — and had no view of the one multiplier a *single* session controls: since
   Claude Code 2.1.216 a session runs up to twenty concurrent subagents by default, and with agent

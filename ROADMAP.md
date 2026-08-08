@@ -88,13 +88,6 @@ where an item depends on another in this section, its Why says which.
 
 ### P3
 
-- [ ] P3 — Close the gap between what the probe dispatches and what it documents
-  Why: three subcommands are reachable but missing from the binary's own help, and one of them is undocumented everywhere — which is how a harness accumulates commands nobody knows are there.
-  Evidence: `crates/terminalai-probe/src/main.rs:89-118` dispatches 29 subcommands; the `USAGE` constant at `:30-84` lists 26. `auth`, `exec` and `limits` are absent from it; `exec` and `limits` at least appear in `README.md` (`:465`, `:185`), so only `auth` is undocumented anywhere. Separately, eleven subcommands `USAGE` does list (`broadcast`, `queue`, `land`, `pin`, `grid`, `history`, `search`, `archives`, `archive`, `worktrees`, `verify-goldens`) appear nowhere in `README.md`.
-  Touches: `crates/terminalai-probe/src/main.rs`, `README.md`
-  Acceptance: `USAGE` is derived from the dispatch table rather than hand-maintained beside it, so a new subcommand cannot be added without appearing in help; the README's probe section names every command or says explicitly which are internal.
-  Complexity: S
-
 - [ ] P3 — Delete the code with no callers, or wire it up
   Why: eight public functions have no references anywhere, tests included. None can produce a wrong answer — nothing calls them — which is the argument for deleting rather than maintaining them.
   Evidence: `SessionStatus::colour()` (`crates/terminalai-core/src/session.rs:112`) is a second status-to-colour table that no caller consults while the frontend uses its own `STATUS_META`; `in_state_for`/`in_status_for` (`session.rs:890`, `:898`); `PriceTable::with_model()` (`transcript.rs:107`); `agent_auth`/`auth_holds` (`registry/mod.rs:522`, `:530`); `from_store_with_domain` (`:401`); `forget_transcript` (`registry/sampling.rs:220`). Separately, `resolve_agent` is the only one of 69 Tauri commands never invoked from `web/` — the frontend gets the same answer from `agent_capabilities` and `preview_launch`.

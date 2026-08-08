@@ -27,39 +27,13 @@ use terminalai_core::pty::{self, PtySession};
 use terminalai_core::{parse_hook_in, HookTransport, SessionId};
 use terminalai_daemon::{DaemonClient, HookEndpoint, Request, Response};
 
-const USAGE: &str = "\
+const HEADER: &str = "\
 terminalai-probe — machine-facing checks for TerminalAI
 
 USAGE:
-  terminalai-probe resolve
-  terminalai-probe capabilities <claude|codex> [--json]
-  terminalai-probe preview <claude|codex> [options]
-  terminalai-probe spawn   <claude|codex> [options] [--raw <arg>...]
-  terminalai-probe list    --json
-  terminalai-probe start   <claude|codex> [options] --json
-  terminalai-probe stop    <session-id> --json
-  terminalai-probe send    <session-id> <text> --json
-  terminalai-probe broadcast <session-id>... -- <text> [--json]  (one prompt, many sessions)
-  terminalai-probe queue   <session-id> [add <text>|pause|resume] [--json]
-  terminalai-probe status  <session-id> --json
-  terminalai-probe shutdown
-  terminalai-probe pin     <session-id> --json      (toggle a pinned live grid)
-  terminalai-probe grid    <session-id> --json      (parsed grid for a pinned pane)
-  terminalai-probe history <session-id> [bytes] [--json]  (output the memory ring has dropped)
-  terminalai-probe search <needle> [--case] [--json]   (find a string across every session)
-  terminalai-probe archives --json                   (sessions this supervisor finished)
-  terminalai-probe archive <session-id> [--json]     (retire a stopped row into the history)
-  terminalai-probe worktrees [--json]                (checkouts no live session owns)
-  terminalai-probe mcp     [--write-token <t> --write-session <id>]...  (MCP server on stdio)
-  terminalai-probe land    --source <dir> --target <dir> [--expect-head <sha>]
-                           [--verify <program> [--verify-arg <arg>]...] [--verify-timeout <s>]
-                           [--session <id> [--archive-on-success]]
-  terminalai-probe hook    <claude|codex>    (read one hook JSON object from stdin)
-  terminalai-probe hooks   <status|preview|install|remove> <claude|codex> [options]
-  terminalai-probe verify-goldens [--goldens <dir>]  (does the installed CLI accept -- and act on -- the golden argv?)
-  terminalai-probe cpu-idle [--sessions <n>] [--seconds <s>] [--poll]
-  terminalai-probe hygiene  [--sessions <n>] [--json] [--output <path>]
+";
 
+const OPTIONS: &str = "\
 OPTIONS:
   --cwd <dir>          working directory (default: current)
   --model <name>
@@ -83,46 +57,198 @@ HOOK OPTIONS:
   --executable <path>  executable used by the installed hook command
 ";
 
+/// One subcommand: the word that selects it, the help line that describes
+/// it, and the function it runs.
+///
+/// The three travel together deliberately. `USAGE` used to be a hand-written
+/// constant beside a `match`, and the two disagreed: the binary dispatched
+/// twenty-nine subcommands and advertised twenty-six, so `auth`, `exec` and
+/// `limits` were reachable and undocumented. A table cannot drift from
+/// itself -- adding an arm without a help line does not compile.
+struct Subcommand {
+    name: &'static str,
+    /// The `USAGE` line, verbatim, including any wrapped continuation.
+    synopsis: &'static str,
+    run: fn(&[String]) -> i32,
+}
+
+const COMMANDS: &[Subcommand] = &[
+    Subcommand {
+        name: "resolve",
+        synopsis: "terminalai-probe resolve",
+        run: |_| cmd_resolve(),
+    },
+    Subcommand {
+        name: "auth",
+        synopsis: "terminalai-probe auth                                    (are both agents signed in?)",
+        run: |_| cmd_auth(),
+    },
+    Subcommand {
+        name: "capabilities",
+        synopsis: "terminalai-probe capabilities <claude|codex> [--json]",
+        run: |args| cmd_capabilities(&args[1..]),
+    },
+    Subcommand {
+        name: "preview",
+        synopsis: "terminalai-probe preview <claude|codex> [options]",
+        run: |args| cmd_build(&args[1..], false),
+    },
+    Subcommand {
+        name: "spawn",
+        synopsis: "terminalai-probe spawn   <claude|codex> [options] [--raw <arg>...]",
+        run: |args| cmd_build(&args[1..], true),
+    },
+    Subcommand {
+        name: "list",
+        synopsis: "terminalai-probe list    --json",
+        run: |args| cmd_list(&args[1..]),
+    },
+    Subcommand {
+        name: "start",
+        synopsis: "terminalai-probe start   <claude|codex> [options] --json",
+        run: |args| cmd_start(&args[1..]),
+    },
+    Subcommand {
+        name: "stop",
+        synopsis: "terminalai-probe stop    <session-id> --json",
+        run: |args| cmd_stop(&args[1..]),
+    },
+    Subcommand {
+        name: "send",
+        synopsis: "terminalai-probe send    <session-id> <text> --json",
+        run: |args| cmd_send(&args[1..]),
+    },
+    Subcommand {
+        name: "broadcast",
+        synopsis: "terminalai-probe broadcast <session-id>... -- <text> [--json]  (one prompt, many sessions)",
+        run: |args| cmd_broadcast(&args[1..]),
+    },
+    Subcommand {
+        name: "queue",
+        synopsis: "terminalai-probe queue   <session-id> [add <text>|pause|resume] [--json]",
+        run: |args| cmd_queue(&args[1..]),
+    },
+    Subcommand {
+        name: "status",
+        synopsis: "terminalai-probe status  <session-id> --json",
+        run: |args| cmd_status(&args[1..]),
+    },
+    Subcommand {
+        name: "limits",
+        synopsis: "terminalai-probe limits  [--max-live <n>] [--json]        (read or set the fleet limits)",
+        run: |args| cmd_limits(&args[1..]),
+    },
+    Subcommand {
+        name: "shutdown",
+        synopsis: "terminalai-probe shutdown",
+        run: |args| cmd_shutdown(&args[1..]),
+    },
+    Subcommand {
+        name: "exec",
+        synopsis: "terminalai-probe exec    <program> [args...]              (any command on a pseudo-console)",
+        run: |args| cmd_exec(&args[1..]),
+    },
+    Subcommand {
+        name: "cpu-idle",
+        synopsis: "terminalai-probe cpu-idle [--sessions <n>] [--seconds <s>] [--poll]",
+        run: |args| cmd_cpu_idle(&args[1..]),
+    },
+    Subcommand {
+        name: "hygiene",
+        synopsis: "terminalai-probe hygiene  [--sessions <n>] [--json] [--output <path>]",
+        run: |args| cmd_hygiene(&args[1..]),
+    },
+    Subcommand {
+        name: "land",
+        synopsis: "terminalai-probe land    --source <dir> --target <dir> [--expect-head <sha>]
+                           [--verify <program> [--verify-arg <arg>]...] [--verify-timeout <s>]
+                           [--session <id> [--archive-on-success]]",
+        run: |args| cmd_land(&args[1..]),
+    },
+    Subcommand {
+        name: "mcp",
+        synopsis: "terminalai-probe mcp     [--write-token <t> --write-session <id>]...  (MCP server on stdio)",
+        run: |args| cmd_mcp(&args[1..]),
+    },
+    Subcommand {
+        name: "pin",
+        synopsis: "terminalai-probe pin     <session-id> --json      (toggle a pinned live grid)",
+        run: |args| cmd_pin(&args[1..]),
+    },
+    Subcommand {
+        name: "grid",
+        synopsis: "terminalai-probe grid    <session-id> --json      (parsed grid for a pinned pane)",
+        run: |args| cmd_grid(&args[1..]),
+    },
+    Subcommand {
+        name: "history",
+        synopsis: "terminalai-probe history <session-id> [bytes] [--json]  (output the memory ring has dropped)",
+        run: |args| cmd_history(&args[1..]),
+    },
+    Subcommand {
+        name: "search",
+        synopsis: "terminalai-probe search <needle> [--case] [--json]   (find a string across every session)",
+        run: |args| cmd_search(&args[1..]),
+    },
+    Subcommand {
+        name: "archives",
+        synopsis: "terminalai-probe archives --json                   (sessions this supervisor finished)",
+        run: |args| cmd_archives(&args[1..]),
+    },
+    Subcommand {
+        name: "archive",
+        synopsis: "terminalai-probe archive <session-id> [--json]     (retire a stopped row into the history)",
+        run: |args| cmd_archive(&args[1..]),
+    },
+    Subcommand {
+        name: "worktrees",
+        synopsis: "terminalai-probe worktrees [--json]                (checkouts no live session owns)",
+        run: |args| cmd_worktrees(&args[1..]),
+    },
+    Subcommand {
+        name: "hook",
+        synopsis: "terminalai-probe hook    <claude|codex>    (read one hook JSON object from stdin)",
+        run: |args| cmd_hook(&args[1..]),
+    },
+    Subcommand {
+        name: "hooks",
+        synopsis: "terminalai-probe hooks   <status|preview|install|remove> <claude|codex> [options]",
+        run: |args| cmd_hooks(&args[1..]),
+    },
+    Subcommand {
+        name: "verify-goldens",
+        synopsis: "terminalai-probe verify-goldens [--goldens <dir>]  (does the installed CLI accept -- and act on -- the golden argv?)",
+        run: |args| cmd_verify_goldens(&args[1..]),
+    },
+];
+
+/// The help text, built from the dispatch table.
+fn usage() -> String {
+    let mut text = String::from(HEADER);
+    for command in COMMANDS {
+        text.push_str("  ");
+        text.push_str(command.synopsis);
+        text.push('\n');
+    }
+    text.push('\n');
+    text.push_str(OPTIONS);
+    text
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = match args.first().map(String::as_str) {
-        Some("resolve") => cmd_resolve(),
-        Some("auth") => cmd_auth(),
-        Some("capabilities") => cmd_capabilities(&args[1..]),
-        Some("preview") => cmd_build(&args[1..], false),
-        Some("spawn") => cmd_build(&args[1..], true),
-        Some("list") => cmd_list(&args[1..]),
-        Some("start") => cmd_start(&args[1..]),
-        Some("stop") => cmd_stop(&args[1..]),
-        Some("send") => cmd_send(&args[1..]),
-        Some("broadcast") => cmd_broadcast(&args[1..]),
-        Some("queue") => cmd_queue(&args[1..]),
-        Some("status") => cmd_status(&args[1..]),
-        Some("limits") => cmd_limits(&args[1..]),
-        Some("shutdown") => cmd_shutdown(&args[1..]),
-        Some("exec") => cmd_exec(&args[1..]),
-        Some("cpu-idle") => cmd_cpu_idle(&args[1..]),
-        Some("hygiene") => cmd_hygiene(&args[1..]),
-        Some("land") => cmd_land(&args[1..]),
-        Some("mcp") => cmd_mcp(&args[1..]),
-        Some("pin") => cmd_pin(&args[1..]),
-        Some("grid") => cmd_grid(&args[1..]),
-        Some("history") => cmd_history(&args[1..]),
-        Some("search") => cmd_search(&args[1..]),
-        Some("archives") => cmd_archives(&args[1..]),
-        Some("archive") => cmd_archive(&args[1..]),
-        Some("worktrees") => cmd_worktrees(&args[1..]),
-        Some("hook") => cmd_hook(&args[1..]),
-        Some("hooks") => cmd_hooks(&args[1..]),
-        Some("verify-goldens") => cmd_verify_goldens(&args[1..]),
         Some("--help") | Some("-h") | None => {
-            print!("{USAGE}");
+            print!("{}", usage());
             0
         }
-        Some(other) => {
-            eprintln!("unknown command: {other}\n\n{USAGE}");
-            1
-        }
+        Some(name) => match COMMANDS.iter().find(|command| command.name == name) {
+            Some(command) => (command.run)(&args),
+            None => {
+                eprintln!("unknown command: {name}\n\n{}", usage());
+                1
+            }
+        },
     };
     std::process::exit(code);
 }
@@ -824,7 +950,7 @@ fn one_control_argument(args: &[String], usage: &str) -> Result<String, String> 
 }
 
 fn control_usage(message: &str) -> i32 {
-    eprintln!("{message}\n\n{USAGE}");
+    eprintln!("{message}\n\n{}", usage());  // placeholder");
     1
 }
 
@@ -1774,7 +1900,7 @@ fn cmd_build(args: &[String], run: bool) -> i32 {
     let (spec, timeout) = match parse_launch_spec(args, true) {
         Ok(parsed) => parsed,
         Err(error) => {
-            eprintln!("{error}\n\n{USAGE}");
+            eprintln!("{error}\n\n{}", usage());  // placeholder");
             return 1;
         }
     };
@@ -1979,6 +2105,49 @@ fn drain(
 mod tests {
     use super::*;
     use terminalai_core::{parse_hook, HookNotification, HookSignal};
+
+    /// Every dispatched subcommand appears in the help, because the help is
+    /// built from the same table the dispatcher reads.
+    ///
+    /// The old shape was a hand-written `USAGE` constant beside a `match`, and
+    /// the two had drifted: twenty-nine arms, twenty-six advertised, with
+    /// `auth`, `exec` and `limits` reachable and undocumented. This asserts the
+    /// property rather than the list, so it cannot go stale the way the list
+    /// did.
+    #[test]
+    fn the_help_is_the_dispatch_table() {
+        let help = usage();
+        for command in COMMANDS {
+            assert!(
+                help.contains(&format!("terminalai-probe {}", command.name)),
+                "{} dispatches but does not appear in the help",
+                command.name
+            );
+            assert!(
+                command.synopsis.starts_with("terminalai-probe "),
+                "{}'s synopsis does not read as a command line: {:?}",
+                command.name,
+                command.synopsis
+            );
+        }
+        // And no two arms answer to the same word, which a `match` would have
+        // caught with an unreachable-pattern warning and a table does not.
+        let mut names: Vec<&str> = COMMANDS.iter().map(|command| command.name).collect();
+        names.sort_unstable();
+        let count = names.len();
+        names.dedup();
+        assert_eq!(names.len(), count, "two subcommands share a name");
+    }
+
+    #[test]
+    fn the_help_still_carries_the_option_reference() {
+        // The generated half is the command list; the options below it are
+        // prose and stay written by hand. Losing them would be silent.
+        let help = usage();
+        assert!(help.contains("OPTIONS:"), "{help}");
+        assert!(help.contains("HOOK OPTIONS:"), "{help}");
+        assert!(help.contains("--raw <arg>..."), "{help}");
+    }
 
     #[test]
     fn parses_claude_notification_payload() {

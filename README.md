@@ -510,6 +510,21 @@ terminalai-probe hooks remove claude --executable .\target\release\terminalai.ex
 # accepted-but-ignored rather than passing because it exists.
 terminalai-probe verify-goldens
 
+# The rest of the harness, in one place so nothing is reachable and unmentioned.
+# `--help` is generated from the dispatch table, so it can never advertise fewer
+# commands than the binary answers to.
+terminalai-probe auth                      # are both agents signed in?
+terminalai-probe broadcast s0001 s0002 -- "status?"   # one prompt, many sessions
+terminalai-probe queue s0001 add "next task"          # queue behind a busy session
+terminalai-probe pin s0001 --json          # toggle a pinned live grid
+terminalai-probe grid s0001 --json         # the parsed grid for a pinned pane
+terminalai-probe history s0001 --json      # output the memory ring has dropped
+terminalai-probe search "TODO" --json      # find a string across every session
+terminalai-probe archives --json           # sessions this supervisor finished
+terminalai-probe archive s0001 --json      # retire a stopped row into the history
+terminalai-probe worktrees --json          # checkouts no live session owns
+terminalai-probe land --source ./worktree --target ./repo   # land work back
+
 # Expose the fleet to an MCP client over stdio. Read-only unless both halves
 # of the write gate are given.
 terminalai-probe mcp
