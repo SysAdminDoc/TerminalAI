@@ -38,6 +38,7 @@ import { createWorkRunPanel } from "./workRunPanel.js";
 import { createRollupPage } from "./rollupPage.js";
 import { createExplainerPage } from "./explainerPage.js";
 import { createSessionFocus } from "./sessionFocus.js";
+import { createSnapshotCoordinator } from "./snapshotCoordinator.js";
 import { createLauncher } from "./launcher.js";
 import { createQueuePanel } from "./queuePanel.js";
 import { createWorkspacePages } from "./workspacePages.js";
@@ -185,6 +186,8 @@ const state = {
   attentionToasts: new Map(),
   admission: { max_live_sessions: 3, live_sessions: 0, queued_sessions: 0, aggregate_cost_usd: 0, dropped_events: 0 },
 };
+
+let loadSnapshot;
 
 const $ = (id) => document.getElementById(id);
 
@@ -1581,80 +1584,6 @@ function setReviewMode(active) {
   else renderRows();
 }
 
-/// Land a reviewed session's work, or report exactly why it was refused.
-///
-/// The target is the operator's own repository root, which is the session's cwd
-/// here — a session started in a worktree lands back into that worktree. The
-/// daemon re-reads every precondition at land time, so nothing checked here is
-/// trusted; the button is only ever a request.
-async function loadSnapshot() {
-  const snapshotPromise = state.snapshotQueue.then(() => loadSnapshotNow());
-  state.snapshotQueue = snapshotPromise.catch(() => {});
-  return snapshotPromise;
-}
-
-async function loadSnapshotNow() {
-  if (state.demoMode) exitFirstRunDemo();
-  state.snapshotLoading = true;
-  state.snapshotEvents = [];
-  renderSnapshotLoading();
-  // Only the snapshot call itself decides whether the daemon is reachable.
-  // Everything after it -- reattaching the focused pane, redrawing the header --
-  // can fail for its own reasons, and treating those as "the daemon is gone"
-  // sent the whole window to the first-run check while the fleet it had just
-  // loaded sat behind it. The state that produced it is real: a focused id
-  // naming a session the snapshot does not contain.
-  let snapshot;
-  try {
-    snapshot = await invoke("fleet_snapshot");
-  } catch (error) {
-    state.preflightReason = `Daemon unavailable: ${error}`;
-    state.preflightMode = true;
-    syncPreflightVisibility();
-    syncReviewVisibility();
-    state.snapshotLoading = false;
-    renderSnapshotLoading();
-    void loadPreflight(true);
-    return;
-  }
-  try {
-    const pendingEvents = state.snapshotEvents;
-    state.snapshotEvents = [];
-    state.sessions = snapshot.sessions ?? [];
-    state.focused = snapshot.focused ?? null;
-    state.admission = snapshot.admission ?? state.admission;
-    const storeQuarantine = snapshot.store_quarantine ?? null;
-    if (storeQuarantine !== state.storeQuarantine) state.storeQuarantineDismissed = false;
-    state.storeQuarantine = storeQuarantine;
-    state.storeWriteError = snapshot.store_write_error ?? null;
-    for (const event of pendingEvents) {
-      if (event.kind === "session-updated") applySessionUpdate(event.session, false);
-      if (event.kind === "session-removed") applySessionRemoval(event.id);
-    }
-    // Events arriving while the focused channel is reattached belong to this
-    // already-reconciled state and must be applied live, not buffered again.
-    state.snapshotLoading = false;
-    renderSnapshotLoading();
-    renderStoreQuarantine();
-    renderStoreWriteError();
-    renderRows();
-    updateTerminalHeader();
-    if (state.focused) {
-      state.terminal?.reset();
-      await attachSessionOutput(state.focused);
-      updateTerminalHeader();
-      renderRows();
-    }
-  } catch (error) {
-    // The fleet is loaded and correct; one pane did not reattach. Say so where
-    // the operator is looking rather than replacing the window they were using.
-    showToast(t("terminal-attach-failed", { error: String(error) }));
-  } finally {
-    state.snapshotLoading = false;
-    renderSnapshotLoading();
-  }
-}
-
 /**
  * Which projects still have roadmap work.
  *
@@ -1851,7 +1780,7 @@ const operationalPanels = createOperationalPanels({
   syncRailPage,
   syncReviewVisibility,
   renderRows,
-  loadSnapshot,
+  loadSnapshot: (...args) => loadSnapshot(...args),
   showToast,
   setReviewMode,
   loadReview,
@@ -1874,6 +1803,26 @@ const {
   handlePreflightAction,
   bindEvents: bindOperationalEvents,
 } = operationalPanels;
+
+const snapshotCoordinator = createSnapshotCoordinator({
+  applySessionRemoval,
+  applySessionUpdate,
+  attachSessionOutput,
+  exitFirstRunDemo,
+  invoke,
+  loadPreflight,
+  renderRows,
+  renderSnapshotLoading,
+  renderStoreQuarantine,
+  renderStoreWriteError,
+  showToast,
+  state,
+  syncPreflightVisibility,
+  syncReviewVisibility,
+  t,
+  updateTerminalHeader,
+});
+loadSnapshot = snapshotCoordinator.loadSnapshot;
 
 const daemonEvents = createDaemonEvents({
   updateSession,

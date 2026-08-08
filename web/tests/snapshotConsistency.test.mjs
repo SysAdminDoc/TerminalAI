@@ -4,18 +4,21 @@ import test from "node:test";
 import { appSource } from "./appSource.mjs";
 
 const main = appSource();
+const coordinator = readFileSync(
+  new URL("../src/snapshotCoordinator.js", import.meta.url),
+  "utf8",
+).replace(/\r\n/g, "\n");
 
 test("snapshot refreshes replay events that arrived during the fetch", () => {
   assert.match(main, /snapshotQueue: Promise\.resolve\(\),/);
   assert.match(main, /snapshotEvents: \[\],/);
-  assert.match(main, /const snapshotPromise = state\.snapshotQueue\.then\(\(\) => loadSnapshotNow\(\)\);/);
+  assert.match(coordinator, /const snapshotPromise = state\.snapshotQueue\.then\(\(\) => loadSnapshotNow\(\)\);/);
   assert.match(main, /if \(state\.snapshotLoading\) state\.snapshotEvents\.push\(\{ kind: "session-updated", session \}\);/);
   assert.match(main, /if \(state\.snapshotLoading\) state\.snapshotEvents\.push\(\{ kind: "session-removed", id \}\);/);
 
-  const start = main.indexOf("async function loadSnapshotNow");
-  const end = main.indexOf("\n/**\n * Which projects", start);
-  assert.ok(start >= 0 && end > start, "snapshot implementation is present");
-  const body = main.slice(start, end);
+  const start = coordinator.indexOf("async function loadSnapshotNow");
+  assert.ok(start >= 0, "snapshot implementation is present");
+  const body = coordinator.slice(start);
   const snapshotAssignment = body.indexOf("state.sessions = snapshot.sessions ?? [];");
   const replay = body.indexOf("for (const event of pendingEvents)");
   assert.ok(snapshotAssignment >= 0 && replay > snapshotAssignment, "buffered events replay after the snapshot");

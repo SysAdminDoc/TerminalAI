@@ -6,6 +6,10 @@ import { cssSource } from "./cssSource.mjs";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const main = appSource();
+const coordinator = readFileSync(
+  new URL("../src/snapshotCoordinator.js", import.meta.url),
+  "utf8",
+).replace(/\r\n/g, "\n");
 const styles = cssSource();
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 
@@ -19,10 +23,7 @@ test("the narrow status label overrides the compact hide rule", () => {
 test("the empty state stays hidden until the first snapshot finishes", () => {
   assert.match(html, /id="empty-state" class="empty-state empty-state-hidden"/);
   assert.match(main, /classList\.toggle\("empty-state-hidden", state\.snapshotLoading \|\| state\.sessions\.length > 0\)/);
-  const load = main.slice(
-    main.indexOf("async function loadSnapshotNow"),
-    main.indexOf("\n/**\n * Which projects"),
-  );
+  const load = coordinator.slice(coordinator.indexOf("async function loadSnapshotNow"));
   assert.ok(load.indexOf("state.snapshotLoading = false;") < load.indexOf("renderRows();"), "snapshot completion must precede empty-state rendering");
 });
 
