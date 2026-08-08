@@ -29,6 +29,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Extracted URL validation, agent and hook readiness, daemon checks, and Start-Menu repair into
   `crates/terminalai-app/src/preflight.rs` while keeping the existing Tauri command surface and
   app-level behavior tests green.
+- Extracted daemon event fan-out, buffered output delivery, taskbar progress and waiting badges,
+  toast activation, and scheduled-work polling into `crates/terminalai-app/src/events.rs`, leaving
+  the Tauri entry module responsible for startup and command registration.
 
 ## [0.23.0] — 2026-08-08
 

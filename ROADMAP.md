@@ -14,7 +14,7 @@ remains cross-referenced in `Roadmap_Blocked.md` and is not claimed by a local t
   Category: maintainability
   Where: `crates/terminalai-app/src/main.rs`, `crates/terminalai-app/src/preflight.rs`, `web/src/main.js`, `web/src/sessionStatus.js`, `web/src/styles.css`, `web/tests/`.
   Problem: the frontend shell is below its decomposition target, but source-slicing tests and mixed lifecycle/event ownership still make safe refactors harder.
-  Evidence: work-run/schedule orchestration now lives in `workflows.rs`; preflight, URL safety and shortcut repair now live in `preflight.rs`; fleet status semantics now live in `sessionStatus.js`; `appRustSource.mjs` reads the complete app module set. Lifecycle/event ownership, CSS layers, and the remaining source-slice tests still need decomposition.
+  Evidence: work-run/schedule orchestration now lives in `workflows.rs`; preflight, URL safety and shortcut repair now live in `preflight.rs`; daemon event fan-out, taskbar/toast state and output batching now live in `events.rs`; fleet status semantics now live in `sessionStatus.js`; `appRustSource.mjs` reads the complete app module set. CSS layers and the remaining source-slice tests still need decomposition.
   Fix: extract app command groups and lifecycle services, split CSS into stable component layers/tokens, and migrate source-grep assertions toward exported pure functions, DOM fixtures and protocol tests.
   Touches: `crates/terminalai-app/src/main.rs`, `crates/terminalai-app/src/`, `web/src/main.js`, `web/src/styles.css`, `web/tests/`.
   Acceptance: no entry module owns unrelated feature families, tests assert behavior at module boundaries rather than string position, and the existing Rust/frontend/chrome gates remain unchanged and green.
