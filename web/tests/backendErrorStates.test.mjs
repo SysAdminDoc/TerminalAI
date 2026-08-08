@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { appSource } from "./appSource.mjs";
+import { cssSource } from "./cssSource.mjs";
 
 const main = appSource();
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
-const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+const styles = cssSource();
 
 const sliceBetween = (start, end) => main.slice(main.indexOf(start), main.indexOf(end));
 

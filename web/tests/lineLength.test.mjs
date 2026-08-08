@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
+import { cssSource } from "./cssSource.mjs";
 
 // A 2,204-character stylesheet line is a file in which a typo cannot be seen.
 // That is not hypothetical here: a literal `\n` inside one of those lines took
@@ -55,7 +56,7 @@ test("main.js does not accumulate more long lines than it already has", () => {
 test("the stylesheet is one declaration per line, not one rule per line", () => {
   // The shape the limit is protecting: a rule body whose declarations share a
   // line hides the one that is wrong.
-  const css = readFileSync(new URL("styles.css", dir), "utf8");
+  const css = cssSource();
   const packed = css
     .split(/\r?\n/)
     .map((line, index) => ({ at: index + 1, line }))

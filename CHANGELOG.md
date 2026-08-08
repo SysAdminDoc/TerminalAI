@@ -35,6 +35,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Moved the browser event coordinator into `web/src/eventBindings.js`, made workspace-page handlers
   explicit at their factory boundary, and covered the returned approval/project handlers with a
   module-level test.
+- Split the stylesheet into import-ordered `tokens`, `foundation`, `pages`, and `shell` layers;
+  frontend style assertions now resolve the same assembled cascade through `web/tests/cssSource.mjs`.
 
 ## [0.23.0] — 2026-08-08
 

@@ -6,6 +6,7 @@ import { JSDOM } from "jsdom";
 
 import { renderSearchResults, searchSummary } from "../src/fleetSearch.js";
 import { appSource } from "./appSource.mjs";
+import { cssSource } from "./cssSource.mjs";
 
 /// The same escaper `main.js` binds.
 const escapeHtml = (value) =>
@@ -17,7 +18,7 @@ const escapeHtml = (value) =>
 
 const main = appSource();
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+const css = cssSource();
 const catalog = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 

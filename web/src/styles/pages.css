@@ -1,0 +1,1179 @@
+/* Persistent menu pages and operational surfaces. */
+
+/* -------------------------------------------------------------------------
+   Page-by-page parity pass
+
+   Menu destinations are working surfaces inside the shell, not temporary
+   prompts. The rail and top bar therefore remain present while these dialog
+   elements open non-modally and occupy the app workspace.
+   ------------------------------------------------------------------------- */
+
+.app-rail,
+.topbar {
+  position: relative;
+  z-index: 40;
+}
+
+.workspace-page {
+  position: fixed;
+  z-index: 30;
+  inset: 72px 0 0 190px;
+  width: auto !important;
+  max-width: none !important;
+  height: calc(100vh - 72px);
+  max-height: none !important;
+  margin: 0;
+  padding: 0 28px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  color: var(--text);
+  background: var(--base);
+  box-shadow: none;
+}
+
+.workspace-page:not([open]) {
+  display: none;
+}
+
+.workspace-page[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-page::backdrop {
+  background: transparent;
+  backdrop-filter: none;
+}
+
+.workspace-page > .dialog-head {
+  min-height: 84px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 0;
+  padding: 18px 0 16px !important;
+  border-bottom: 1px solid var(--surface0);
+  background: transparent;
+}
+
+.workspace-page > .dialog-head h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: clamp(21px, 2vw, 27px);
+  font-weight: 760;
+  letter-spacing: -.045em;
+  text-transform: uppercase;
+}
+
+.workspace-page .rollup-coverage {
+  padding: 6px 9px;
+  border: 1px solid var(--accent-border);
+  border-radius: 999px;
+  color: var(--sapphire);
+  background: var(--accent-soft);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.workspace-page > .broadcast-body,
+.workspace-page > .explainer-body,
+.workspace-page > .prompt-library-grid,
+.workspace-page > .settings-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  max-height: none;
+  padding: 20px 0 !important;
+  overflow: auto;
+  background: transparent;
+  scrollbar-color: var(--surface1) transparent;
+}
+
+.workspace-page > .dialog-actions {
+  min-height: 68px;
+  flex: 0 0 auto;
+  margin: 0 -28px;
+  padding: 12px 28px !important;
+  border-top: 1px solid var(--surface0);
+  background: var(--panel-bg);
+}
+
+.workspace-page .dialog-actions-right {
+  margin-left: auto;
+}
+
+.workspace-page .settings-note {
+  max-width: 1040px;
+  color: var(--subtext1);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.workspace-page .rollup-body {
+  min-height: 0;
+  max-height: none;
+}
+
+.workspace-page .rollup-table {
+  display: table;
+  overflow: visible;
+  font-size: 11px;
+}
+
+.workspace-page .rollup-table th,
+.workspace-page .rollup-table td {
+  padding: 10px 12px;
+}
+
+/* Projects: registered roots and roadmap inventory read as one operations
+   surface, while run controls stay docked above the page footer. */
+#projects-dialog > .broadcast-body {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  align-content: start;
+  gap: 12px;
+  overflow: hidden;
+}
+
+#projects-dialog .project-roots-panel {
+  padding: 12px 14px;
+}
+
+#projects-dialog .project-root-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 7px;
+  max-height: 92px;
+  overflow: auto;
+}
+
+#projects-dialog .check-field {
+  width: max-content;
+  margin: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--surface0);
+  border-radius: 8px;
+  background: var(--panel-raised);
+}
+
+#projects-dialog #projects-body {
+  align-content: start;
+  overflow: auto;
+}
+
+#projects-dialog > .work-run-bar {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 10px 0 !important;
+  border-top: 1px solid var(--surface0);
+}
+
+#projects-dialog > .work-run-bar + .work-run-bar {
+  padding-top: 0 !important;
+  border-top: 0;
+}
+
+#projects-dialog > .work-run-body {
+  flex: 0 1 190px;
+  max-height: 190px;
+  margin: 0;
+  padding: 10px 0 !important;
+  overflow: auto;
+}
+
+/* Prompt Library: dense selection rail plus a generous editor, mirroring the
+   generated master/detail reference. */
+#prompt-dialog > .prompt-library-grid {
+  grid-template-columns: minmax(280px, .68fr) minmax(460px, 1.32fr);
+  gap: 18px;
+  overflow: hidden;
+}
+
+#prompt-dialog .stored-prompt-panel,
+#prompt-dialog .prompt-editor {
+  min-height: 0;
+  padding: 16px;
+  border: 1px solid var(--surface0);
+  border-radius: 11px;
+  background: var(--panel-raised);
+}
+
+#prompt-dialog .stored-prompt-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#prompt-dialog .stored-prompt-list {
+  min-height: 0;
+  flex: 1;
+  max-height: none;
+}
+
+#prompt-dialog .prompt-editor {
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+#prompt-dialog .prompt-editor .field:has(textarea) {
+  min-height: 0;
+}
+
+#prompt-dialog .prompt-editor textarea {
+  min-height: 280px;
+  height: 100%;
+}
+
+/* Broadcast: eligibility stays visible beside the composer. */
+#broadcast-dialog > .broadcast-body {
+  grid-template-columns: minmax(330px, .78fr) minmax(420px, 1.22fr);
+  align-items: stretch;
+  gap: 18px;
+  overflow: hidden;
+}
+
+#broadcast-dialog .broadcast-targets,
+#broadcast-dialog > .broadcast-body > .field {
+  min-height: 0;
+  padding: 16px;
+  border: 1px solid var(--surface0);
+  border-radius: 11px;
+  background: var(--panel-raised);
+}
+
+#broadcast-dialog .broadcast-targets {
+  display: flex;
+  flex-direction: column;
+}
+
+#broadcast-dialog #broadcast-list {
+  min-height: 0;
+  flex: 1;
+  align-content: start;
+  max-height: none;
+}
+
+#broadcast-dialog > .broadcast-body > .field {
+  display: flex;
+  flex-direction: column;
+  grid-column: auto;
+}
+
+#broadcast-dialog textarea {
+  min-height: 300px;
+  flex: 1;
+  resize: none;
+}
+
+/* Approvals and saved layouts are card inventories rather than long modal
+   prose. At wide sizes they use the same multi-column density as the refs. */
+#working-sets-dialog > .broadcast-body,
+#search-dialog > .broadcast-body,
+#history-dialog > .broadcast-body {
+  align-content: start;
+}
+
+#approvals-dialog > .broadcast-body {
+  grid-template-columns: minmax(0, 1fr) minmax(260px, .34fr);
+  grid-template-rows: minmax(0, 1fr);
+  align-items: start;
+  gap: 14px;
+}
+
+#approvals-dialog > .broadcast-body > .settings-note {
+  grid-column: 2;
+  grid-row: 1;
+  padding: 16px;
+  border: 1px solid var(--accent-border);
+  border-radius: 10px;
+  background: var(--accent-soft);
+}
+
+#approvals-body {
+  grid-column: 1;
+  grid-row: 1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 10px;
+}
+
+#approvals-body .approval,
+#approvals-body .approval + .approval {
+  height: max-content;
+  min-height: 142px;
+  margin: 0;
+  padding: 15px;
+}
+
+#working-sets-body {
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  align-content: start;
+  gap: 10px;
+}
+
+#working-sets-body .working-set {
+  margin: 0;
+  padding: 15px;
+}
+
+#working-sets-dialog .fleet-search-controls,
+#search-dialog .fleet-search-controls {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--surface0);
+  border-radius: 10px;
+  background: var(--panel-raised);
+}
+
+#search-dialog #fleet-search-body {
+  align-content: start;
+  gap: 10px;
+}
+
+#search-dialog .search-result {
+  padding: 14px;
+  border: 1px solid var(--surface0);
+  border-radius: 10px;
+  background: var(--panel-raised);
+}
+
+#search-dialog .search-hits {
+  gap: 5px;
+}
+
+#search-dialog .search-hits li {
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: var(--panel-bg);
+}
+
+/* History keeps both finished sessions and recoverable checkout residue in a
+   single scrollable record, with clear section dividers. */
+#history-dialog > .broadcast-body {
+  display: block;
+  gap: 14px;
+}
+
+#history-dialog > .broadcast-body > * + * {
+  margin-top: 14px;
+}
+
+#history-dialog > .broadcast-body > .dialog-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 18px 0 8px;
+  border-top: 1px solid var(--surface0);
+  border-bottom: 1px solid var(--surface0);
+}
+
+#history-dialog > .broadcast-body > .dialog-head h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+  text-transform: uppercase;
+}
+
+#history-dialog #history-body,
+#history-dialog #worktrees-body {
+  min-height: auto;
+  height: auto;
+  align-self: auto;
+  overflow: visible;
+}
+
+/* Limits: current usage first, then the editable guardrail grid. */
+.limits-overview {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 20px 0 0;
+}
+
+.limit-usage-card {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 15px 16px;
+  border: 1px solid var(--surface0);
+  border-radius: 10px;
+  background: var(--panel-raised);
+}
+
+.limit-usage-card span {
+  overflow: hidden;
+  color: var(--subtext0);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.limit-usage-card strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.limit-usage-card progress {
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  appearance: none;
+  background: var(--surface1);
+}
+
+.limit-usage-card progress::-webkit-progress-bar {
+  border-radius: 999px;
+  background: var(--surface1);
+}
+
+.limit-usage-card progress::-webkit-progress-value {
+  border-radius: 999px;
+  background: var(--blue);
+}
+
+.limit-usage-card progress::-moz-progress-bar {
+  border-radius: 999px;
+  background: var(--blue);
+}
+
+#settings-dialog > .settings-body {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 10px;
+}
+
+#settings-dialog .settings-field {
+  min-height: 82px;
+  grid-template-columns: minmax(0, 1fr) 130px;
+  padding: 14px;
+}
+
+#settings-dialog .settings-field-copy {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+#settings-dialog .settings-field-copy > span {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+#settings-dialog .settings-field-copy > small {
+  color: var(--subtext0);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+#settings-dialog > .settings-body > .settings-note:first-child {
+  order: 10;
+  padding: 14px 16px;
+  border: 1px solid rgba(203, 166, 247, .48);
+  border-radius: 10px;
+  color: var(--subtext1);
+  background: rgba(203, 166, 247, .07);
+}
+
+#settings-dialog #settings-environment-note,
+#settings-dialog #settings-error {
+  order: 11;
+}
+
+/* Embedded product guide: a numbered operating flow followed by compact
+   reference panels, as in the generated How TerminalAI Works page. */
+#explainer-dialog > .explainer-body {
+  display: grid;
+  grid-template-columns: 1fr;
+  align-content: start;
+  gap: 14px;
+}
+
+.explainer-flow {
+  counter-reset: explainer-step;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--surface0);
+  border-radius: 11px;
+  background: var(--panel-raised);
+}
+
+.explainer-flow > section {
+  counter-increment: explainer-step;
+  position: relative;
+  min-width: 0;
+  padding: 57px 18px 20px;
+}
+
+.explainer-flow > section + section {
+  border-left: 1px solid var(--surface0);
+}
+
+.explainer-flow > section::before {
+  content: counter(explainer-step);
+  position: absolute;
+  top: 17px;
+  left: 18px;
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--blue);
+  border-radius: 50%;
+  color: var(--blue);
+  background: var(--panel-bg);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.explainer-flow h3,
+.explainer-reference-grid h3 {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.explainer-flow p,
+.explainer-reference-grid p {
+  margin: 0;
+  color: var(--subtext1);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.explainer-reference-grid {
+  display: grid;
+  grid-template-columns: 1.35fr 1fr 1fr;
+  gap: 12px;
+}
+
+.explainer-reference-grid > section {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--surface0);
+  border-radius: 11px;
+  background: var(--panel-raised);
+}
+
+.explainer-reference-grid h3 {
+  color: var(--blue);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.explainer-reference-grid .explainer-states {
+  gap: 5px;
+}
+
+.explainer-reference-grid .explainer-state {
+  grid-template-columns: 125px minmax(0, 1fr);
+  gap: 8px;
+  font-size: 10px;
+}
+
+/* Preflight is the one page backed by an in-place fleet mode rather than a
+   dialog. Position it over the entire workspace so readiness is no longer
+   squeezed into the fleet column. */
+.preflight-view:not(.view-hidden) {
+  position: fixed;
+  z-index: 30;
+  inset: 72px 0 0 190px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 18px;
+  padding: 26px 28px 18px;
+  overflow: auto;
+  background: var(--base);
+}
+
+.preflight-view:not(.view-hidden) .preflight-heading,
+.preflight-view:not(.view-hidden) .preflight-list,
+.preflight-view:not(.view-hidden) .preflight-footer {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
+.preflight-view:not(.view-hidden) .preflight-heading {
+  align-items: center;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--surface0);
+}
+
+.preflight-view:not(.view-hidden) .preflight-heading h2 {
+  margin-top: 7px;
+  font-size: clamp(21px, 2vw, 27px);
+  text-transform: uppercase;
+}
+
+.preflight-view:not(.view-hidden) .preflight-heading p {
+  font-size: 11px;
+}
+
+.preflight-view:not(.view-hidden) .preflight-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 10px;
+  overflow: auto;
+}
+
+.preflight-view:not(.view-hidden) .preflight-row {
+  min-height: 102px;
+  padding: 15px;
+  border-radius: 10px;
+  background: var(--panel-raised);
+}
+
+.preflight-view:not(.view-hidden) .preflight-copy b {
+  font-size: 12px;
+}
+
+.preflight-view:not(.view-hidden) .preflight-copy strong {
+  font-size: 11px;
+}
+
+.preflight-view:not(.view-hidden) .preflight-footer {
+  min-height: 58px;
+  padding-top: 14px;
+  border-top: 1px solid var(--surface0);
+  font-size: 10px;
+}
+
+@media (max-width: 1180px) {
+  .workspace-page,
+  .preflight-view:not(.view-hidden) {
+    left: 178px;
+  }
+
+  .workspace-page {
+    padding-right: 22px;
+    padding-left: 22px;
+  }
+
+  .workspace-page > .dialog-actions {
+    margin-right: -22px;
+    margin-left: -22px;
+    padding-right: 22px !important;
+    padding-left: 22px !important;
+  }
+
+  .limits-overview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #broadcast-dialog > .broadcast-body {
+    grid-template-columns: minmax(300px, .8fr) minmax(360px, 1.2fr);
+  }
+
+  #approvals-dialog > .broadcast-body {
+    grid-template-columns: 1fr;
+  }
+
+  #approvals-dialog > .broadcast-body > .settings-note {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  #approvals-body {
+    grid-column: 1;
+    grid-row: 2;
+    grid-template-columns: 1fr;
+  }
+
+  .explainer-flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .explainer-flow > section:nth-child(3) {
+    border-left: 0;
+    border-top: 1px solid var(--surface0);
+  }
+
+  .explainer-flow > section:nth-child(4) {
+    border-top: 1px solid var(--surface0);
+  }
+
+  .explainer-reference-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .explainer-reference-grid > section:first-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (forced-colors: active) {
+  .terminal-host .xterm {
+    forced-color-adjust: none;
+  }
+  .terminal-host .xterm .xterm-viewport, .terminal-host .xterm .xterm-screen {
+    color: CanvasText;
+    background: Canvas;
+  }
+  .terminal-host .xterm .xterm-rows {
+    color: CanvasText;
+  }
+  .terminal-host .xterm .xterm-cursor-layer .xterm-cursor {
+    background: CanvasText !important;
+  }
+  .terminal-host .xterm .xterm-selection {
+    background: Highlight !important;
+    color: HighlightText !important;
+  }
+  button, input, select, textarea {
+    color: ButtonText;
+    border-color: ButtonText;
+    background: ButtonFace;
+  }
+  button:disabled, input:disabled, select:disabled, textarea:disabled {
+    color: GrayText;
+  }
+  .button-primary, .wide-toggle-active, .attention-filter-active {
+    color: HighlightText;
+    border-color: Highlight;
+    background: Highlight;
+  }
+  .status-glyph, .diagnostic-event-glyph {
+    color: ButtonText;
+    border: 1px solid ButtonText;
+    background: Canvas;
+  }
+  .state-chip {
+    color: CanvasText;
+    border-color: ButtonText;
+    background: Canvas;
+  }
+  .state-chip-glyph, .row-action-active {
+    color: Highlight;
+  }
+  .row-name,
+  .row-folder,
+  .row-branch,
+  .row-progress,
+  .row-dwell,
+  .row-status-label,
+  .terminal-title > span:nth-child(2),
+  .terminal-path,
+  .terminal-placeholder,
+  .terminal-statusbar,
+  .diagnostics-heading p {
+    color: CanvasText;
+  }
+  .row-status-label, .state-chip > span:last-child {
+    color: CanvasText;
+  }
+  .fleet-row:hover, .fleet-row:focus-visible, .fleet-row.row-focused {
+    border-color: Highlight;
+    background: Canvas;
+    color: CanvasText;
+  }
+  .icon-button:hover, .row-action:hover {
+    color: HighlightText;
+    border-color: Highlight;
+    background: Highlight;
+  }
+}
+
+/* Pinned terminals and filters share the theme variables so their light-mode
+   surfaces cannot retain the dark palette by landing after the theme block. */
+.pinned-split {
+  display: grid;
+  gap: 8px;
+  max-height: 38%;
+  padding: 0 20px 12px;
+  overflow: auto;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.pinned-pane {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  border: 1px solid rgba(88, 91, 112, .42);
+  border-radius: 8px;
+  background: rgba(24, 24, 37, .58);
+}
+
+.pinned-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 9px;
+  border-bottom: 1px solid rgba(88, 91, 112, .28);
+}
+
+.pinned-pane-name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pinned-pane-status {
+  flex: none;
+  font-size: 9px;
+}
+
+.pinned-pane-grid {
+  max-height: 190px;
+  margin: 0;
+  padding: 8px 9px;
+  overflow: auto;
+  color: var(--subtext1);
+  font-family: 'Cascadia Code', Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: pre;
+}
+
+.pinned-pane-grid-waiting {
+  color: var(--subtext0);
+  font-style: italic;
+}
+
+.filter-select select {
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid rgba(88, 91, 112, .42);
+  border-radius: 6px;
+  background: rgba(24, 24, 37, .7);
+  color: var(--subtext1);
+  font-size: 11px;
+}
+
+.row-group {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: rgba(88, 91, 112, .28);
+  color: var(--subtext1);
+  font-size: 9px;
+}
+
+.project-roots-panel {
+  display: grid;
+  gap: 7px;
+  padding: 10px 12px;
+  border: 1px solid var(--surface0);
+  border-radius: 7px;
+  background: rgba(30, 30, 46, .34);
+}
+
+.project-roots-heading, .prompt-editor-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.project-roots-heading .button, .prompt-editor-heading .button {
+  padding: 5px 8px;
+  font-size: 10px;
+}
+
+.project-root-list {
+  display: grid;
+  gap: 3px;
+  max-height: 22vh;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.project-root-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 4px 5px;
+  border-radius: 5px;
+  background: rgba(88, 91, 112, .12);
+}
+
+.project-root-path {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--subtext1);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-root-row .button {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  color: var(--red);
+  font-size: 9px;
+}
+
+.prompt-dialog {
+  max-width: 900px;
+  width: min(900px, 92vw);
+}
+
+.launcher-dialog > .prompt-library-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, .78fr) minmax(320px, 1.22fr);
+  gap: 18px;
+  padding: 20px 26px;
+}
+
+.stored-prompt-panel, .prompt-editor {
+  min-width: 0;
+}
+
+.stored-prompt-list {
+  display: grid;
+  gap: 4px;
+  max-height: 52vh;
+  overflow-y: auto;
+}
+
+.stored-prompt-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px;
+  align-items: stretch;
+}
+
+.stored-prompt-select {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--subtext1);
+  background: transparent;
+  text-align: left;
+}
+
+.stored-prompt-select:hover, .stored-prompt-select[aria-pressed="true"] {
+  border-color: var(--surface1);
+  background: var(--surface0);
+}
+
+.stored-prompt-select span {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stored-prompt-select small {
+  overflow: hidden;
+  color: var(--subtext0);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stored-prompt-row > .row-action {
+  align-self: center;
+}
+
+.prompt-editor {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.prompt-editor .field {
+  gap: 5px;
+}
+
+.prompt-editor textarea {
+  min-height: 260px;
+  resize: vertical;
+}
+
+.prompt-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.field-hint {
+  color: var(--subtext0);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --base: #eff1f5;
+    --mantle: #e6e9ef;
+    --crust: #dce0e8;
+    --surface0: #ccd0da;
+    --surface1: #bcc0cc;
+    --surface2: #acb0be;
+    --overlay0: #6c6f85;
+    --text: #303446;
+    --subtext0: #43465c;
+    --subtext1: #4c4f69;
+    --blue: #1547a8;
+    --sapphire: #005f73;
+    --mauve: #6f2dbd;
+    --peach: #8a2f0b;
+    --yellow: #7a5000;
+    --red: #a8002a;
+    --green: #14532d;
+    --teal: #005f73;
+    /* A light terminal, from the same tokens. The accents above are the
+       contrast-tuned light variants, so the ANSI eight come out readable on a
+       light background rather than as the dark theme's pastels. */
+    --term-bg: #eff1f5;
+    --term-fg: #303446;
+    --term-cursor: #7c2d54;
+    --term-selection: #bcc0cc;
+    --term-black: #4c4f69;
+    /* One step darker than the --overlay0 it started from: ANSI white is the
+       dim/secondary colour programs actually print in, and at #6c6f85 it landed
+       at 4.37:1 on this background — just under AA. */
+    --term-white: #63667c;
+    --rail-bg: #e5e8f0;
+    --panel-bg: #f7f8fb;
+    --panel-raised: #ffffff;
+    --panel-hover: #e3e8f5;
+    --accent-soft: rgba(21, 71, 168, .1);
+    --accent-border: rgba(21, 71, 168, .36);
+    --accent-gradient: linear-gradient(135deg, #2557bd, #6844a8);
+    --button-text: #ffffff;
+    --shadow-soft: rgba(48, 52, 70, .2);
+    --backdrop: rgba(35, 38, 52, .28);
+  }
+  body {
+    background:
+      radial-gradient(circle at 80% -10%,
+      rgba(188, 192, 204, .35), transparent 38%),
+      var(--base);
+  }
+  .topbar, .terminal-toolbar {
+    background: rgba(230, 233, 239, .86);
+  }
+  .fleet-panel {
+    background: rgba(239, 241, 245, .88);
+  }
+  .filter-wrap, .menu-section select {
+    background: rgba(255, 255, 255, .78);
+  }
+  .row-focused {
+    background: var(--surface0) !important;
+  }
+  .fleet-row:hover, .fleet-row:focus-visible {
+    border-color: var(--surface1);
+    background: var(--surface0);
+  }
+  .external-view {
+    border-top-color: var(--surface1);
+    background: var(--mantle);
+  }
+  .pinned-pane {
+    border-color: var(--surface1);
+    background: var(--mantle);
+  }
+  .pinned-pane-head {
+    border-bottom-color: var(--surface1);
+  }
+  .filter-select select {
+    border-color: var(--surface1);
+    background: var(--mantle);
+  }
+  .row-group {
+    background: var(--surface0);
+  }
+  .row-unread {
+    background: linear-gradient(90deg, rgba(254, 100, 11, .10), transparent 70%) !important;
+  }
+  .button-primary {
+    color: #ffffff;
+    background: linear-gradient(135deg, #5b21b6, #1547a8);
+  }
+  .field input,
+  .field select,
+  .field textarea,
+  .preset-save input,
+  .log-event,
+  .diagnostics-current,
+  .preflight-row,
+  .preview-card,
+  .toast,
+  .review-entry,
+  .review-diff pre {
+    color: var(--text);
+    background: var(--mantle);
+  }
+  .row-reply input {
+    background: var(--mantle);
+  }
+}
+
+.row-memory-limited {
+  color: var(--red);
+}
+
+/* A session whose ledger cost reached the cap it was launched with. Red for
+   the same reason the memory limit is: the row is still running, but it is no
+   longer being given work, and that has to be visible without opening it. */
+.row-budget-spent {
+  color: var(--red);
+}
+
+/* Context pressure. Only the two bands that ask for attention are coloured:
+   a comfortable window is the ordinary case and painting it green would put a
+   tone on every row in the fleet. A reading with no window gets no class at
+   all, so "we did not measure this" never renders as "this is fine". */
+.context-filling {
+  color: var(--yellow);
+}
+
+.context-critical {
+  color: var(--red);
+}
+
+.settings-body {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  max-height: 62vh;
+  overflow-y: auto;
+}
+
+.settings-note {
+  margin: 0;
+  color: var(--subtext0);
+  font-size: 12px;
+}
+
+.settings-field {
+  display: grid;
+  grid-template-columns: 1fr 140px;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-error {
+  margin: 0;
+  color: var(--red);
+  font-size: 12px;
+}
+

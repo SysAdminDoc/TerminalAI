@@ -1,0 +1,2748 @@
+/* Core controls, panels, fleet rows, terminal and dialogs. */
+
+body {
+  margin: 0;
+  min-width: 1100px;
+  min-height: 640px;
+  background:
+    radial-gradient(circle at 80% -10%,
+    rgba(69, 71, 90, .22), transparent 38%),
+    var(--base);
+}
+
+button, input, select, textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.topbar {
+  height: 72px;
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  padding: 0 28px;
+  border-bottom: 1px solid rgba(88, 91, 112, .42);
+  background: rgba(24, 24, 37, .82);
+  backdrop-filter: blur(18px);
+}
+
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 220px;
+}
+
+.brand-mark {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  align-items: end;
+  gap: 3px;
+  padding: 5px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #cba6f7, #89b4fa);
+  box-shadow: 0 0 24px rgba(137, 180, 250, .18);
+}
+
+.brand-mark span {
+  display: block;
+  border-radius: 3px;
+  background: #181825;
+}
+
+.brand-mark span:nth-child(1) {
+  height: 36%;
+}
+
+.brand-mark span:nth-child(2) {
+  height: 68%;
+}
+
+.brand-mark span:nth-child(3) {
+  height: 100%;
+}
+
+.brand-name {
+  font-size: 16px;
+  font-weight: 720;
+  letter-spacing: -.03em;
+  color: var(--text);
+}
+
+.brand-name span {
+  color: var(--mauve);
+}
+
+.brand-subtitle, .eyebrow {
+  color: var(--subtext0);
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+}
+
+.fleet-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--subtext0);
+  font-size: 12px;
+  flex: 1;
+}
+
+.summary-item b {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.summary-attention b {
+  color: var(--peach);
+}
+
+.summary-limited, .summary-limited b {
+  color: var(--red);
+}
+
+.summary-separator {
+  color: var(--subtext0);
+}
+
+/* The spend figure is the entry point to the rollup, so it reads as a control
+   rather than as another static count in the row. */
+.summary-spend {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0 2px;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.summary-spend:hover {
+  color: var(--text);
+  background: var(--surface0);
+}
+
+.summary-spend:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+/* Dialog content keeps the same horizontal inset as the action footer. The
+   launcher already supplies its own padded sections; these are the shared
+   content boxes used by the other dialogs. */
+.launcher-dialog > .dialog-head,
+.launcher-dialog > .rollup-body,
+.launcher-dialog > .broadcast-body,
+.launcher-dialog > .explainer-body,
+.launcher-dialog > .work-run-bar,
+.launcher-dialog > .work-run-body {
+  padding: 20px 26px;
+}
+
+.rollup-dialog {
+  max-width: 900px;
+  width: min(900px, 92vw);
+}
+
+.rollup-dialog .dialog-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.rollup-dialog h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.rollup-coverage {
+  color: var(--subtext0);
+  font-size: 12px;
+}
+
+.rollup-body {
+  display: grid;
+  gap: 18px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.rollup-section h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--subtext0);
+}
+
+/* A wide table must scroll inside itself; the dialog body must not scroll
+   sideways. */
+.rollup-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  display: block;
+  overflow-x: auto;
+}
+
+.rollup-table th, .rollup-table td {
+  padding: 4px 8px;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--surface0);
+}
+
+.rollup-table thead th {
+  color: var(--subtext0);
+  font-weight: 600;
+}
+
+.rollup-table tbody th {
+  font-weight: 500;
+  color: var(--text);
+}
+
+/* The archived command is the widest thing in the history table and the least
+   worth truncating: it is the whole reason the record was kept. It gets the
+   slack, the folder gets an ellipsis and its full path in a title. */
+.history-command code {
+  color: var(--subtext1);
+  font-family: "Cascadia Mono", ui-monospace, monospace;
+  font-size: 11px;
+}
+
+.history-folder {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rollup-number {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Sessions a group could not price. Dimmer than the figures, because it
+   qualifies them rather than being one. */
+.rollup-unpriced {
+  color: var(--subtext0);
+  font-weight: 400;
+}
+
+.rollup-total p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--subtext0);
+}
+
+.data-error {
+  display: grid;
+  gap: 9px;
+  min-height: 120px;
+  place-content: center;
+  padding: 14px;
+  border: 1px solid rgba(243, 139, 168, .35);
+  border-radius: 7px;
+  color: var(--red);
+  background: rgba(243, 139, 168, .07);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.data-error p {
+  max-width: 620px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.data-error .button {
+  justify-self: start;
+  padding: 5px 9px;
+  font-size: 10px;
+}
+
+.broadcast-dialog {
+  max-width: 620px;
+  width: min(620px, 92vw);
+}
+
+.broadcast-body {
+  display: grid;
+  gap: 14px;
+}
+
+.broadcast-targets {
+  border: 1px solid var(--surface0);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 0;
+}
+
+.broadcast-targets legend {
+  padding: 0 6px;
+  color: var(--subtext0);
+  font-size: 12px;
+}
+
+#broadcast-list {
+  display: grid;
+  gap: 2px;
+  max-height: 32vh;
+  overflow-y: auto;
+}
+
+.broadcast-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 4px;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.broadcast-row:hover {
+  background: var(--surface0);
+}
+
+/* Listed but clearly not a target, with the reason beside it — hiding these
+   would make the fleet look smaller than it is. */
+.broadcast-row.is-ineligible {
+  color: var(--subtext0);
+}
+
+.broadcast-why {
+  color: var(--subtext0);
+  font-size: 11px;
+  margin-left: auto;
+}
+
+.projects-table tbody th {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The next open item is context, not the answer — it must not push the counts
+   off the row. */
+.projects-next {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--subtext0);
+}
+
+.queue-dialog {
+  max-width: 680px;
+  width: min(680px, 92vw);
+}
+
+.queue-list {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.queue-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.queue-position {
+  color: var(--subtext0);
+  font-size: 12px;
+  padding-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-text {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  font-size: 12px;
+}
+
+.queue-row-actions {
+  display: flex;
+  gap: 2px;
+}
+
+/* A queued count is information; a paused queue is a thing to act on, so only
+   the paused state takes a colour. */
+.row-action-warn {
+  color: var(--peach);
+}
+
+.work-run-bar {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  margin-top: 12px;
+}
+
+.work-run-bar .field {
+  flex: 1;
+}
+
+.work-run-body {
+  margin-top: 12px;
+  max-height: 30vh;
+  overflow-y: auto;
+}
+
+.work-entry {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 4px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--surface0);
+}
+
+.work-entry-state {
+  color: var(--subtext0);
+}
+
+/* Only the states needing a decision take a colour; done and running are the
+   expected path and should not compete for attention. */
+.work-entry-flagged .work-entry-state {
+  color: var(--peach);
+}
+
+.work-entry-failed .work-entry-state {
+  color: var(--red);
+}
+
+.explainer-dialog {
+  max-width: 640px;
+  width: min(640px, 92vw);
+}
+
+.explainer-body {
+  display: grid;
+  gap: 16px;
+  max-height: 62vh;
+  overflow-y: auto;
+}
+
+.explainer-body h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+
+.explainer-body p {
+  margin: 0;
+  color: var(--subtext0);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.explainer-states {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+}
+
+.explainer-state {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.explainer-state dt {
+  margin: 0;
+}
+
+.explainer-state dd {
+  margin: 0;
+  color: var(--subtext0);
+  font-size: 12px;
+}
+
+.empty-next {
+  color: var(--subtext0);
+  font-size: 13px;
+  max-width: 46ch;
+}
+
+.empty-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.button {
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 8px 12px;
+  /* Declared, not inherited. Every variant below sets its own background, so
+     the base never appeared to need one -- but a `.button` with no variant
+     falls through to the UA's ButtonFace, which in a dark colour-scheme is a
+     mid grey no token in this file ever chose. The text colours here are picked
+     for the Catppuccin surfaces, so on that grey they land at 3.7:1. */
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  transition: border-color .16s ease, background .16s ease, transform .16s ease;
+}
+
+.button:hover {
+  transform: translateY(-1px);
+}
+
+.button:active {
+  transform: translateY(0);
+}
+
+.button-primary {
+  background: linear-gradient(135deg, #cba6f7, #b4befe);
+  color: #1e1e2e;
+  box-shadow: 0 6px 20px rgba(203, 166, 247, .16);
+}
+
+.button-primary:hover {
+  background: linear-gradient(135deg, #d8b9ff, #c3ccff);
+}
+
+.button-secondary {
+  border-color: var(--surface1);
+  background: var(--surface0);
+}
+
+.button-secondary:hover, .button-quiet:hover {
+  border-color: var(--subtext0);
+  background: var(--surface0);
+}
+
+.button-quiet {
+  border-color: transparent;
+  background: transparent;
+  color: var(--subtext0);
+}
+
+.button-plus {
+  font-size: 16px;
+  line-height: 10px;
+  vertical-align: -1px;
+  margin-right: 3px;
+}
+
+/* The preset selector moved into the overflow menu, but the reason it was
+   styled separately has not changed: a bare <select> here loses the focus ring
+   the rest of the app has, and it is reachable by keyboard. */
+.menu-section select {
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  color: var(--subtext1);
+  background: var(--mantle);
+  font-size: 11px;
+}
+
+.menu-section select:focus-visible {
+  border-color: var(--mauve);
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(520px, 43%) 1fr;
+  height: calc(100vh - 72px);
+}
+
+.fleet-panel, .terminal-panel {
+  min-width: 0;
+}
+
+.fleet-panel {
+  position: relative;
+  border-right: 1px solid rgba(88, 91, 112, .42);
+  background: rgba(17, 17, 27, .74);
+}
+
+.terminal-panel {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  background: var(--term-bg);
+}
+
+/* `min-width: 0` on both children is what stops this row overflowing its panel
+   and painting on top of the terminal pane: without it a flex item refuses to
+   shrink below its content width, and the surplus is drawn rather than clipped.
+   The toolbar was doing exactly that at the documented 1440px default. */
+.panel-toolbar, .terminal-toolbar {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 18px;
+  border-bottom: 1px solid rgba(88, 91, 112, .28);
+}
+
+.panel-toolbar > *, .terminal-toolbar > * {
+  min-width: 0;
+}
+
+/* Find-in-pane. A strip under the toolbar rather than an overlay on the
+   terminal: an overlay covers the output being searched, which is the one
+   thing the operator is looking at. */
+.terminal-find {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border-bottom: 1px solid rgba(88, 91, 112, .28);
+  background: var(--mantle);
+}
+
+.terminal-find[hidden] {
+  display: none;
+}
+
+.terminal-find input {
+  flex: 1;
+  min-width: 0;
+}
+
+.fleet-search-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.fleet-search-controls input[type="search"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.search-result {
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(88, 91, 112, .28);
+}
+
+.search-result-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.search-result-count {
+  color: var(--subtext0);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.search-hits {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.search-hits li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.search-hits code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+  font-size: 12px;
+  color: var(--subtext1);
+}
+
+.search-hit-line {
+  color: var(--subtext0);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  min-width: 44px;
+  text-align: right;
+}
+
+.search-truncated {
+  display: block;
+  margin-top: 6px;
+  color: var(--subtext0);
+}
+
+.approval {
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(88, 91, 112, .28);
+}
+
+.approval-request {
+  display: block;
+  margin: 6px 0;
+  font-size: 12px;
+  color: var(--subtext1);
+  overflow-wrap: anywhere;
+}
+
+.approval-answer {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.approval-answer input {
+  flex: 1;
+  min-width: 0;
+}
+
+.working-set {
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(88, 91, 112, .28);
+}
+
+.working-set-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.restore-outcomes {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.restore-outcomes li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 12px;
+}
+
+.restore-name {
+  font-weight: 600;
+}
+
+.restore-started .restore-detail {
+  color: var(--green);
+}
+
+.restore-refused .restore-detail {
+  color: var(--peach);
+}
+
+.restore-pin {
+  color: var(--subtext0);
+}
+
+.terminal-find-count {
+  color: var(--subtext0);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.toolbar-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.toolbar-title > span:last-child {
+  color: var(--subtext1);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.fleet-tools {
+  min-width: 0;
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The overflow menu. A relatively-positioned wrapper rather than the popover
+   API: the panel has to escape a toolbar that is now allowed to shrink, and an
+   absolutely-positioned child of a positioned ancestor does that without
+   depending on anchor positioning being available in this WebView. */
+.menu-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 208px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--surface0);
+  border-radius: 9px;
+  background: var(--mantle);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .45);
+}
+
+/* Anchored to the right edge when the trigger sits near the window edge, so the
+   panel opens inward instead of off-screen. */
+.menu-right {
+  left: auto;
+  right: 0;
+}
+
+.menu[hidden] {
+  display: none;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  /* Same UA-ButtonFace fallthrough as `.button`: the hover rule below paints
+     `--surface0` onto what was meant to be nothing, and the rest state was
+     never written down. */
+  background: transparent;
+  color: var(--subtext1);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  transition: background .14s ease, color .14s ease;
+}
+
+.menu-item:hover, .menu-item:focus-visible {
+  color: var(--text);
+  background: var(--surface0);
+}
+
+/* The update check's answer, kept where the action is rather than thrown at a
+   toast that expires. Only rendered when there is something to say. */
+.menu-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 2px 4px 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  background: var(--mantle);
+  color: var(--subtext1);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.menu-result.view-hidden {
+  display: none;
+}
+
+.menu-item[aria-pressed="true"] {
+  color: var(--mauve);
+}
+
+.menu-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 10px 8px;
+}
+
+.menu-heading {
+  color: var(--subtext0);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.menu-inline {
+  display: flex;
+  gap: 4px;
+}
+
+.menu-inline .button {
+  flex: 1 1 auto;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+
+.menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  border: 0;
+  background: var(--surface0);
+}
+
+.filter-wrap {
+  width: 146px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  color: var(--subtext0);
+  background: rgba(24, 24, 37, .8);
+}
+
+.filter-wrap:focus-within {
+  border-color: var(--mauve);
+}
+
+.filter-wrap input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  background: transparent;
+  font-size: 11px;
+}
+
+.filter-wrap input::placeholder {
+  color: var(--subtext0);
+}
+
+.wide-toggle-active {
+  border-color: rgba(203, 166, 247, .42);
+  color: var(--mauve);
+  background: rgba(203, 166, 247, .08);
+}
+
+.attention-filter {
+  padding: 6px 8px;
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  color: var(--subtext0);
+  background: transparent;
+  font-size: 10px;
+}
+
+.attention-filter:hover, .attention-filter-active {
+  border-color: rgba(250, 179, 135, .42);
+  color: var(--peach);
+  background: rgba(250, 179, 135, .08);
+}
+
+.fleet-state-strip {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow-x: auto;
+  padding: 0 18px;
+  border-bottom: 1px solid rgba(88, 91, 112, .2);
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface1) transparent;
+}
+
+.state-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border: 1px solid rgba(108, 112, 134, .22);
+  border-radius: 4px;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.state-chip-glyph {
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.state-chip b {
+  color: var(--text);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.state-chip > span:last-child {
+  color: var(--subtext0);
+}
+
+.column-labels {
+  height: 27px;
+  display: grid;
+  grid-template-columns: minmax(210px, 1fr) minmax(120px, .58fr) minmax(120px, .7fr) 84px;
+  align-items: center;
+  padding: 0 18px;
+  color: var(--subtext0);
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: .11em;
+}
+
+.column-labels span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.column-labels span:nth-child(2), .column-labels span:nth-child(3) {
+  text-align: right;
+  padding-right: 10px;
+}
+
+.fleet-list {
+  overflow: auto;
+  height: calc(100% - 111px);
+  padding: 0 8px 16px;
+  scrollbar-color: var(--surface1) transparent;
+}
+
+.fleet-list-hidden {
+  display: none;
+}
+
+.fleet-order-notice {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 31px;
+  padding: 4px 12px 9px;
+  color: var(--subtext0);
+  font-size: 10px;
+}
+
+.fleet-order-notice .button {
+  padding: 4px 8px;
+  font-size: 10px;
+}
+
+.fleet-loading {
+  position: absolute;
+  inset: 145px 28px auto;
+  display: grid;
+  place-items: center;
+  min-height: 54px;
+  color: var(--subtext0);
+  font-size: 11px;
+  letter-spacing: .02em;
+}
+
+.fleet-loading::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  margin-bottom: 8px;
+  border: 1px solid var(--blue);
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: fleet-loading-spin 900ms linear infinite;
+}
+
+.fleet-loading.view-hidden {
+  display: none;
+}
+
+@keyframes fleet-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 28px is the product's central claim, not a style preference: attention data
+   needs one line, an interaction surface needs a renderer. Everything that does
+   not fit on that line lives in Wide. Kept in sync with README.md, CLAUDE.md and
+   tests/rowDensity.test.mjs. */
+.fleet-row {
+  min-height: 28px;
+  display: grid;
+  grid-template-columns: minmax(210px, 1fr) minmax(120px, .58fr) minmax(120px, .7fr) 84px;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--subtext1);
+  transition: background .14s ease, border-color .14s ease;
+  outline: none;
+}
+
+.fleet-row:hover, .fleet-row:focus-visible {
+  border-color: var(--surface0);
+  background: rgba(49, 50, 68, .48);
+}
+
+.fleet-row.row-focused {
+  border-color: rgba(203, 166, 247, .5);
+  background: var(--surface0);
+}
+
+.fleet-row.row-unread {
+  background: linear-gradient(90deg, rgba(250, 179, 135, .09), transparent 70%);
+}
+
+.row-identity, .row-metrics, .row-dwell, .row-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.row-identity {
+  gap: 9px;
+}
+
+.status-glyph {
+  width: 17px;
+  height: 17px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.tone-peach {
+  color: var(--peach);
+  background: rgba(250, 179, 135, .12);
+}
+
+.tone-yellow {
+  color: var(--yellow);
+  background: rgba(249, 226, 175, .11);
+}
+
+.tone-mauve {
+  color: var(--mauve);
+  background: rgba(203, 166, 247, .12);
+}
+
+.tone-red {
+  color: var(--red);
+  background: rgba(243, 139, 168, .12);
+}
+
+.tone-green {
+  color: var(--green);
+  background: rgba(166, 227, 161, .12);
+}
+
+.tone-surface2 {
+  color: var(--subtext0);
+  background: rgba(88, 91, 112, .25);
+}
+
+.tone-sapphire {
+  color: var(--sapphire);
+  background: rgba(116, 199, 236, .12);
+}
+
+.tone-overlay0 {
+  color: var(--subtext0);
+  background: rgba(108, 112, 134, .14);
+}
+
+/* One line: glyph, name, repository. The compact row keeps only what a scanning
+   operator acts on; branch, ports and the spelled-out status move to Wide. */
+.row-name-wrap {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.row-dwell {
+  overflow: hidden;
+}
+
+.row-name {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unread-dot {
+  width: 5px;
+  height: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--peach);
+  box-shadow: 0 0 8px var(--peach);
+}
+
+.row-folder {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 8px;
+  overflow: hidden;
+  color: var(--subtext0);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-folder .row-branch, .row-folder .row-status-label, .row-folder .row-ports {
+  display: none;
+}
+
+.fleet-list-wide .row-folder .row-branch,
+.fleet-list-wide .row-folder .row-status-label,
+.fleet-list-wide .row-folder .row-ports {
+  display: inline;
+}
+
+.row-repo, .row-branch, .row-ports, .row-status-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-branch {
+  color: var(--subtext0);
+}
+
+.row-ports {
+  color: var(--teal);
+  font-variant-numeric: tabular-nums;
+}
+
+.row-status-label {
+  display: inline;
+  flex: 0 1 auto;
+  color: var(--text);
+  font-weight: 650;
+}
+
+.row-metrics {
+  justify-content: flex-end;
+  gap: 7px;
+  overflow: hidden;
+}
+
+.agent-badge {
+  width: 22px;
+  height: 20px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 5px;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .04em;
+}
+
+.agent-claude {
+  color: var(--peach);
+  background: rgba(250, 179, 135, .13);
+}
+
+.agent-codex {
+  color: var(--green);
+  background: rgba(166, 227, 161, .13);
+}
+
+.row-progress {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  color: var(--subtext1);
+  font-variant-numeric: tabular-nums;
+}
+
+.row-progress small {
+  color: var(--subtext0);
+  font-size: 8px;
+  letter-spacing: .06em;
+}
+
+.row-progress b, .row-restarts {
+  color: var(--subtext1);
+  font-size: 10px;
+}
+
+.row-restarts {
+  white-space: nowrap;
+}
+
+/* Dwell and the last output line share the third column on one baseline. */
+.row-dwell {
+  justify-content: flex-end;
+  gap: 8px;
+  padding-left: 12px;
+}
+
+.row-dwell > span {
+  flex: 0 0 auto;
+  color: var(--subtext1);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.row-dwell small {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--subtext0);
+  font-size: 9px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-actions {
+  justify-content: flex-end;
+  gap: 1px;
+}
+
+.row-action, .icon-button {
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--subtext0);
+  background: transparent;
+  font-size: 12px;
+}
+
+.row-action {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
+  margin-inline: -1px;
+}
+
+.icon-button {
+  width: 27px;
+  height: 27px;
+  font-size: 13px;
+}
+
+.row-action:hover, .icon-button:hover {
+  border-color: var(--surface1);
+  color: var(--text);
+  background: var(--surface0);
+}
+
+.row-action-active {
+  color: var(--mauve);
+}
+
+.row-action-danger:hover {
+  color: var(--red);
+  border-color: rgba(243, 139, 168, .32);
+}
+
+/* The countdown before an unanswered question answers itself. Coloured because
+   it is a deadline, not a dwell timer: the two sit side by side in the row. */
+.row-dwell > .row-answer-deadline {
+  color: var(--peach);
+  font-weight: 600;
+}
+
+.row-dwell > .row-answer-deadline[hidden] {
+  display: none;
+}
+
+.row-wide-meta {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px 110px;
+  gap: 12px;
+  padding: 0 0 7px 26px;
+  border-top: 1px solid rgba(88, 91, 112, .2);
+}
+
+.row-wide-meta span {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 6px;
+}
+
+.row-wide-meta small {
+  color: var(--subtext0);
+  font-size: 8px;
+  letter-spacing: .08em;
+}
+
+.row-wide-meta b {
+  overflow: hidden;
+  color: var(--subtext1);
+  font-size: 10px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-wide-meta span:last-child b {
+  color: var(--green);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Sessions TerminalAI does not supervise. Visually quieter and deliberately
+   actionless — no buttons, because the daemon owns nothing here. */
+.external-view {
+  max-height: 168px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 18px 10px;
+  border-top: 1px solid rgba(88, 91, 112, .28);
+  background: rgba(24, 24, 37, .38);
+}
+
+.external-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 5px;
+}
+
+.external-heading > span:last-child {
+  color: var(--subtext0);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.external-list {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-color: var(--surface1) transparent;
+}
+
+.external-row {
+  min-height: 28px;
+  display: grid;
+  grid-template-columns: 17px minmax(0, 1fr) 68px 56px auto;
+  align-items: center;
+  gap: 9px;
+  padding: 0 2px;
+  color: var(--subtext1);
+}
+
+.external-identity {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.external-name {
+  overflow: hidden;
+  color: var(--subtext1);
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.external-meta {
+  display: flex;
+  gap: 8px;
+  overflow: hidden;
+  color: var(--subtext0);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.external-state {
+  color: var(--subtext0);
+  font-size: 9px;
+  letter-spacing: .04em;
+}
+
+.external-pid {
+  color: var(--subtext0);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.external-overlap {
+  padding: 1px 5px;
+  border: 1px solid rgba(249, 226, 175, .3);
+  border-radius: 4px;
+  color: var(--yellow);
+  font-size: 8px;
+  letter-spacing: .04em;
+  white-space: nowrap;
+}
+
+.row-reply {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 0 7px 26px;
+}
+
+.row-reply input {
+  min-width: 0;
+  flex: 1;
+  padding: 5px 7px;
+  border: 1px solid var(--surface0);
+  border-radius: 5px;
+  outline: 0;
+  color: var(--text);
+  background: var(--mantle);
+  font-size: 10px;
+}
+
+.row-reply input:focus {
+  border-color: var(--peach);
+}
+
+.row-reply-send {
+  width: 26px;
+  height: 25px;
+  border: 1px solid rgba(166, 227, 161, .3);
+  border-radius: 5px;
+  color: var(--green);
+  background: rgba(166, 227, 161, .08);
+  font-size: 13px;
+}
+
+.row-reply-send:hover {
+  background: rgba(166, 227, 161, .16);
+}
+
+.terminal-toolbar {
+  padding: 0 20px;
+  background: rgba(24, 24, 37, .46);
+}
+
+.terminal-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.terminal-title > span:nth-child(2) {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.terminal-path {
+  max-width: 360px;
+  overflow: hidden;
+  color: var(--subtext0);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--overlay0);
+}
+
+.pulse-peach {
+  background: var(--peach);
+  box-shadow: 0 0 12px rgba(250, 179, 135, .65);
+}
+
+.pulse-yellow {
+  background: var(--yellow);
+  box-shadow: 0 0 12px rgba(249, 226, 175, .55);
+}
+
+.pulse-mauve {
+  background: var(--mauve);
+  box-shadow: 0 0 12px rgba(203, 166, 247, .55);
+}
+
+.pulse-red {
+  background: var(--red);
+  box-shadow: 0 0 12px rgba(243, 139, 168, .55);
+}
+
+.pulse-sapphire {
+  background: var(--sapphire);
+}
+
+.pulse-surface2 {
+  background: var(--subtext0);
+}
+
+.pulse-overlay0 {
+  background: var(--overlay0);
+}
+
+.terminal-actions {
+  display: flex;
+  gap: 3px;
+}
+
+.terminal-host {
+  min-height: 0;
+  flex: 1;
+  padding: 16px 20px;
+  overflow: hidden;
+}
+
+.terminal-host .xterm {
+  height: 100%;
+}
+
+.terminal-host-attached {
+  display: flex;
+}
+
+.terminal-host-attached .xterm {
+  min-height: 0;
+  flex: 1;
+}
+
+.terminal-placeholder {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  gap: 9px;
+  color: var(--subtext0);
+  text-align: center;
+  font-size: 13px;
+}
+
+.terminal-placeholder small {
+  color: var(--subtext0);
+  font-size: 10px;
+}
+
+.terminal-statusbar {
+  height: 27px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  border-top: 1px solid rgba(88, 91, 112, .28);
+  color: var(--subtext0);
+  font-size: 9px;
+}
+
+.terminal-grid {
+  color: var(--subtext0);
+  font-variant-numeric: tabular-nums;
+}
+
+.empty-state {
+  position: absolute;
+  inset: 135px 28px auto;
+  display: grid;
+  place-items: center;
+  gap: 7px;
+  color: var(--subtext0);
+  text-align: center;
+}
+
+.empty-state-hidden {
+  display: none;
+}
+
+.empty-state h2 {
+  margin: 8px 0 0;
+  color: var(--subtext1);
+  font-size: 16px;
+}
+
+.empty-state p {
+  max-width: 270px;
+  margin: 0 0 10px;
+  color: var(--subtext0);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.empty-orbit {
+  width: 42px;
+  height: 42px;
+  position: relative;
+  border: 1px solid var(--surface1);
+  border-radius: 50%;
+}
+
+.empty-orbit::before {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border: 1px dashed var(--surface2);
+  border-radius: 50%;
+}
+
+.empty-orbit span {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--mauve);
+}
+
+.empty-orbit span:nth-child(1) {
+  top: 3px;
+  left: 18px;
+}
+
+.empty-orbit span:nth-child(2) {
+  right: 1px;
+  bottom: 10px;
+  background: var(--blue);
+}
+
+.empty-orbit span:nth-child(3) {
+  left: 4px;
+  bottom: 8px;
+  background: var(--peach);
+}
+
+.launcher-dialog {
+  width: min(760px, calc(100vw - 80px));
+  max-height: calc(100vh - 60px);
+  padding: 0;
+  border: 1px solid var(--surface1);
+  border-radius: 13px;
+  color: var(--text);
+  background: var(--mantle);
+  box-shadow: 0 24px 90px rgba(0, 0, 0, .62);
+}
+
+.launcher-dialog::backdrop {
+  background: rgba(7, 7, 13, .72);
+  backdrop-filter: blur(6px);
+}
+
+.launcher-form {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 60px);
+  overflow: auto;
+}
+
+.dialog-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 23px 26px 18px;
+  border-bottom: 1px solid var(--surface0);
+}
+
+.dialog-heading h1 {
+  margin: 5px 0 0;
+  color: var(--text);
+  font-size: 21px;
+  letter-spacing: -.04em;
+}
+
+.dialog-close {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--subtext0);
+  background: transparent;
+  font-size: 22px;
+}
+
+.dialog-close:hover {
+  color: var(--text);
+  background: var(--surface0);
+}
+
+.launcher-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 13px 15px;
+  padding: 20px 26px;
+}
+
+/* Seventeen of the launcher's twenty-five controls are ones a session rarely
+   sets. They stay one click away rather than competing with the four that
+   decide what actually launches. The summary names what is inside, so nothing
+   has to be opened to find out whether it is in there. */
+.launcher-advanced {
+  grid-column: 1 / -1;
+  border: 1px solid var(--surface0);
+  border-radius: 9px;
+  background: rgba(17, 17, 27, .35);
+}
+
+.launcher-advanced > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 13px;
+  border-radius: 8px;
+  color: var(--subtext1);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+
+.launcher-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* A disclosure with no affordance reads as a heading, so the caret is drawn
+   rather than inherited from the UA. */
+.launcher-advanced > summary::before {
+  content: "▸";
+  color: var(--subtext0);
+  font-size: 10px;
+  transition: transform .16s ease;
+}
+
+.launcher-advanced[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.launcher-advanced > summary:hover,
+.launcher-advanced > summary:focus-visible {
+  color: var(--text);
+}
+
+.launcher-advanced-hint {
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--subtext0);
+  font-size: 10px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.launcher-advanced-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 13px 15px;
+  padding: 4px 13px 14px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--subtext1);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.field > span em {
+  color: var(--subtext0);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 450;
+}
+
+.field-wide {
+  grid-column: 1 / -1;
+}
+
+.field input, .field select, .field textarea, .preset-save input {
+  width: 100%;
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  outline: 0;
+  padding: 8px 9px;
+  color: var(--text);
+  background: #1e1e2e;
+  font-size: 11px;
+}
+
+.field textarea {
+  resize: vertical;
+  min-height: 58px;
+}
+
+.field input:focus, .field select:focus, .field textarea:focus, .preset-save input:focus {
+  border-color: var(--mauve);
+  box-shadow: 0 0 0 2px rgba(203, 166, 247, .1);
+}
+
+.field-hidden {
+  display: none;
+}
+
+.input-with-button {
+  display: flex;
+  gap: 6px;
+}
+
+.input-with-button input {
+  flex: 1;
+}
+
+.check-field {
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  padding-top: 22px;
+}
+
+.check-field input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--mauve);
+}
+
+.check-field span {
+  font-size: 11px;
+}
+
+.capability-note {
+  margin-top: -4px;
+  color: var(--yellow);
+  font-size: 10px;
+  font-weight: 450;
+  line-height: 1.45;
+}
+
+.field input[aria-invalid="true"] {
+  border-color: var(--red);
+  box-shadow: 0 0 0 2px rgba(243, 139, 168, .16);
+}
+
+.field-error {
+  color: var(--red);
+  font-size: 10px;
+  font-weight: 550;
+  line-height: 1.4;
+}
+
+.preview-card {
+  margin: 0 26px 18px;
+  padding: 11px 12px 12px;
+  border: 1px solid var(--surface0);
+  border-radius: 7px;
+  background: #1e1e2e;
+}
+
+.preview-label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.preview-label > span:last-child {
+  color: var(--subtext0);
+  font-size: 9px;
+}
+
+.preview-card code {
+  display: block;
+  overflow: auto;
+  color: var(--teal);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.dialog-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 15px 26px 19px;
+  border-top: 1px solid var(--surface0);
+}
+
+.dialog-actions-right, .preset-save {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.preset-save input {
+  width: 140px;
+  padding: 7px 8px;
+}
+
+.toast-region {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toast {
+  max-width: 360px;
+  padding: 11px 13px;
+  border: 1px solid rgba(88, 91, 112, .45);
+  border-radius: 7px;
+  opacity: 0;
+  transform: translateY(8px);
+  color: var(--text);
+  background: #1e1e2e;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .3);
+  font-size: 11px;
+  transition: opacity .2s ease, transform .2s ease;
+}
+
+.toast-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.toast-success {
+  border-color: rgba(166, 227, 161, .4);
+}
+
+.toast-error {
+  border-color: rgba(243, 139, 168, .4);
+}
+
+.toast-attention {
+  border-color: rgba(250, 179, 135, .4);
+  cursor: pointer;
+  text-align: left;
+}
+
+.store-quarantine-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 18px 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(243, 139, 168, .5);
+  border-radius: 7px;
+  color: var(--subtext1);
+  background: rgba(243, 139, 168, .1);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.store-quarantine-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.store-quarantine-copy strong {
+  color: var(--red);
+  font-size: 11px;
+}
+
+.store-quarantine-copy span {
+  overflow-wrap: anywhere;
+}
+
+.store-quarantine-banner .button {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  color: var(--subtext1);
+}
+
+.view-hidden {
+  display: none !important;
+}
+
+/* An author `display` declaration outranks the UA sheet's `[hidden]` rule, so
+   every `display: grid`/`flex` block below would stay visible with the attribute
+   set. The wide-meta and reply blocks rely on it. */
+[hidden] {
+  display: none !important;
+}
+
+.logs-host {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 22px 24px;
+  scrollbar-color: var(--surface1) transparent;
+}
+
+.logs-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 760px;
+  margin: 0 auto 16px;
+}
+
+.logs-heading h2 {
+  margin: 6px 0 3px;
+  color: var(--text);
+  font-size: 18px;
+  letter-spacing: -.03em;
+}
+
+.logs-heading p {
+  margin: 0;
+  color: var(--subtext0);
+  font-size: 10px;
+}
+
+.logs-list {
+  display: grid;
+  gap: 7px;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0;
+  list-style: none;
+}
+
+.log-event {
+  padding: 9px 11px;
+  border: 1px solid var(--surface0);
+  border-radius: 6px;
+  background: rgba(30, 30, 46, .68);
+}
+
+.log-event-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--subtext0);
+  font-size: 9px;
+}
+
+.log-event-heading b {
+  color: var(--sapphire);
+  font-size: 9px;
+}
+
+.log-event-heading time {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.log-event p {
+  margin: 5px 0 0;
+  color: var(--text);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.log-event-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  margin-top: 5px;
+  color: var(--subtext0);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 9px;
+}
+
+.logs-empty {
+  display: grid;
+  min-height: 120px;
+  place-items: center;
+  color: var(--subtext0);
+  font-size: 11px;
+  text-align: center;
+}
+
+.diagnostics-host {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 22px 24px;
+  scrollbar-color: var(--surface1) transparent;
+}
+
+.diagnostics-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 760px;
+  margin: 0 auto 16px;
+}
+
+.diagnostics-heading h2 {
+  margin: 6px 0 3px;
+  color: var(--text);
+  font-size: 18px;
+  letter-spacing: -.03em;
+}
+
+.diagnostics-heading p {
+  margin: 0;
+  overflow: hidden;
+  color: var(--subtext0);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostics-heading > .status-glyph {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  font-size: 17px;
+}
+
+.diagnostics-current {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 9px;
+  max-width: 760px;
+  margin: 0 auto 18px;
+  padding: 11px 13px;
+  border: 1px solid var(--surface0);
+  border-radius: 7px;
+  color: var(--subtext0);
+  background: rgba(30, 30, 46, .72);
+  font-size: 10px;
+}
+
+.diagnostics-current b {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.diagnostics-current span:last-child {
+  color: var(--subtext0);
+}
+
+.diagnostics-timeline {
+  display: grid;
+  gap: 0;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0;
+  list-style: none;
+}
+
+.diagnostic-event {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  gap: 11px;
+  position: relative;
+  padding-bottom: 16px;
+}
+
+.diagnostic-event:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  top: 29px;
+  bottom: 0;
+  left: 13px;
+  border-left: 1px solid var(--surface1);
+}
+
+.diagnostic-event-glyph {
+  z-index: 1;
+  width: 27px;
+  height: 27px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.diagnostic-event-body {
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.diagnostic-event-body > div {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.diagnostic-event-body b {
+  color: var(--subtext1);
+  font-size: 11px;
+}
+
+.diagnostic-event-body span {
+  color: var(--subtext0);
+  font-size: 10px;
+}
+
+.diagnostic-event-body small {
+  display: block;
+  margin-top: 4px;
+  color: var(--sapphire);
+  font-size: 9px;
+}
+
+.diagnostic-event-body p {
+  margin: 5px 0 0;
+  color: var(--subtext0);
+  font-size: 10px;
+}
+
+.diagnostics-empty {
+  display: grid;
+  min-height: 120px;
+  place-items: center;
+  color: var(--subtext0);
+  font-size: 11px;
+  text-align: center;
+}
+
+.review-view {
+  height: calc(100% - 54px);
+  overflow: auto;
+  padding: 12px 18px 18px;
+  scrollbar-color: var(--surface1) transparent;
+}
+
+.diagnostics-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diagnostics-heading-actions .button {
+  padding: 5px 8px;
+  font-size: 9px;
+}
+
+.diagnostics-heading-actions > .status-glyph {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  font-size: 17px;
+}
+
+.preflight-view {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 22px 24px;
+  scrollbar-color: var(--surface1) transparent;
+}
+
+.preflight-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 780px;
+  margin: 0 auto 17px;
+}
+
+.preflight-heading h2 {
+  margin: 6px 0 3px;
+  color: var(--text);
+  font-size: 18px;
+  letter-spacing: -.03em;
+}
+
+.preflight-heading p {
+  margin: 0;
+  color: var(--subtext0);
+  font-size: 10px;
+}
+
+.preflight-list {
+  display: grid;
+  gap: 8px;
+  max-width: 780px;
+  margin: 0 auto;
+}
+
+.preflight-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--surface0);
+  border-radius: 7px;
+  background: rgba(30, 30, 46, .68);
+}
+
+.preflight-copy {
+  min-width: 0;
+}
+
+.preflight-copy > div {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.preflight-copy b {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.preflight-copy span {
+  color: var(--subtext0);
+  font-size: 9px;
+}
+
+.preflight-copy strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 4px;
+  color: var(--subtext1);
+  font-size: 10px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preflight-copy small {
+  display: block;
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--subtext0);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preflight-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.preflight-actions .button {
+  padding: 5px 8px;
+  font-size: 9px;
+}
+
+.preflight-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 780px;
+  margin: 18px auto 0;
+  color: var(--subtext0);
+  font-size: 9px;
+}
+
+.preflight-footer .button {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  font-size: 9px;
+}
+
+.review-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 30px;
+  margin-bottom: 8px;
+}
+
+/* The per-landing opt-in. Sits with the toolbar's controls, not with its
+   summary text, so it reads as an action's setting rather than as status. */
+.review-archive-opt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--subtext1);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.review-toolbar > span:nth-child(2) {
+  flex: 1;
+  color: var(--subtext0);
+  font-size: 10px;
+}
+
+.review-list {
+  display: grid;
+  gap: 9px;
+}
+
+.review-empty {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  color: var(--subtext0);
+  font-size: 12px;
+}
+
+.review-entry {
+  padding: 13px 14px 14px;
+  border: 1px solid var(--surface0);
+  border-radius: 8px;
+  background: rgba(30, 30, 46, .68);
+}
+
+.review-entry-reviewed {
+  border-color: rgba(166, 227, 161, .18);
+}
+
+.review-entry-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.review-entry h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 680;
+}
+
+.review-repo {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+  color: var(--subtext0);
+  font-size: 10px;
+}
+
+.review-repo code {
+  color: var(--subtext0);
+  font-family: "Cascadia Code", Consolas, monospace;
+}
+
+.review-entry-action {
+  flex: 0 0 auto;
+}
+
+.review-mark {
+  padding: 6px 9px;
+  font-size: 10px;
+}
+
+.reviewed-label {
+  color: var(--green);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.review-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 11px;
+  margin-top: 10px;
+  color: var(--subtext0);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.review-metrics b {
+  color: var(--text);
+}
+
+.review-additions {
+  color: var(--green);
+}
+
+.review-deletions {
+  color: var(--red);
+}
+
+.review-state {
+  color: var(--mauve);
+  font-weight: 650;
+}
+
+.review-entry-reviewed .review-state {
+  color: var(--green);
+}
+
+.review-entry-timeout .review-state {
+  color: var(--red);
+}
+
+.review-conflict {
+  display: grid;
+  gap: 5px;
+  margin-top: 11px;
+  padding: 9px 10px;
+  border-left: 3px solid var(--peach);
+  color: var(--subtext1);
+  background: rgba(250, 179, 135, .08);
+  font-size: 10px;
+}
+
+.review-conflict strong {
+  color: var(--peach);
+  font-size: 11px;
+}
+
+.review-conflict ul {
+  margin: 2px 0 0;
+  padding-left: 20px;
+}
+
+.review-conflict code {
+  color: var(--yellow);
+  font-family: "Cascadia Code", Consolas, monospace;
+}
+
+.review-error {
+  margin-top: 11px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--red);
+  color: var(--red);
+  background: rgba(243, 139, 168, .08);
+  font-size: 10px;
+}
+
+.review-no-diff {
+  margin-top: 11px;
+  color: var(--subtext0);
+  font-size: 10px;
+}
+
+.review-diff {
+  margin-top: 11px;
+  border-top: 1px solid rgba(88, 91, 112, .28);
+}
+
+.review-diff summary {
+  padding-top: 9px;
+  color: var(--sapphire);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.review-diff pre {
+  max-height: 390px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 10px;
+  border: 1px solid rgba(88, 91, 112, .3);
+  border-radius: 5px;
+  color: var(--subtext1);
+  background: #181825;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1180px) {
+  .workspace {
+    grid-template-columns: minmax(480px, 49%) 1fr;
+  }
+  .row-folder .row-status-label {
+    display: inline;
+  }
+  .row-folder {
+    gap: 5px;
+  }
+  .row-model {
+    gap: 3px;
+  }
+  .model-name {
+    max-width: 58px;
+  }
+  .column-labels, .fleet-row {
+    grid-template-columns: minmax(190px, 1fr) minmax(105px, .52fr) minmax(96px, .6fr) 78px;
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.state-chip > span:last-child {
+  color: var(--text);
+}
+
+.tone-surface2, .tone-overlay0 {
+  color: var(--subtext1);
+}
+
+.status-glyph, .state-chip-glyph, .diagnostic-event-glyph {
+  color: var(--text);
+}
+
+:where(button, input, select, textarea, [tabindex="0"]):focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+  }
+  .button:hover {
+    transform: none;
+  }
+  .fleet-loading::before {
+    animation: none !important;
+  }
+  .unread-dot, .pulse-peach, .pulse-yellow, .pulse-mauve, .pulse-red {
+    box-shadow: none !important;
+  }
+}

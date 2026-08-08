@@ -3,10 +3,11 @@ import { readFileSync } from "node:fs";
 import { registrySource } from "./registrySource.mjs";
 import test from "node:test";
 import { appSource } from "./appSource.mjs";
+import { cssSource } from "./cssSource.mjs";
 
 const main = appSource();
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+const css = cssSource();
 const registry = registrySource();
 
 test("pinned panes render from Rust grids, not from more xterm instances", () => {

@@ -4,6 +4,7 @@ import test from "node:test";
 
 import { FluentBundle, FluentResource } from "@fluent/bundle";
 import { appSource } from "./appSource.mjs";
+import { cssSource } from "./cssSource.mjs";
 
 const catalogSource = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 const i18n = readFileSync(new URL("../src/i18n.js", import.meta.url), "utf8");
@@ -86,7 +87,7 @@ test("every non-explained catalog message has a renderer reference", () => {
 });
 
 test("compact rows keep localized status words out of the fixed-height line", () => {
-  const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+  const css = cssSource();
   assert.match(css, /\.fleet-row \{[^}]*min-height: 28px/);
   assert.match(css, /\.row-folder \.row-status-label[^}]*display: none/);
   // The status word lives in a tooltip on the compact row, carrying the reason

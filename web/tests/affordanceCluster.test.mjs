@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { appSource } from "./appSource.mjs";
+import { cssSource } from "./cssSource.mjs";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const main = appSource();
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
-const styles = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+const styles = cssSource();
 
 test("the Wide control changes its tooltip with the action it will take", () => {
   const render = main.slice(main.indexOf("function renderRows"), main.indexOf("\nfunction renderSnapshotLoading"));

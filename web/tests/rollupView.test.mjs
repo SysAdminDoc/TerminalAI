@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { appSource } from "./appSource.mjs";
+import { cssSource } from "./cssSource.mjs";
 
 const main = appSource();
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
-const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+const css = cssSource();
 
 const renderRollup = (() => {
   const start = main.indexOf("function renderRollup()");
