@@ -51,13 +51,6 @@ item above; where the two touch, the note says so.
 
 ### P2
 
-- [ ] P3 — Show agent-reported progress on the taskbar
-  Why: the overlay-icon half of the taskbar integration already ships; the progress half is missing its input, and an addon that decodes it exists.
-  Evidence: `update_taskbar_waiting_count` (`crates/terminalai-app/src/main.rs:1682`) sets an overlay icon only. `@xterm/addon-progress` 0.2.0 parses ConEmu's `OSC 9;4` progress sequence, new in the xterm 6.0 cycle (https://github.com/xtermjs/xterm.js/releases); `ITaskbarList3::SetProgressValue` is the sink.
-  Touches: `web/package.json`, `web/src/main.js`, `crates/terminalai-app/src/main.rs`, `web/tests/rendererCapabilities.test.mjs`
-  Acceptance: an agent emitting `OSC 9;4` drives a taskbar progress bar; agents that emit nothing leave it absent rather than showing a fabricated value.
-  Complexity: M
-
 - [ ] P3 — Scheduled work runs
   Why: the work queue already runs one stored prompt across many projects on demand; running it on a schedule is the natural extension, and it is the one automation feature the larger field ships that fits this tool's shape.
   Evidence: `crates/terminalai-core/src/work_queue.rs` and `crates/terminalai-app/src/work.rs` implement the on-demand run including dirty-tree refusal and restart survival. superset ships Automations for exactly this — https://docs.superset.sh/automations

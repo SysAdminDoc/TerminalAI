@@ -320,6 +320,13 @@ impl SessionRegistry {
             );
             entry.pty = None;
             entry.generation = entry.generation.saturating_add(1);
+            // The process that was reporting progress is gone, so its last
+            // reading describes nothing. A bar left at 60% on a dead row keeps
+            // claiming work is under way. The scanner goes with it: a sequence
+            // this process left half-read must not splice onto the first bytes
+            // of whatever restarts here.
+            entry.session.task_progress = None;
+            entry.progress.reset();
             let now = SystemTime::now();
             let restart = if entry.stop_requested {
                 entry.stop_requested = false;
@@ -817,6 +824,7 @@ mod tests {
                     pty: None,
                     scrollback: RingBuffer::default(),
                     grid: TerminalGrid::default(),
+                    progress: Default::default(),
                     queue: crate::queue::PromptQueue::default(),
                     generation: 1,
                     stop_requested: false,
@@ -838,6 +846,7 @@ mod tests {
                     pty: None,
                     scrollback: RingBuffer::default(),
                     grid: TerminalGrid::default(),
+                    progress: Default::default(),
                     queue: crate::queue::PromptQueue::default(),
                     generation: 1,
                     stop_requested: false,
@@ -897,6 +906,7 @@ mod tests {
                         pty: None,
                         scrollback: RingBuffer::default(),
                         grid: TerminalGrid::default(),
+                        progress: Default::default(),
                         queue: crate::queue::PromptQueue::default(),
                         generation: 1,
                         stop_requested: false,

@@ -24,6 +24,17 @@ pub(super) fn handle_output(inner: &Arc<Inner>, id: &SessionId, generation: u64,
         }
         entry.scrollback.push(bytes);
         entry.grid.advance(bytes);
+        // Progress the agent reports about itself. Read here rather than in the
+        // focused pane's renderer, which exists once for a fleet of thirty.
+        match entry.progress.advance(bytes) {
+            Some(crate::progress::ProgressReport::Set(progress)) => {
+                entry.session.task_progress = Some(progress);
+            }
+            Some(crate::progress::ProgressReport::Cleared) => {
+                entry.session.task_progress = None;
+            }
+            None => {}
+        }
         // Any byte at all is evidence the process is alive, whether or not it
         // moves the status. A session can hold `Working` for an hour while
         // printing a build log the whole way, and nothing else on this path
@@ -346,6 +357,65 @@ mod tests {
         assert!(
             grid.lines.iter().any(|line| line.contains("before the restart")),
             "the grid was not replayed"
+        );
+    }
+
+    #[test]
+    fn progress_the_agent_reported_reaches_its_row() {
+        // Every session's bytes pass through here, which is why the sequence is
+        // decoded in the core rather than in the one focused renderer: a fleet
+        // of thirty has one xterm between them.
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        insert_session(&registry, &id, SessionStatus::Working);
+        assert_eq!(
+            registry.snapshot()[0].task_progress,
+            None,
+            "a session that has said nothing has no progress"
+        );
+
+        feed(&registry, &id, b"building\x1b]9;4;1;40\x07");
+        assert_eq!(
+            registry.snapshot()[0].task_progress,
+            Some(crate::progress::TaskProgress::Value { percent: 40 })
+        );
+
+        // Split across two reads, which is how a pty actually delivers it.
+        feed(&registry, &id, b"\x1b]9;4;1");
+        feed(&registry, &id, b";85\x07");
+        assert_eq!(
+            registry.snapshot()[0].task_progress,
+            Some(crate::progress::TaskProgress::Value { percent: 85 })
+        );
+
+        feed(&registry, &id, b"\x1b]9;4;0\x07");
+        assert_eq!(
+            registry.snapshot()[0].task_progress,
+            None,
+            "a withdrawn report must clear the row, not freeze it at the last value"
+        );
+    }
+
+    #[test]
+    fn a_dead_session_stops_claiming_progress() {
+        // A bar left at 60% on a row whose process is gone goes on saying work
+        // is under way, and nothing else ever comes to correct it.
+        let registry = SessionRegistry::new();
+        let id = SessionId::new(1);
+        insert_session(&registry, &id, SessionStatus::Working);
+        feed(&registry, &id, b"\x1b]9;4;1;60\x07");
+        assert!(registry.snapshot()[0].task_progress.is_some());
+
+        let generation = lock_state(&registry.inner)
+            .entries
+            .get(&id)
+            .map(|entry| entry.generation)
+            .expect("entry");
+        registry.mark_process_exit(&id, generation, Some(0));
+        assert_eq!(
+            registry.snapshot()[0].task_progress,
+            None,
+            "an exited session kept the progress its dead process had reported"
         );
     }
 

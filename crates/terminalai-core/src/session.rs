@@ -360,6 +360,12 @@ pub struct Session {
     /// Optional countable tool-plan progress for the fleet row.
     #[serde(default)]
     pub tool_progress: Option<ToolProgress>,
+    /// What the agent last said about its own completion, read from `OSC 9;4`
+    /// in its output. Distinct from `tool_progress`, which counts a plan the
+    /// agent published through a hook: this one is a share of the whole task
+    /// and only agents that emit the sequence have it at all.
+    #[serde(default)]
+    pub task_progress: Option<crate::progress::TaskProgress>,
     /// Native session id, once the agent reports one. Enables resume and fork.
     pub resume_id: Option<String>,
     pub started_at: SystemTime,
@@ -480,6 +486,7 @@ impl Session {
             pid: None,
             last_line: String::new(),
             tool_progress: None,
+            task_progress: None,
             resume_id: None,
             started_at: now,
             status_since: now,

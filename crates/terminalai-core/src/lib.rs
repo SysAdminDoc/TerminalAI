@@ -32,6 +32,7 @@ pub mod manifest;
 pub mod mcp;
 pub mod notification;
 pub(crate) mod process_tree;
+pub mod progress;
 pub mod project;
 pub mod pty;
 pub mod queue;
@@ -96,6 +97,9 @@ pub use registry::{
     AdmissionConfig, AdmissionSnapshot, BroadcastRefusal, BroadcastResult, RegistryError,
     RegistryEvent, SessionRegistry,
     DEFAULT_MAX_LIVE_SESSIONS, DEFAULT_SESSION_BUDGET_USD,
+};
+pub use progress::{
+    fleet_progress, FleetProgress, ProgressReport, ProgressScanner, ProgressStatus, TaskProgress,
 };
 pub use review::{collect_review, ReviewItem, MAX_REVIEW_DIFF_BYTES, REVIEW_REPOSITORY_TIMEOUT};
 pub use session::{

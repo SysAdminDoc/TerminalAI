@@ -7,6 +7,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 
 ### Added
 
+- Agents that say how far along they are now drive the taskbar progress bar. The report is ConEmu's
+  `OSC 9;4` sequence, which Windows Terminal and the xterm.js progress addon also understand, and it
+  is decoded **in the core** rather than in the focused pane's renderer — there is one renderer and
+  the fleet is thirty rows deep, so decoding it there would have given progress only to whichever
+  session the operator happened to be looking at. Every session's bytes already pass through this
+  process on their way to the ring and the grid.
+
+  The scanner is stateful because a pty hands over whatever bytes were ready, so the sequence
+  routinely arrives torn across two reads — including its terminator. Its buffer is capped, because
+  an OSC string with no terminator otherwise grows for as long as the session lives. A malformed or
+  unknown report is not a report: nothing is invented, and a session that never emits the sequence
+  has no progress at all rather than a bar sitting at zero. A dead process stops claiming progress —
+  a bar left at 60% on an exited row goes on saying work is under way, and nothing arrives to
+  correct it.
+
+  The window has one bar and a fleet has as many answers as it has agents, so the rule says what
+  happens when they disagree: one reporter is shown exactly as it reported, several go
+  indeterminate rather than being averaged into a number no agent said, and an error anywhere
+  outranks both.
+
 - The daemon's control plane is tested arm by arm. A coverage run on 2026-08-04 named
   `terminalai-daemon/src/lib.rs` (58.31% of lines) and `logging.rs` (31.29%) as the two modules
   whose figures were not explained by being entry points; re-running it named the reason, which was

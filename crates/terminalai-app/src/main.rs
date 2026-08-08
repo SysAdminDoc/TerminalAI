@@ -10,7 +10,7 @@ mod workingset;
 
 use terminalai_core::work_queue::{EntryState, WorkQueue};
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::RecvTimeoutError;
@@ -26,8 +26,9 @@ use tauri::{Emitter, Manager, State};
 use terminalai_core::agent::Agent;
 use terminalai_core::launch::LaunchSpec;
 use terminalai_core::{
-    parse_hook_in, AdmissionSnapshot, AgentCapabilities, HookTransport, LogEntry, RegistryEvent,
-    ReviewItem, Session, SessionId, SessionStatus, MAX_LOG_ENTRIES,
+    fleet_progress, parse_hook_in, AdmissionSnapshot, AgentCapabilities, FleetProgress,
+    HookTransport, LogEntry, ProgressStatus, RegistryEvent, ReviewItem, Session, SessionId,
+    SessionStatus, TaskProgress, MAX_LOG_ENTRIES,
 };
 use terminalai_daemon::{
     DaemonClient, HookEndpoint, IpcError, Request, Response, PROTOCOL_VERSION,
@@ -1917,14 +1918,16 @@ fn bridge_daemon_events(
     work_run_store: work::WorkRunStore,
     prompts: work::PromptLibrary,
 ) {
-    let initial_waiting = client
+    let initial_sessions = client
         .call_with_timeout(Request::Snapshot, Duration::from_secs(2))
         .ok()
         .and_then(|response| match response {
-            Response::Snapshot { sessions, .. } => Some(waiting_sessions(&sessions)),
+            Response::Snapshot { sessions, .. } => Some(sessions),
             _ => None,
         })
         .unwrap_or_default();
+    let initial_waiting = waiting_sessions(&initial_sessions);
+    let initial_progress = reporting_progress(&initial_sessions);
     let receiver = client.events();
     let app = app.clone();
     let work_run_client = client.clone();
@@ -1937,6 +1940,9 @@ fn bridge_daemon_events(
         .spawn(move || {
             let mut waiting = initial_waiting;
             let mut rendered_waiting = None;
+            // What each session last said about its own completion, and what
+            // that adds up to on the one bar the window has.
+            let mut progress = initial_progress;
             // Which sessions already have a toast out. Keyed by id and status so
             // a session that moves from one attention state to another toasts
             // again, while repeated hook deliveries for the same state do not.
@@ -1945,6 +1951,8 @@ fn bridge_daemon_events(
             // Reported once rather than on every attention event.
             let mut toast_failed = false;
             update_taskbar_waiting_count(&app, waiting.len());
+            let mut rendered_progress = fleet_progress(progress.values().copied());
+            update_taskbar_progress(&app, rendered_progress);
             let mut pending_logs = VecDeque::<LogEntry>::new();
             let mut next_output_flush = Instant::now() + OUTPUT_BATCH_INTERVAL;
             let mut next_log_flush = Instant::now() + LOG_BATCH_INTERVAL;
@@ -1988,6 +1996,14 @@ fn bridge_daemon_events(
                                 } else {
                                     waiting.remove(&session.id);
                                 }
+                                match session.task_progress {
+                                    Some(reported) => {
+                                        progress.insert(session.id.clone(), reported);
+                                    }
+                                    None => {
+                                        progress.remove(&session.id);
+                                    }
+                                }
                                 maybe_toast(
                                     session,
                                     &mut toasted,
@@ -2007,6 +2023,7 @@ fn bridge_daemon_events(
                                     );
                                 }
                                 waiting.remove(id);
+                                progress.remove(id);
                                 toasted.remove(id);
                             }
                             _ => {}
@@ -2014,6 +2031,14 @@ fn bridge_daemon_events(
                         if rendered_waiting != Some(waiting.len()) {
                             update_taskbar_waiting_count(&app, waiting.len());
                             rendered_waiting = Some(waiting.len());
+                        }
+                        // Recomputed per event but only sent when it changed:
+                        // an agent reporting 40% twice must not cost a window
+                        // call, and a chatty fleet emits these continuously.
+                        let fleet = fleet_progress(progress.values().copied());
+                        if rendered_progress != fleet {
+                            update_taskbar_progress(&app, fleet);
+                            rendered_progress = fleet;
                         }
                         flush_output_batches(&output_channels);
                         next_output_flush = Instant::now() + OUTPUT_BATCH_INTERVAL;
@@ -2121,6 +2146,45 @@ fn waiting_sessions(sessions: &[Session]) -> HashSet<SessionId> {
         .filter(|session| is_waiting_session(session))
         .map(|session| session.id.clone())
         .collect()
+}
+
+/// Which sessions are reporting how far along they are, keyed so the fleet rule
+/// sees them in a stable order.
+fn reporting_progress(sessions: &[Session]) -> BTreeMap<SessionId, TaskProgress> {
+    sessions
+        .iter()
+        .filter_map(|session| Some((session.id.clone(), session.task_progress?)))
+        .collect()
+}
+
+/// Put the fleet's progress on the taskbar, or take the bar away.
+///
+/// The window has one bar; `fleet_progress` decides what it can honestly say
+/// when several agents are reporting. Nothing here invents a value: a fleet
+/// where no agent emits `OSC 9;4` shows no bar at all, which is the state the
+/// taskbar is in before this ever runs.
+fn update_taskbar_progress(app: &tauri::AppHandle, progress: Option<FleetProgress>) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let state = match progress {
+        None => tauri::window::ProgressBarState {
+            status: Some(tauri::window::ProgressBarStatus::None),
+            progress: None,
+        },
+        Some(progress) => tauri::window::ProgressBarState {
+            status: Some(match progress.status {
+                ProgressStatus::Normal => tauri::window::ProgressBarStatus::Normal,
+                ProgressStatus::Error => tauri::window::ProgressBarStatus::Error,
+                ProgressStatus::Paused => tauri::window::ProgressBarStatus::Paused,
+                ProgressStatus::Indeterminate => tauri::window::ProgressBarStatus::Indeterminate,
+            }),
+            progress: progress.percent.map(u64::from),
+        },
+    };
+    if let Err(error) = window.set_progress_bar(state) {
+        eprintln!("could not update the taskbar progress bar: {error}");
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -2617,5 +2681,31 @@ mod tests {
         assert!(!cleaned.contains("\"type\": \"http\""));
         assert!(cleaned.contains(terminalai_core::MANAGED_MARKER));
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn only_sessions_that_reported_progress_reach_the_taskbar() {
+        // The taskbar is fed from the rows themselves, so a fleet where no
+        // agent emits the sequence has to produce no bar rather than a bar at
+        // zero -- which would read as "started and got nowhere".
+        let spec = terminalai_core::launch::spec_for(Agent::Claude, Path::new("."));
+        let quiet = Session::new(SessionId::new(1), &spec);
+        let mut reporting = Session::new(SessionId::new(2), &spec);
+        reporting.task_progress = Some(TaskProgress::Value { percent: 55 });
+
+        let reported = reporting_progress(&[quiet.clone(), reporting]);
+        assert_eq!(reported.len(), 1, "a silent session claimed progress");
+        assert_eq!(
+            fleet_progress(reported.values().copied()),
+            Some(FleetProgress {
+                status: ProgressStatus::Normal,
+                percent: Some(55),
+            })
+        );
+        assert_eq!(
+            fleet_progress(reporting_progress(&[quiet]).values().copied()),
+            None,
+            "a fleet that reported nothing produced a bar"
+        );
     }
 }
