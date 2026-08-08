@@ -36,6 +36,12 @@ export function createWorkspacePages(deps) {
     refreshWorkRun,
     refreshWorkSchedule,
     showToast,
+    pendingApprovals,
+    renderApprovals,
+    requestLine,
+    waitingSince,
+    relativeDwell,
+    systemTimeMs,
   } = deps;
 
 function renderProjects() {
@@ -406,6 +412,8 @@ async function openProjects() {
 
   return {
     renderProjects,
+    openApprovals,
+    renderApprovalInbox,
     openWorkingSets,
     refreshWorkingSets,
     restoreWorkingSet,

@@ -32,6 +32,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); version
 - Extracted daemon event fan-out, buffered output delivery, taskbar progress and waiting badges,
   toast activation, and scheduled-work polling into `crates/terminalai-app/src/events.rs`, leaving
   the Tauri entry module responsible for startup and command registration.
+- Moved the browser event coordinator into `web/src/eventBindings.js`, made workspace-page handlers
+  explicit at their factory boundary, and covered the returned approval/project handlers with a
+  module-level test.
 
 ## [0.23.0] — 2026-08-08
 
