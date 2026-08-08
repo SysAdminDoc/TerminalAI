@@ -89,13 +89,6 @@ where an item depends on another in this section, its Why says which.
 
 ### P1
 
-- [ ] P1 — Re-verify against Claude Code 2.1.226 and land the two version-gated items
-  Why: both items in `Roadmap_Blocked.md` were blocked on flags that postdated the installed CLI, and the versions that carry them are now published — so the blocker is an upgrade decision rather than an absence.
-  Evidence: https://registry.npmjs.org/@anthropic-ai/claude-code/latest reports **2.1.226** (checked 2026-08-08); this machine runs 2.1.170. `--ax-screen-reader` appears in the changelog at 2.1.208 and is documented from 2.1.181; `--autocompact <auto|tokens>` at 2.1.221. Cross-reference rather than duplicate: "Tell the agent when the operator is using a screen reader" and "Let the operator set the compaction threshold the row now displays" already exist in `Roadmap_Blocked.md` — move them back, do not re-file them.
-  Touches: `Roadmap_Blocked.md`, `crates/terminalai-core/tests/fixtures/launch/` (a fixture for the new version). The two moved items carry their own Touches; do not restate them here.
-  Acceptance: the operator has upgraded (their call — do not upgrade the CLI they are running mid-session), `terminalai-probe verify-goldens` passes against the new version, a golden fixture for it exists beside the 2.1.170 one, and the two blocked entries are moved into this file unchanged apart from their blocker note. The compaction item is re-read first: it models itself on `max_budget_usd`, which the P0 above removes or relabels, and `--autocompact` needs its own mode check before it is mapped.
-  Complexity: M
-
 - [ ] P1 — Say how many agents a row really is
   Why: since agent teams, one supervised session can be a lead plus N separate Claude Code instances, and the fleet shows it as one row with one status — the density thesis only holds if a row's cost is legible.
   Evidence: https://code.claude.com/docs/en/agent-teams — the team config lives at `~/.claude/teams/{team-name}/config.json` with a `members` array of name and agent id, the team name is `session-` plus the first eight characters of the session id, and the directory is removed when the session ends. The id to derive the path from is `spec.session_id` (`crates/terminalai-core/src/launch.rs:243`), which this tool assigns at launch — not `session.resume_id`, which is populated later from an ingested hook (`registry/ingest.rs:187`) and is absent until the session reports one. `SubagentStart`/`SubagentStop` are already managed (`hook_config.rs`) but only flip Working/Thinking (`registry/ingest.rs:242`, `:250`). No competitor surveyed reports team composition per session.

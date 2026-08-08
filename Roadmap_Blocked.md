@@ -1,5 +1,34 @@
 # Blocked roadmap items
 
+## Upgrade Claude Code and land the two version-gated items
+
+Blocked 2026-08-08 on an operator decision, not on an absence. Both version-gated items below were
+blocked because their flags postdated the installed CLI, and the versions that carry them are now
+published: `https://registry.npmjs.org/@anthropic-ai/claude-code/latest` reported **2.1.226** on
+2026-08-08, while this machine runs 2.1.170. `--ax-screen-reader` is documented from 2.1.181 and
+`--autocompact <auto|tokens>` arrived in 2.1.221.
+
+What cannot be done here is the upgrade itself. Claude Code is the tool the operator is running,
+and replacing it underneath a live session is not a drain's call to make — the item said so when it
+was filed and it is still true.
+
+What closes it: the operator upgrades, then `terminalai-probe verify-goldens` is run against the new
+version (it is claim 5 of `scripts/verify-release-metadata.ps1` as of 2026-08-08, so a release run
+does it), a golden fixture for the new version is added beside `claude-code-2.1.170.json`, and the
+two items below move back into `ROADMAP.md` unchanged apart from their blocker notes. Read the
+compaction item's corrected evidence line first: the shape it told itself to mirror was removed, and
+`--autocompact` needs its own mode check before it is mapped — the same check that caught
+`--fallback-model`.
+
+Original item:
+
+- [ ] P1 — Re-verify against Claude Code 2.1.226 and land the two version-gated items
+  Why: both items in `Roadmap_Blocked.md` were blocked on flags that postdated the installed CLI, and the versions that carry them are now published — so the blocker is an upgrade decision rather than an absence.
+  Evidence: https://registry.npmjs.org/@anthropic-ai/claude-code/latest reports **2.1.226** (checked 2026-08-08); this machine runs 2.1.170. `--ax-screen-reader` appears in the changelog at 2.1.208 and is documented from 2.1.181; `--autocompact <auto|tokens>` at 2.1.221. Cross-reference rather than duplicate: "Tell the agent when the operator is using a screen reader" and "Let the operator set the compaction threshold the row now displays" already exist in `Roadmap_Blocked.md` — move them back, do not re-file them.
+  Touches: `Roadmap_Blocked.md`, `crates/terminalai-core/tests/fixtures/launch/` (a fixture for the new version). The two moved items carry their own Touches; do not restate them here.
+  Acceptance: the operator has upgraded (their call — do not upgrade the CLI they are running mid-session), `terminalai-probe verify-goldens` passes against the new version, a golden fixture for it exists beside the 2.1.170 one, and the two blocked entries are moved into this file unchanged apart from their blocker note. The compaction item is re-read first: it models itself on `max_budget_usd`, which the P0 above removes or relabels, and `--autocompact` needs its own mode check before it is mapped.
+  Complexity: M
+
 ## Let the operator set the compaction threshold
 
 Blocked 2026-08-07: same cause as the screen-reader item — the flag postdates the Claude Code
@@ -25,7 +54,7 @@ Original item:
 
 - [ ] P3 — Let the operator set the compaction threshold the row now displays
   Why: the context reading landed 2026-08-07, so the fleet reports how full a window is but cannot influence when the agent acts on it — and both agents take the threshold as a launch-time input this launcher does not map.
-  Evidence: Claude Code added `--autocompact <auto|tokens>` in v2.1.221 and the `CLAUDE_CODE_AUTO_COMPACT_WINDOW` variable (100000–1000000 tokens); Codex exposes `model_auto_compact_token_limit`. `LaunchSpec` (`crates/terminalai-core/src/launch.rs:203`) maps neither; `max_budget_usd` is the shape to mirror — an existing optional numeric that is Claude-only in the same way. `web/src/contextPressure.js` already has the cell that would show the threshold beside the usage.
+  Evidence: Claude Code added `--autocompact <auto|tokens>` in v2.1.221 and the `CLAUDE_CODE_AUTO_COMPACT_WINDOW` variable (100000–1000000 tokens); Codex exposes `model_auto_compact_token_limit`. `LaunchSpec` (`crates/terminalai-core/src/launch.rs:203`) maps neither; ~~`max_budget_usd` is the shape to mirror — an existing optional numeric that is Claude-only in the same way.~~ Corrected 2026-08-08: `max_budget_usd` is no longer an argv slot at all. `claude --help` restricts `--max-budget-usd` to `--print`, so the flag was removed from the manifest and the cap is enforced by this tool's ledger instead — do not copy that shape without first checking what `--autocompact`'s own help says about its mode, because the two flags may be restricted the same way. `web/src/contextPressure.js` already has the cell that would show the threshold beside the usage.
   Touches: `crates/terminalai-core/src/launch.rs`, `environment.rs`, `web/src/main.js`, `web/src/contextPressure.js`, `crates/terminalai-core/tests/launch_golden.rs`
   Acceptance: the launcher can set a compaction threshold per session, it reaches the previewed argv for both agents, and the row shows it beside the occupancy so a session near its own threshold is visible before it compacts. An agent with no equivalent is refused rather than silently launched without it, per `LaunchError::Unsupported`.
   Complexity: S
