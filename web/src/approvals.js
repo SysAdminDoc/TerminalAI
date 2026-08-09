@@ -91,7 +91,7 @@ export function renderApproval(session, { escape, translate, dwell }) {
 
 export function renderApprovals(sessions, deps) {
   if (!sessions.length) {
-    return `<p class="rollup-total">${deps.escape(deps.translate("approvals-empty"))}</p>`;
+    return `<p class="rollup-total surface-empty">${deps.escape(deps.translate("approvals-empty"))}</p>`;
   }
   return sessions.map((session) => renderApproval(session, deps)).join("");
 }

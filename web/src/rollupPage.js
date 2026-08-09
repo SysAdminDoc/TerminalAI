@@ -31,6 +31,11 @@ export function createRollupPage(deps) {
     const totals = fleetTotals(sessions);
     $("rollup-coverage").textContent = coverage(totals, t);
 
+    if (!sessions.length) {
+      $("rollup-body").innerHTML = `<p class="rollup-total surface-empty">${escapeHtml(t("rollup-empty"))}</p>`;
+      return;
+    }
+
     const tokenCells = (row) =>
       TOKEN_FIELDS.map(([field]) =>
         "<td class=\"rollup-number\">" +

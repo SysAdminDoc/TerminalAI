@@ -479,7 +479,7 @@ function applyProjectTemplate() {
       return;
     }
     if (!state.projectRoots.length) {
-      list.innerHTML = '<li class="rollup-total">' + escapeHtml(t("projects-roots-empty")) + "</li>";
+      list.innerHTML = '<li class="rollup-total surface-empty">' + escapeHtml(t("projects-roots-empty")) + "</li>";
       return;
     }
     list.innerHTML = state.projectRoots

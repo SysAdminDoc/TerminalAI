@@ -64,7 +64,7 @@ function renderProjects() {
     : t("projects-none-registered");
 
   if (!rows.length) {
-    $("projects-body").innerHTML = `<p class="rollup-total">${escapeHtml(
+    $("projects-body").innerHTML = `<p class="rollup-total surface-empty">${escapeHtml(
       total ? t("projects-none-matching") : t("projects-none-registered"),
     )}</p>`;
     return;
@@ -209,6 +209,7 @@ async function sendApproval(id) {
 async function openWorkingSets() {
   const dialog = $("working-sets-dialog");
   openWorkspacePage(dialog);
+  $("working-sets-body").innerHTML = `<p class="rollup-total surface-loading">${escapeHtml(t("loading"))}</p>`;
   await refreshWorkingSets();
 }
 
@@ -219,10 +220,15 @@ async function refreshWorkingSets() {
     $("working-sets-count").textContent = t("working-sets-count", { count: sets.length });
     body.innerHTML = sets.length
       ? sets.map((set) => renderWorkingSet(set, { escape: escapeHtml, translate: t })).join("")
-      : `<p class="rollup-total">${escapeHtml(t("working-sets-empty"))}</p>`;
+      : `<p class="rollup-total surface-empty">${escapeHtml(t("working-sets-empty"))}</p>`;
   } catch (error) {
     $("working-sets-count").textContent = "";
-    body.innerHTML = `<p class="rollup-total">${escapeHtml(String(error))}</p>`;
+    renderDataError(
+      body,
+      t("working-sets-load-error", { error: String(error) }),
+      "working-sets",
+      refreshWorkingSets,
+    );
     return;
   }
   for (const button of body.querySelectorAll("[data-restore-set]")) {
@@ -278,12 +284,13 @@ async function runFleetSearch() {
   const count = $("fleet-search-count");
   if (needle.length < 2) {
     count.textContent = "";
-    body.innerHTML = `<p class="rollup-total">${escapeHtml(t("fleet-search-too-short"))}</p>`;
+    body.innerHTML = `<p class="rollup-total surface-empty">${escapeHtml(t("fleet-search-too-short"))}</p>`;
     return;
   }
   const button = $("fleet-search-run");
   button.disabled = true;
-  body.innerHTML = `<p class="rollup-total">${escapeHtml(t("loading"))}</p>`;
+  button.setAttribute("aria-busy", "true");
+  body.innerHTML = `<p class="rollup-total surface-loading">${escapeHtml(t("loading"))}</p>`;
   try {
     const matches = await invoke("search_fleet", {
       needle,
@@ -314,20 +321,25 @@ async function runFleetSearch() {
     );
   } finally {
     button.disabled = false;
+    button.removeAttribute("aria-busy");
   }
 }
 
 async function openSessionHistory() {
   const dialog = $("history-dialog");
   openWorkspacePage(dialog);
-  $("history-body").innerHTML = `<p class="rollup-total">${escapeHtml(t("loading"))}</p>`;
+  $("history-body").innerHTML = `<p class="rollup-total surface-loading">${escapeHtml(t("loading"))}</p>`;
   let archives = [];
   try {
     archives = await invoke("session_history");
   } catch (error) {
     $("history-count").textContent = "";
-    $("history-body").innerHTML =
-      `<p class="rollup-total">${escapeHtml(t("session-history-error", { error: String(error) }))}</p>`;
+    renderDataError(
+      $("history-body"),
+      t("session-history-error", { error: String(error) }),
+      "history",
+      openSessionHistory,
+    );
     return;
   }
   $("history-count").textContent = t("session-history-count", { count: archives.length });
@@ -358,13 +370,18 @@ async function openSessionHistory() {
 /** Survey leftover checkouts inside the history dialog, which is where a
  * finished session's leavings belong. */
 async function refreshWorktrees() {
+  $("worktrees-body").innerHTML = `<p class="rollup-total surface-loading">${escapeHtml(t("loading"))}</p>`;
   let worktrees = [];
   try {
     worktrees = await invoke("stale_worktrees");
   } catch (error) {
     $("worktrees-count").textContent = "";
-    $("worktrees-body").innerHTML =
-      `<p class="rollup-total">${escapeHtml(t("worktrees-error", { error: String(error) }))}</p>`;
+    renderDataError(
+      $("worktrees-body"),
+      t("worktrees-error", { error: String(error) }),
+      "worktrees",
+      refreshWorktrees,
+    );
     return;
   }
   $("worktrees-count").textContent = t("worktrees-count", { count: worktrees.length });
@@ -394,7 +411,7 @@ async function openProjects() {
   openWorkspacePage(dialog);
   // Scanning reads a file per project, so the dialog opens first and fills in
   // rather than blocking on a few hundred reads before anything appears.
-  $("projects-body").innerHTML = `<p class="rollup-total">${escapeHtml(t("loading"))}</p>`;
+  $("projects-body").innerHTML = `<p class="rollup-total surface-loading">${escapeHtml(t("loading"))}</p>`;
   try {
     state.scannedProjects = await invoke("scan_projects");
     state.projectsError = null;

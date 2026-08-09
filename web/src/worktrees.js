@@ -14,7 +14,7 @@
  */
 export function renderWorktrees(worktrees, { escape, translate }) {
   if (!worktrees.length) {
-    return `<p class="rollup-total">${escape(translate("worktrees-empty"))}</p>`;
+    return `<p class="rollup-total surface-empty">${escape(translate("worktrees-empty"))}</p>`;
   }
   const headers = ["worktrees-column-branch", "worktrees-column-repo", "worktrees-column-state"]
     .map((key) => `<th>${escape(translate(key))}</th>`)

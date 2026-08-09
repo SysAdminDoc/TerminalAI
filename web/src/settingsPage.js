@@ -94,6 +94,10 @@ export function createSettingsPage(deps) {
       session_memory_cap_mb: optionalNumber("settings-memory-cap"),
       max_processes_per_session: optionalNumber("settings-max-processes"),
     };
+    const button = $("save-settings-button");
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.textContent = t("settings-saving");
     try {
       await invoke("set_admission", { settings });
       $("settings-dialog").close();
@@ -103,6 +107,10 @@ export function createSettingsPage(deps) {
       const problem = $("settings-error");
       problem.textContent = String(error);
       problem.hidden = false;
+    } finally {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+      button.textContent = t("button-save-settings");
     }
   }
 

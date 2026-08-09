@@ -40,7 +40,7 @@ export function renderSearchMatch(session, { escape, translate }) {
 /** The whole result set, or the empty-state message. */
 export function renderSearchResults(matches, { escape, translate, needle }) {
   if (!matches.length) {
-    return `<p class="rollup-total">${escape(translate("fleet-search-none", { needle }))}</p>`;
+    return `<p class="rollup-total surface-empty">${escape(translate("fleet-search-none", { needle }))}</p>`;
   }
   return matches
     .map((session) => renderSearchMatch(session, { escape, translate }))

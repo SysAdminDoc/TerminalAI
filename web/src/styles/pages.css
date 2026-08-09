@@ -71,7 +71,7 @@
 .workspace-page .rollup-coverage {
   padding: 6px 9px;
   border: 1px solid var(--accent-border);
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   color: var(--sapphire);
   background: var(--accent-soft);
   font-size: 10px;
@@ -427,23 +427,23 @@
   height: 6px;
   overflow: hidden;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-xs);
   appearance: none;
   background: var(--surface1);
 }
 
 .limit-usage-card progress::-webkit-progress-bar {
-  border-radius: 999px;
+  border-radius: var(--radius-xs);
   background: var(--surface1);
 }
 
 .limit-usage-card progress::-webkit-progress-value {
-  border-radius: 999px;
+  border-radius: var(--radius-xs);
   background: var(--blue);
 }
 
 .limit-usage-card progress::-moz-progress-bar {
-  border-radius: 999px;
+  border-radius: var(--radius-xs);
   background: var(--blue);
 }
 
@@ -1176,4 +1176,3 @@
   color: var(--red);
   font-size: 12px;
 }
-

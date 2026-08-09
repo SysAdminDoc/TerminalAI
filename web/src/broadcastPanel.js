@@ -91,6 +91,10 @@ export function createBroadcastPanel(deps) {
       showToast(t("broadcast-none-eligible"));
       return;
     }
+    const button = $("send-broadcast-button");
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+    button.textContent = t("broadcast-sending");
     try {
       const results = await invoke("broadcast_prompt", { ids, text });
       const { delivered, refused, total } = summarize(results);
@@ -111,6 +115,14 @@ export function createBroadcastPanel(deps) {
       }
     } catch (error) {
       showToast(t("broadcast-error", { error: String(error) }));
+    } finally {
+      button.removeAttribute("aria-busy");
+      button.textContent = t("button-broadcast");
+      if ($("broadcast-dialog").open) {
+        renderBroadcast();
+      } else {
+        button.disabled = false;
+      }
     }
   }
 

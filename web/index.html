@@ -185,8 +185,8 @@
       </main>
     </div>
 
-    <dialog id="explainer-dialog" class="launcher-dialog explainer-dialog workspace-page" data-workspace-page="explainer" aria-label="How the fleet screen works" data-i18n-aria-label="explainer-title">
-      <div class="dialog-head"><h2 data-i18n="explainer-title">How the fleet screen works</h2></div>
+    <dialog id="explainer-dialog" class="launcher-dialog explainer-dialog workspace-page" data-workspace-page="explainer" aria-label="How the fleet screen works" data-i18n-aria-label="explainer-title" aria-describedby="explainer-description">
+      <div class="dialog-head"><div class="dialog-title-block"><h2 data-i18n="explainer-title">How the fleet screen works</h2><p id="explainer-description" class="dialog-subtitle" data-i18n="explainer-subtitle">A quick tour of attention, focus, and safety boundaries.</p></div></div>
       <div class="explainer-body">
         <div class="explainer-flow">
           <section><h3 data-i18n="explainer-rows-heading">Rows are not terminals</h3><p data-i18n="explainer-rows">Each row is a compact status line, not a terminal. That is what lets around thirty sessions share one screen — a terminal needs a lot of space, and a status line needs 28 pixels.</p></section>
@@ -203,8 +203,8 @@
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-primary" id="close-explainer-button" data-i18n="button-close">Close</button></div></div>
     </dialog>
 
-    <dialog id="queue-dialog" class="launcher-dialog queue-dialog" aria-label="Prompt queue" data-i18n-aria-label="label-queue">
-      <div class="dialog-head"><h2 id="queue-title">Prompt queue</h2><span id="queue-status" class="rollup-coverage"></span></div>
+    <dialog id="queue-dialog" class="launcher-dialog queue-dialog" aria-label="Prompt queue" data-i18n-aria-label="label-queue" aria-describedby="queue-description">
+      <div class="dialog-head"><div class="dialog-title-block"><h2 id="queue-title">Prompt queue</h2><p id="queue-description" class="dialog-subtitle" data-i18n="queue-subtitle">Stage the next instruction without interrupting the current run.</p></div><span id="queue-status" class="rollup-coverage"></span></div>
       <div class="broadcast-body">
         <ol id="queue-list" class="queue-list"></ol>
         <label class="field field-wide"><span data-i18n="queue-add">Add a prompt</span><textarea id="queue-input" rows="3" placeholder="Sent when the current run finishes" data-i18n-placeholder="queue-add-placeholder"></textarea></label>
@@ -212,8 +212,8 @@
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-quiet" id="queue-pause-button" data-i18n="queue-pause">Pause queue</button><button type="button" class="button button-quiet" id="queue-resume-button" data-i18n="queue-resume" hidden>Resume queue</button><button type="button" class="button button-secondary" id="close-queue-button" data-i18n="button-close">Close</button><button type="button" class="button button-primary" id="queue-add-button" data-i18n="queue-add-button">Queue it</button></div></div>
     </dialog>
 
-    <dialog id="projects-dialog" class="launcher-dialog rollup-dialog workspace-page" data-workspace-page="projects" aria-label="Projects and their roadmaps" data-i18n-aria-label="label-projects-dialog">
-      <div class="dialog-head"><h2 data-i18n="projects-title">Projects</h2><span id="projects-coverage" class="rollup-coverage"></span></div>
+    <dialog id="projects-dialog" class="launcher-dialog rollup-dialog workspace-page" data-workspace-page="projects" aria-label="Projects and their roadmaps" data-i18n-aria-label="label-projects-dialog" aria-describedby="projects-description">
+      <div class="dialog-head"><div class="dialog-title-block"><h2 data-i18n="projects-title">Projects</h2><p id="projects-description" class="dialog-subtitle" data-i18n="projects-subtitle">Scan registered roots, then decide what to run next.</p></div><span id="projects-coverage" class="rollup-coverage"></span></div>
       <div class="broadcast-body">
         <section class="project-roots-panel" aria-label="Registered project roots" data-i18n-aria-label="projects-roots-title"><div class="project-roots-heading"><span class="eyebrow" data-i18n="projects-roots-title">REGISTERED ROOTS</span><button type="button" class="button button-quiet" id="project-root-add-button" data-i18n="projects-root-add">Register root</button></div><ul id="project-root-list" class="project-root-list" role="list" aria-label="Registered project roots" data-i18n-aria-label="projects-roots-title"></ul></section>
         <label class="field field-wide check-field"><input id="projects-open-only" type="checkbox" checked /><span data-i18n="projects-open-only">Only projects with open roadmap items</span></label>
@@ -222,20 +222,20 @@
       <div class="work-run-bar"><label class="field"><span data-i18n="work-prompt">Run this prompt</span><select id="work-prompt-select"></select></label><button type="button" class="button button-primary" id="work-start-button" data-i18n="work-start">Run across listed projects</button></div><div class="work-run-bar"><label class="field"><span data-i18n="work-repeat">Repeat this run</span><select id="work-repeat-select"></select></label><button type="button" class="button button-quiet" id="work-schedule-pause-button" data-i18n="work-schedule-pause" hidden>Hold schedule</button><button type="button" class="button button-quiet" id="work-schedule-resume-button" data-i18n="work-schedule-resume" hidden>Resume schedule</button></div><p id="work-schedule-status" class="rollup-total" hidden></p><div id="work-run-body" class="work-run-body" hidden></div><div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-quiet" id="work-pause-button" data-i18n="work-pause" hidden>Pause run</button><button type="button" class="button button-quiet" id="work-resume-button" data-i18n="work-resume" hidden>Resume run</button><button type="button" class="button button-quiet" id="work-clear-button" data-i18n="work-clear" hidden>Clear run</button><button type="button" class="button button-secondary" id="close-projects-button" data-i18n="button-close">Close</button></div></div>
     </dialog>
 
-    <dialog id="history-dialog" class="launcher-dialog rollup-dialog workspace-page" data-workspace-page="history" aria-label="Finished sessions" data-i18n-aria-label="session-history-title">
-      <div class="dialog-head"><h2 data-i18n="session-history-title">Finished sessions</h2><span id="history-count" class="rollup-coverage"></span></div>
+    <dialog id="history-dialog" class="launcher-dialog rollup-dialog workspace-page" data-workspace-page="history" aria-label="Finished sessions" data-i18n-aria-label="session-history-title" aria-describedby="history-description">
+      <div class="dialog-head"><div class="dialog-title-block"><h2 data-i18n="session-history-title">Finished sessions</h2><p id="history-description" class="dialog-subtitle" data-i18n="history-subtitle">Finished sessions and recoverable worktrees, kept local.</p></div><span id="history-count" class="rollup-coverage"></span></div>
       <div class="broadcast-body">
         <p class="settings-note" data-i18n="session-history-note">What this supervisor archived, newest first. Only the layout and the exact command are kept — never the output.</p>
         <div id="history-body" class="rollup-body"></div>
-        <div class="dialog-head"><h2 data-i18n="worktrees-title">Leftover checkouts</h2><span id="worktrees-count" class="rollup-coverage"></span></div>
+        <div class="dialog-head"><div class="dialog-title-block"><h2 data-i18n="worktrees-title">Leftover checkouts</h2><p class="dialog-subtitle" data-i18n="worktrees-subtitle">Review what can be safely removed before reclaiming it.</p></div><span id="worktrees-count" class="rollup-coverage"></span></div>
         <p class="settings-note" data-i18n="worktrees-note">Private checkouts this tool created that no live session owns. A branch still holding work is listed and never removed here — take it up in Git, where you can see the commits first.</p>
         <div id="worktrees-body" class="rollup-body"></div>
       </div>
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-history-button" data-i18n="button-close">Close</button></div></div>
     </dialog>
 
-    <dialog id="approvals-dialog" class="launcher-dialog rollup-dialog workspace-page" data-workspace-page="approvals" aria-label="Approvals" data-i18n-aria-label="approvals-title">
-      <div class="dialog-head"><h2 data-i18n="approvals-title">Approvals</h2><span id="approvals-count" class="rollup-coverage" role="status" aria-live="polite"></span></div>
+    <dialog id="approvals-dialog" class="launcher-dialog rollup-dialog workspace-page" data-workspace-page="approvals" aria-label="Approvals" data-i18n-aria-label="approvals-title" aria-describedby="approvals-description">
+      <div class="dialog-head"><div class="dialog-title-block"><h2 data-i18n="approvals-title">Approvals</h2><p id="approvals-description" class="dialog-subtitle" data-i18n="approvals-subtitle">Resolve blocked sessions without losing fleet context.</p></div><span id="approvals-count" class="rollup-coverage" role="status" aria-live="polite"></span></div>
       <div class="broadcast-body">
         <p class="settings-note" data-i18n="approvals-note">Every session waiting on you, the one that has been waiting longest first. Nothing here approves anything on your behalf: there is no approve-all and no bypass mode, and what you type is sent to that session's prompt exactly as if you had typed it there. A session whose request cannot be described is still listed — that is the one to go and look at.</p>
         <div id="approvals-body" class="rollup-body"></div>
@@ -243,8 +243,8 @@
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-approvals-button" data-i18n="button-close">Close</button></div></div>
     </dialog>
 
-    <dialog id="working-sets-dialog" class="launcher-dialog rollup-dialog workspace-page" data-workspace-page="working-sets" aria-label="Working sets" data-i18n-aria-label="working-sets-title">
-      <div class="dialog-head"><h2 data-i18n="working-sets-title">Working sets</h2><span id="working-sets-count" class="rollup-coverage" role="status" aria-live="polite"></span></div>
+    <dialog id="working-sets-dialog" class="launcher-dialog rollup-dialog workspace-page" data-workspace-page="working-sets" aria-label="Working sets" data-i18n-aria-label="working-sets-title" aria-describedby="working-sets-description">
+      <div class="dialog-head"><div class="dialog-title-block"><h2 data-i18n="working-sets-title">Working sets</h2><p id="working-sets-description" class="dialog-subtitle" data-i18n="working-sets-subtitle">Save a focused fleet layout and restore it as one action.</p></div><span id="working-sets-count" class="rollup-coverage" role="status" aria-live="polite"></span></div>
       <div class="broadcast-body">
         <p class="settings-note" data-i18n="working-sets-note">A named layout of many sessions, relaunched as one action. Restoring starts each session through the ordinary launch path, so the admission gate, the memory budget, the spend ceiling and the dirty-tree refusal all still apply — a session they refuse is reported, not forced. A private checkout is created fresh; a layout never adopts the one the original session had.</p>
         <div class="fleet-search-controls"><input type="text" id="working-set-name" maxlength="80" placeholder="Name this layout" data-i18n-placeholder="working-sets-name-placeholder" aria-label="Name this layout" data-i18n-aria-label="working-sets-name-placeholder" /><button type="button" class="button button-primary" id="working-set-save" data-i18n="working-sets-save">Save the current fleet</button></div>
@@ -253,8 +253,8 @@
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-working-sets-button" data-i18n="button-close">Close</button></div></div>
     </dialog>
 
-    <dialog id="search-dialog" class="launcher-dialog rollup-dialog workspace-page" data-workspace-page="search" aria-label="Search the fleet" data-i18n-aria-label="fleet-search-title">
-      <div class="dialog-head"><h2 data-i18n="fleet-search-title">Search the fleet</h2><span id="fleet-search-count" class="rollup-coverage" role="status" aria-live="polite"></span></div>
+    <dialog id="search-dialog" class="launcher-dialog rollup-dialog workspace-page" data-workspace-page="search" aria-label="Search the fleet" data-i18n-aria-label="fleet-search-title" aria-describedby="search-description">
+      <div class="dialog-head"><div class="dialog-title-block"><h2 data-i18n="fleet-search-title">Search the fleet</h2><p id="search-description" class="dialog-subtitle" data-i18n="search-subtitle">Find output across the live fleet and its bounded history.</p></div><span id="fleet-search-count" class="rollup-coverage" role="status" aria-live="polite"></span></div>
       <div class="broadcast-body">
         <p class="settings-note" data-i18n="fleet-search-note">Searches the output each session still has on disk, which is a bounded tail — the beginning of a long run is genuinely gone. Colour and cursor sequences are removed before matching, so what is searched is what was legible.</p>
         <div class="fleet-search-controls"><input type="search" id="fleet-search-input" maxlength="200" placeholder="Find in every session" data-i18n-placeholder="fleet-search-placeholder" aria-label="Find in every session" data-i18n-aria-label="fleet-search-placeholder" /><label class="checkbox-field"><input type="checkbox" id="fleet-search-case" /><span data-i18n="fleet-search-case">Match case</span></label><button type="button" class="button button-primary" id="fleet-search-run" data-i18n="fleet-search-run">Search</button></div>
@@ -263,8 +263,8 @@
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-search-button" data-i18n="button-close">Close</button></div></div>
     </dialog>
 
-    <dialog id="prompt-dialog" class="launcher-dialog prompt-dialog workspace-page" data-workspace-page="prompts" aria-label="Prompt library" data-i18n-aria-label="prompt-library-title">
-      <div class="dialog-head"><h2 data-i18n="prompt-library-title">Prompt library</h2><span id="prompt-library-count" class="rollup-coverage"></span></div>
+    <dialog id="prompt-dialog" class="launcher-dialog prompt-dialog workspace-page" data-workspace-page="prompts" aria-label="Prompt library" data-i18n-aria-label="prompt-library-title" aria-describedby="prompts-description">
+      <div class="dialog-head"><div class="dialog-title-block"><h2 data-i18n="prompt-library-title">Prompt library</h2><p id="prompts-description" class="dialog-subtitle" data-i18n="prompts-subtitle">Keep reusable instructions ready for repeatable work.</p></div><span id="prompt-library-count" class="rollup-coverage"></span></div>
       <div class="prompt-library-grid">
         <section class="stored-prompt-panel" aria-label="Stored prompts" data-i18n-aria-label="prompt-library-title"><div id="stored-prompt-list" class="stored-prompt-list" role="list"></div></section>
         <section class="prompt-editor" aria-label="Prompt editor" data-i18n-aria-label="prompt-editor-title"><div class="prompt-editor-heading"><span class="eyebrow" data-i18n="prompt-editor-title">EDIT PROMPT</span><button type="button" class="button button-quiet" id="prompt-new-button" data-i18n="prompt-new">New prompt</button></div><label class="field"><span data-i18n="prompt-name">Prompt name</span><input id="stored-prompt-name" aria-describedby="prompt-name-hint" maxlength="80" placeholder="Name this prompt" data-i18n-placeholder="prompt-name-placeholder" /></label><small id="prompt-name-hint" class="field-hint" data-i18n="prompt-name-hint">A short name appears in the work queue.</small><label class="field"><span data-i18n="prompt-text">Prompt text</span><textarea id="stored-prompt-text" rows="14" maxlength="131072" placeholder="Write the reusable instruction here" data-i18n-placeholder="prompt-text-placeholder"></textarea></label><div class="prompt-editor-actions"><button type="button" class="button button-primary" id="prompt-save-button" data-i18n="prompt-save">Save prompt</button></div></section>
@@ -272,8 +272,8 @@
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-prompt-button" data-i18n="button-close">Close</button></div></div>
     </dialog>
 
-    <dialog id="broadcast-dialog" class="launcher-dialog broadcast-dialog workspace-page" data-workspace-page="broadcast" aria-label="Broadcast a prompt" data-i18n-aria-label="label-broadcast">
-      <div class="dialog-head"><h2 data-i18n="broadcast-title">Broadcast a prompt</h2><span id="broadcast-coverage" class="rollup-coverage"></span></div>
+    <dialog id="broadcast-dialog" class="launcher-dialog broadcast-dialog workspace-page" data-workspace-page="broadcast" aria-label="Broadcast a prompt" data-i18n-aria-label="label-broadcast" aria-describedby="broadcast-description">
+      <div class="dialog-head"><div class="dialog-title-block"><h2 data-i18n="broadcast-title">Broadcast a prompt</h2><p id="broadcast-description" class="dialog-subtitle" data-i18n="broadcast-subtitle">Send one instruction to eligible sessions; refusals stay visible.</p></div><span id="broadcast-coverage" class="rollup-coverage"></span></div>
       <div class="broadcast-body">
         <fieldset class="broadcast-targets"><legend data-i18n="broadcast-targets">Send to</legend><div id="broadcast-list" role="group"></div></fieldset>
         <label class="field field-wide"><span data-i18n="broadcast-prompt">Prompt</span><textarea id="broadcast-input" rows="4" placeholder="Sent to every selected session" data-i18n-placeholder="broadcast-placeholder"></textarea></label>
@@ -281,14 +281,14 @@
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="cancel-broadcast-button" data-i18n="button-close">Close</button><button type="button" class="button button-primary" id="send-broadcast-button" data-i18n="button-broadcast">Send to selected</button></div></div>
     </dialog>
 
-    <dialog id="rollup-dialog" class="launcher-dialog rollup-dialog" aria-label="Fleet cost and token rollup" data-i18n-aria-label="label-rollup">
-      <div class="dialog-head"><h2 data-i18n="rollup-title">Fleet spend</h2><span id="rollup-coverage" class="rollup-coverage"></span></div>
+    <dialog id="rollup-dialog" class="launcher-dialog rollup-dialog" aria-label="Fleet cost and token rollup" data-i18n-aria-label="label-rollup" aria-describedby="rollup-description">
+      <div class="dialog-head"><div class="dialog-title-block"><h2 data-i18n="rollup-title">Fleet spend</h2><p id="rollup-description" class="dialog-subtitle" data-i18n="rollup-subtitle">See spend and token coverage across the fleet.</p></div><span id="rollup-coverage" class="rollup-coverage"></span></div>
       <div id="rollup-body" class="rollup-body"></div>
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-rollup-button" data-i18n="button-close">Close</button></div></div>
     </dialog>
 
-    <dialog id="settings-dialog" class="launcher-dialog workspace-page" data-workspace-page="settings" aria-label="Fleet limits" data-i18n-aria-label="settings-title">
-      <div class="dialog-head"><h2 data-i18n="settings-title">Fleet limits</h2></div>
+    <dialog id="settings-dialog" class="launcher-dialog workspace-page" data-workspace-page="settings" aria-label="Fleet limits" data-i18n-aria-label="settings-title" aria-describedby="settings-description">
+      <div class="dialog-head"><div class="dialog-title-block"><h2 data-i18n="settings-title">Fleet limits</h2><p id="settings-description" class="dialog-subtitle" data-i18n="settings-subtitle">Set guardrails that refuse new work without interrupting live sessions.</p></div></div>
       <div class="limits-overview" aria-label="Current fleet limit usage" data-i18n-aria-label="settings-usage-title">
         <article class="limit-usage-card"><span data-i18n="settings-max-live">Live sessions</span><strong id="settings-live-usage"></strong><progress id="settings-live-progress" max="1" value="0"></progress></article>
         <article class="limit-usage-card"><span data-i18n="settings-spend-ceiling">Fleet spend ceiling (USD)</span><strong id="settings-spend-usage"></strong><progress id="settings-spend-progress" max="1" value="0"></progress></article>
@@ -310,9 +310,9 @@
       <div class="dialog-actions"><div class="dialog-actions-right"><button type="button" class="button button-secondary" id="close-settings-button" data-i18n="button-close">Close</button><button type="button" class="button button-primary" id="save-settings-button" data-i18n="button-save-settings">Apply</button></div></div>
     </dialog>
 
-    <dialog id="launcher-dialog" class="launcher-dialog" aria-label="Launch an agent" data-i18n-aria-label="launcher-title">
+    <dialog id="launcher-dialog" class="launcher-dialog" aria-label="Launch an agent" data-i18n-aria-label="launcher-title" aria-describedby="launcher-description">
       <form method="dialog" id="launcher-form" class="launcher-form">
-        <div class="dialog-heading"><div><span class="eyebrow" data-i18n="label-new-controlled-session">NEW CONTROLLED SESSION</span><h1 data-i18n="launcher-title">Launch an agent</h1></div><button type="button" class="dialog-close" id="close-launcher-button" aria-label="Close launcher">×</button></div>
+        <div class="dialog-heading"><div><span class="eyebrow" data-i18n="label-new-controlled-session">NEW CONTROLLED SESSION</span><h1 data-i18n="launcher-title">Launch an agent</h1><p id="launcher-description" class="dialog-subtitle" data-i18n="launcher-subtitle">Preview the exact command before it starts.</p></div><button type="button" class="dialog-close" id="close-launcher-button" aria-label="Close launcher">×</button></div>
         <div class="launcher-grid">
           <label class="field"><span data-i18n="launcher-agent">Agent</span><select id="agent-input"><option value="claude" data-i18n="launcher-agent-option-claude">Claude Code</option><option value="codex" data-i18n="launcher-agent-option-codex">Codex</option></select></label>
           <label class="field"><span><span data-i18n="launcher-name">Session label</span> <em data-i18n="launcher-name-hint">optional</em></span><input id="name-input" placeholder="e.g. API rewrite" data-i18n-placeholder="launcher-name-placeholder" /></label>

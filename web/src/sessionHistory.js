@@ -14,7 +14,7 @@ import { optionalSystemTimeMs } from "./time.js";
  */
 export function renderSessionHistory(archives, { escape, translate, formatTime }) {
   if (!archives.length) {
-    return `<p class="rollup-total">${escape(translate("session-history-empty"))}</p>`;
+    return `<p class="rollup-total surface-empty">${escape(translate("session-history-empty"))}</p>`;
   }
   const rows = archives
     .map((archive) => {

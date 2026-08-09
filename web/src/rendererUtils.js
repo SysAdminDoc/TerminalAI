@@ -34,7 +34,7 @@ export function createRendererUtils({ $, document, t, requestAnimationFrame, set
 
   function renderDataError(container, message, action, retry) {
     container.innerHTML = [
-      `<div class="data-error" role="alert"><p>${escapeHtml(message)}</p>`,
+      `<div class="data-error surface-error" role="alert"><p>${escapeHtml(message)}</p>`,
       `<button type="button" class="button button-secondary" data-retry-action="${escapeHtml(action)}">`,
       `${escapeHtml(t("button-retry"))}</button></div>`,
     ].join("");

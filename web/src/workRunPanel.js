@@ -259,7 +259,7 @@ export function createWorkRunPanel(deps) {
     });
     if (!state.storedPrompts.length) {
       list.innerHTML =
-        '<p class="rollup-total">' + escapeHtml(t("prompt-library-empty")) + "</p>";
+        '<p class="rollup-total surface-empty">' + escapeHtml(t("prompt-library-empty")) + "</p>";
       return;
     }
     list.innerHTML = state.storedPrompts
@@ -392,6 +392,8 @@ export function createWorkRunPanel(deps) {
   function openPromptLibrary() {
     const dialog = $("prompt-dialog");
     openWorkspacePage(dialog);
+    $("stored-prompt-list").innerHTML =
+      '<p class="rollup-total surface-loading">' + escapeHtml(t("loading")) + "</p>";
     void loadStoredPrompts();
   }
 

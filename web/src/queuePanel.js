@@ -77,7 +77,7 @@ export function createQueuePanel(deps) {
     }
 
     if (!state.queuePrompts.length) {
-      $("queue-list").innerHTML = `<p class="rollup-total">${escapeHtml(t("queue-empty"))}</p>`;
+      $("queue-list").innerHTML = `<p class="rollup-total surface-empty">${escapeHtml(t("queue-empty"))}</p>`;
       return;
     }
     $("queue-list").innerHTML = state.queuePrompts
