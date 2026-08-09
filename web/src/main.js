@@ -63,6 +63,13 @@ import {
   readFirstRunProgress,
   saveFirstRunProgress,
 } from "./firstRun.js";
+import {
+  createRendererUtils,
+  createTerminalOutput,
+  escapeHtml,
+  invokeArgs,
+} from "./rendererUtils.js";
+import { createSessionPresentation } from "./sessionPresentation.js";
 
 const WDIO_BUILD = import.meta.env.VITE_TERMINALAI_WDIO === "1";
 
@@ -198,6 +205,22 @@ let loadSnapshot;
 
 const $ = (id) => document.getElementById(id);
 
+const {
+  answerCountdownLabel,
+  cost,
+  costTitle,
+  dwell,
+  folderLabel,
+  isAttention,
+  memory,
+  memoryTitle,
+  ports,
+  toolProgress,
+} = createSessionPresentation({ relativeDwell, t });
+
+const { renderDataError, renderGuarded, showToast } = createRendererUtils({ $, document, t });
+const { writeTerminalBytes } = createTerminalOutput({ state });
+
 const RAIL_DIALOG_PAGES = Object.freeze({
   "projects-dialog": "projects",
   "prompt-dialog": "prompts",
@@ -298,74 +321,6 @@ function wireRailNavigation() {
   syncFromDialogs();
 }
 
-function terminalBytes(payload) {
-  if (payload instanceof ArrayBuffer) return new Uint8Array(payload);
-  if (ArrayBuffer.isView(payload)) return new Uint8Array(payload.buffer, payload.byteOffset, payload.byteLength);
-  if (Array.isArray(payload)) return Uint8Array.from(payload);
-  return new TextEncoder().encode(String(payload ?? ""));
-}
-
-// Output arrives asynchronously and a focus switch spans two awaits, so a chunk
-// for the session we just left can land after the new one is installed. The
-// generation token is bumped on every switch; anything stamped with an older one
-// is discarded rather than written into the wrong session's grid.
-function writeTerminalBytes(payload, id = state.focused, generation = state.focusGeneration) {
-  if (id !== state.focused || generation !== state.focusGeneration) return;
-  if (state.terminal) state.terminal.write(terminalBytes(payload));
-}
-
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function renderDataError(container, message, action, retry) {
-  container.innerHTML = `<div class="data-error" role="alert"><p>${escapeHtml(message)}</p><button type="button" class="button button-secondary" data-retry-action="${escapeHtml(action)}">${escapeHtml(t("button-retry"))}</button></div>`;
-  const button = container.querySelector("[data-retry-action]");
-  if (button?.dataset.retryAction === action) button.addEventListener("click", () => void retry());
-}
-
-/// Render into a dialog, and put the failure in that dialog if it throws.
-///
-/// Four of these surfaces render from state the window already holds, so they
-/// have no loading state and correctly never had one — but they had no error
-/// state either, and a renderer that throws leaves an open dialog with an empty
-/// body and nothing said. The operator's read of that is "it is still loading",
-/// which it is not and never will be.
-///
-/// Deliberately not a loading state as well. Adding one where the data is
-/// already in memory would show a spinner that is never true.
-function renderGuarded(container, message, action, retry, render) {
-  try {
-    render();
-  } catch (error) {
-    // Logged as well as shown: the message on screen is for the operator, and
-    // the stack is for whoever has to find out why.
-    console.error(`${action} failed to render`, error);
-    renderDataError(container, `${message} ${error}`, action, retry);
-  }
-}
-
-function invokeArgs(spec) {
-  return { spec, configuredPath: null };
-}
-
-function showToast(message, tone = "error") {
-  const toast = document.createElement("div");
-  toast.className = `toast toast-${tone}`;
-  toast.textContent = message;
-  $("toast-region").append(toast);
-  requestAnimationFrame(() => toast.classList.add("toast-visible"));
-  setTimeout(() => {
-    toast.classList.remove("toast-visible");
-    setTimeout(() => toast.remove(), 240);
-  }, 4200);
-}
-
 const launcherPanel = createLauncher({
   $,
   document,
@@ -460,48 +415,6 @@ function renderAuthBanner() {
 }
 
 
-function dwell(value) {
-  return relativeDwell(value);
-}
-
-function toolProgress(value) {
-  const completed = Number(value?.completed);
-  const total = Number(value?.total);
-  if (!Number.isInteger(completed) || !Number.isInteger(total) || completed < 0 || total <= 0) return "—";
-  return `${Math.min(completed, total)}/${total}`;
-}
-
-// Number(null) is 0, so a session that has never reported a cost used to render
-// "$0.00" — a computed-looking zero is worse than an honest em dash.
-function cost(value) {
-  return value === "" ? "—" : formatCost(value);
-}
-
-/// What the cost is being measured against, when it is being measured against
-/// anything. A session launched with no cap says so rather than borrowing the
-/// wording of one that simply has not reached its cap yet.
-function costTitle(session) {
-  const budget = Number(session?.budget_usd);
-  if (!Number.isFinite(budget) || budget < 0) return t("cost-explained");
-  const key = session?.budget_exhausted ? "cost-budget-spent" : "cost-budget-of";
-  // The same formatter the figure itself uses. Two spellings of money on one
-  // row is how "$5" ends up sitting next to "$5.00" in the same sentence.
-  return t(key, { budget: formatCost(budget) });
-}
-
-/// What the memory figure covers.
-///
-/// The process count is the point: since agent teams, a row can be a lead plus
-/// several separate agent instances inside one job, and the cap the reading is
-/// compared against applies to all of them. A domain that owns no job reports
-/// no count, and this says that rather than implying a tree of one.
-function memoryTitle(session) {
-  if (session?.memory_limited) return t("memory-limited-explained");
-  const processes = Number(session?.memory_processes);
-  if (!Number.isInteger(processes) || processes < 1) return t("memory-unscoped-explained");
-  return t("memory-explained", { processes });
-}
-
 /// The one result the operator can act on stays where the action is.
 ///
 /// A newer version is the only outcome of the check that asks for anything, and
@@ -540,22 +453,6 @@ function syncReviewVisibility() {
   $("review-toggle").setAttribute("aria-pressed", String(hidden));
   $("review-toggle").classList.toggle("wide-toggle-active", state.reviewMode && !state.preflightMode);
   $("review-toggle").textContent = state.reviewMode && !state.preflightMode ? t("button-fleet") : t("button-review");
-}
-
-function ports(value) {
-  const assigned = Array.isArray(value)
-    ? value.map(Number).filter((port) => Number.isInteger(port) && port > 0 && port <= 65535)
-    : [];
-  if (!assigned.length) return "—";
-  if (assigned.length > 1 && assigned.every((port, index) => index === 0 || port === assigned[index - 1] + 1)) {
-    return String(assigned[0]) + "–" + String(assigned.at(-1));
-  }
-  return assigned.join(", ");
-}
-
-function folderLabel(path) {
-  const parts = String(path ?? "").split(/[\\/]/).filter(Boolean);
-  return parts.at(-1) ?? path ?? "—";
 }
 
 const reviewPage = createReviewPage({
@@ -620,17 +517,6 @@ const explainerPage = createExplainerPage({
 const { openExplainer, renderExplainerStates } = explainerPage;
 
 
-/// A session's private commit, or an em dash when it has not been sampled.
-///
-/// Never zero from an absent reading: a session using nothing and a session we
-/// could not measure are different facts, and the row has to keep saying which.
-function memory(bytes) {
-  const value = Number(bytes);
-  if (!Number.isFinite(value) || value <= 0) return "—";
-  if (value >= 1024 * 1024 * 1024) return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-  return `${Math.round(value / (1024 * 1024))} MB`;
-}
-
 const fleetSummary = createFleetSummary({
   $,
   escapeHtml,
@@ -666,46 +552,6 @@ const fleetGrouping = createFleetGrouping({
 const { applyGrouping, groupChip, groupOf, passesFilters, sortedSessions, syncFilterControls } = fleetGrouping;
 
 
-
-
-function isAttention(session) {
-  return ["needs-approval", "awaiting-input", "needs-you"].includes(session.status);
-}
-
-/// How long the agent waits for an answer before proceeding without one.
-///
-/// Claude Code's `AskUserQuestion` continues after sixty seconds. Mirrors
-/// `AGENT_AUTO_RESOLVE_DEADLINE` in `crates/terminalai-core/src/notification.rs`;
-/// the notification grace periods on that side are measured against it.
-const AGENT_AUTO_RESOLVE_SECONDS = 60;
-
-/// Only the states the agent will answer for itself expire. A permission
-/// request waits for the operator indefinitely, so counting down on one would
-/// invent a deadline that does not exist.
-function expiresWithoutAnAnswer(session) {
-  return ["awaiting-input", "needs-you"].includes(session?.status);
-}
-
-/// Seconds left before the agent proceeds on its own, or null when nothing is
-/// counting down. Never negative: a question past its deadline reads as gone
-/// rather than as time owed.
-function answerSecondsRemaining(session, now = Date.now()) {
-  if (!expiresWithoutAnAnswer(session)) return null;
-  const since = systemTimeMs(session?.status_since);
-  if (!Number.isFinite(since)) return null;
-  const elapsed = (now - since) / 1000;
-  if (elapsed < 0) return AGENT_AUTO_RESOLVE_SECONDS;
-  return Math.max(0, Math.round(AGENT_AUTO_RESOLVE_SECONDS - elapsed));
-}
-
-/// The row's countdown, or "" when the session is not waiting on an answer.
-function answerCountdownLabel(session, now = Date.now()) {
-  const remaining = answerSecondsRemaining(session, now);
-  if (remaining === null) return "";
-  return remaining > 0
-    ? t("answer-deadline", { seconds: remaining })
-    : t("answer-deadline-passed");
-}
 
 
 /// Bound here rather than at the top of the file: the renderer closes over

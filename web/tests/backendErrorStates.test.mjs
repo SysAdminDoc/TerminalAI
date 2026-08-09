@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { JSDOM } from "jsdom";
+import { createRendererUtils } from "../src/rendererUtils.js";
 import { appSource } from "./appSource.mjs";
 import { cssSource } from "./cssSource.mjs";
 
@@ -75,10 +77,19 @@ test("review lookup failures replace the blank review with an alert and retry", 
 });
 
 test("all three durable errors escape backend text and expose a localized retry", () => {
-  const helper = sliceBetween("function renderDataError", "function invokeArgs");
-  assert.match(helper, /escapeHtml\(message\)/);
-  assert.match(helper, /data-retry-action/);
-  assert.match(helper, /t\("button-retry"\)/);
+  const dom = new JSDOM(`<div id="body"></div>`);
+  const body = dom.window.document.getElementById("body");
+  const utils = createRendererUtils({
+    $: (id) => dom.window.document.getElementById(id),
+    document: dom.window.document,
+    t: (key) => key,
+    requestAnimationFrame: (callback) => callback(),
+    setTimeout: () => 0,
+  });
+  utils.renderDataError(body, "<backend>", "retry", () => {});
+  assert.match(body.innerHTML, /&lt;backend&gt;/);
+  assert.match(body.innerHTML, /data-retry-action="retry"/);
+  assert.match(body.textContent, /button-retry/);
   for (const key of [
     "button-retry",
     "projects-unavailable",
@@ -98,12 +109,19 @@ test("all three durable errors escape backend text and expose a localized retry"
 // renderer that throws left an open dialog with an empty body, which reads as
 // "still loading" and never stops reading that way.
 test("every state-less dialog renders its own failure rather than nothing", () => {
-  const guard = sliceBetween("function renderGuarded", "function invokeArgs");
-  assert.match(guard, /catch \(error\)/);
-  assert.match(guard, /renderDataError\(container/);
-  // Logged as well as shown: the message is for the operator, the stack is for
-  // whoever has to find out why.
-  assert.match(guard, /console\.error/);
+  const dom = new JSDOM(`<div id="body"></div>`);
+  const body = dom.window.document.getElementById("body");
+  const utils = createRendererUtils({
+    $: (id) => dom.window.document.getElementById(id),
+    document: dom.window.document,
+    t: (key) => key,
+    requestAnimationFrame: (callback) => callback(),
+    setTimeout: () => 0,
+  });
+  utils.renderGuarded(body, "render failed", "render", () => {}, () => {
+    throw new Error("bad data");
+  });
+  assert.match(body.textContent, /render failed Error: bad data/);
 
   for (const [opener, container, key] of [
     ["openRollup", "rollup-body", "rollup-render-error"],
