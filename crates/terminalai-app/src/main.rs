@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod dpi;
+mod daemon;
 mod events;
 mod output;
 mod preset;
@@ -33,9 +34,8 @@ use terminalai_core::{
     fleet_progress, parse_hook_in, AgentCapabilities, FleetProgress, HookTransport, LogEntry,
     ProgressStatus, RegistryEvent, Session, SessionId, SessionStatus, TaskProgress, MAX_LOG_ENTRIES,
 };
-use terminalai_daemon::{
-    DaemonClient, HookEndpoint, IpcError, Request, Response, PROTOCOL_VERSION,
-};
+use terminalai_daemon::{DaemonClient, HookEndpoint, IpcError, Request, Response, PROTOCOL_VERSION};
+use daemon::{client as daemon_client, expect_ok, require_ok, response as daemon_response, run_blocking};
 use events::bridge_daemon_events;
 use preflight::{open_external_url, preflight_fix, preflight_report};
 use output::{
@@ -51,40 +51,9 @@ use state::{
     ReviewSnapshot, APP_USER_MODEL_ID, PREFLIGHT_DAEMON_TIMEOUT,
 };
 
-async fn run_blocking<T, F>(label: &'static str, task: F) -> Result<T, String>
-where
-    T: Send + 'static,
-    F: FnOnce() -> Result<T, String> + Send + 'static,
-{
-    tauri::async_runtime::spawn_blocking(task)
-        .await
-        .map_err(|error| format!("{label} background task failed: {error}"))?
-}
-
 #[tauri::command]
 fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
-}
-
-fn daemon_response(client: &DaemonClient, request: Request) -> Result<Response, String> {
-    client.call(request).map_err(|error| error.to_string())
-}
-
-fn daemon_client(state: &State<'_, AppState>) -> Result<DaemonClient, String> {
-    state
-        .client
-        .lock()
-        .map_err(|_| "daemon client state is poisoned".to_string())?
-        .clone()
-        .ok_or_else(|| "daemon is unavailable; run preflight checks and retry".to_string())
-}
-
-fn require_ok(response: Response) -> Result<(), String> {
-    match response {
-        Response::Ok => Ok(()),
-        Response::Error { message } => Err(message),
-        other => Err(format!("unexpected daemon response: {other:?}")),
-    }
 }
 
 #[tauri::command]
@@ -638,16 +607,6 @@ fn pause_queue(id: SessionId, state: State<'_, AppState>) -> Result<(), String> 
 #[tauri::command]
 fn resume_queue(id: SessionId, state: State<'_, AppState>) -> Result<(), String> {
     expect_ok(&state, Request::ResumeQueue { id })
-}
-
-/// Send a request whose only successful answer is `Ok`.
-fn expect_ok(state: &State<'_, AppState>, request: Request) -> Result<(), String> {
-    let client = daemon_client(state)?;
-    match daemon_response(&client, request)? {
-        Response::Ok => Ok(()),
-        Response::Error { message } => Err(message),
-        other => Err(format!("unexpected response: {other:?}")),
-    }
 }
 
 /// Send one prompt to several sessions, returning what happened to each.
