@@ -26,7 +26,7 @@ import { hasOpenWork, openItemsCell, sortProjects, stalenessLabel, summarize as 
 import { renderSessionHistory } from "./sessionHistory.js";
 import { renderWorktrees } from "./worktrees.js";
 import { wireOverflowMenus } from "./menus.js";
-import { checkForUpdates as runUpdateCheck, RELEASES_PAGE } from "./updateCheck.js";
+import { RELEASES_PAGE } from "./updateCheck.js";
 import { systemTimeMs } from "./time.js";
 import "./styles.css";
 import { createRowRenderer } from "./rowMarkup.js";
@@ -73,6 +73,7 @@ import { createSessionPresentation } from "./sessionPresentation.js";
 import { createFleetNotices } from "./fleetNotices.js";
 import { createShellNavigation } from "./shellNavigation.js";
 import { createReviewVisibility } from "./reviewVisibility.js";
+import { createUpdatePanel } from "./updatePanel.js";
 
 const WDIO_BUILD = import.meta.env.VITE_TERMINALAI_WDIO === "1";
 
@@ -289,33 +290,15 @@ const {
   addQueuedPrompt,
 } = queuePanel;
 
-/// The one result the operator can act on stays where the action is.
-///
-/// A newer version is the only outcome of the check that asks for anything, and
-/// it used to arrive as a toast: gone in four seconds, no link, and no way back
-/// to it except running the check again — while the message itself said to go to
-/// GitHub. The other outcomes need nothing, so they stay toasts.
-function showUpdateResult(message) {
-  const result = $("update-result");
-  result.classList.toggle("view-hidden", !message);
-  $("update-result-message").textContent = message ?? "";
-}
-
-/// Bind the update check to this module's collaborators.
-///
-/// The check itself lives in `updateCheck.js` and takes what it needs, so its
-/// version comparison is exercisable without a DOM, a backend or the network.
-function checkForUpdates() {
-  return runUpdateCheck({
-    $,
-    t,
-    invoke,
-    state,
-    showToast,
-    showUpdateResult,
-    fallbackVersion: FALLBACK_APP_VERSION,
-  });
-}
+const updatePanel = createUpdatePanel({
+  $,
+  fallbackVersion: FALLBACK_APP_VERSION,
+  invoke,
+  showToast,
+  state,
+  t,
+});
+const { checkForUpdates } = updatePanel;
 
 const reviewPage = createReviewPage({
   $,
