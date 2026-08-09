@@ -70,6 +70,8 @@ import {
   invokeArgs,
 } from "./rendererUtils.js";
 import { createSessionPresentation } from "./sessionPresentation.js";
+import { createFleetNotices } from "./fleetNotices.js";
+import { createShellNavigation } from "./shellNavigation.js";
 
 const WDIO_BUILD = import.meta.env.VITE_TERMINALAI_WDIO === "1";
 
@@ -221,26 +223,15 @@ const {
 const { renderDataError, renderGuarded, showToast } = createRendererUtils({ $, document, t });
 const { writeTerminalBytes } = createTerminalOutput({ state });
 
-const RAIL_DIALOG_PAGES = Object.freeze({
-  "projects-dialog": "projects",
-  "prompt-dialog": "prompts",
-  "broadcast-dialog": "broadcast",
-  "approvals-dialog": "approvals",
-  "search-dialog": "search",
-  "working-sets-dialog": "working-sets",
-  "history-dialog": "history",
-  "settings-dialog": "settings",
-  "explainer-dialog": "explainer",
+const shellNavigation = createShellNavigation({
+  $,
+  document,
+  setPreflightMode: (...args) => setPreflightMode(...args),
+  state,
 });
-
-function syncRailPage(page) {
-  for (const item of document.querySelectorAll(".rail-item[data-rail-page]")) {
-    const active = item.dataset.railPage === page;
-    item.classList.toggle("rail-item-active", active);
-    if (active) item.setAttribute("aria-current", "page");
-    else item.removeAttribute("aria-current");
-  }
-}
+const { closeWorkspacePages, openWorkspacePage, syncRailPage, wireRailNavigation } = shellNavigation;
+const fleetNotices = createFleetNotices({ $, state, t });
+const { renderAuthBanner, renderStoreQuarantine, renderStoreWriteError } = fleetNotices;
 
 function renderFirstRunGuide() {
   const checklist = $("first-run-checklist");
@@ -267,58 +258,6 @@ function markFirstRunStep(step) {
     [step]: true,
   });
   renderFirstRunGuide();
-}
-
-function closeWorkspacePages() {
-  for (const dialog of document.querySelectorAll("dialog.workspace-page[open]")) dialog.close();
-}
-
-/// Menu destinations are pages inside the persistent shell. They still use a
-/// dialog element for the existing focus and accessibility contracts, but open
-/// non-modally so the rail and top-level controls remain available.
-function openWorkspacePage(dialog) {
-  if (!dialog) return;
-  for (const other of document.querySelectorAll("dialog.workspace-page[open]")) {
-    if (other !== dialog) other.close();
-  }
-  if (state.preflightMode) setPreflightMode(false);
-  if (!dialog.open) dialog.show();
-  syncRailPage(dialog.dataset.workspacePage ?? RAIL_DIALOG_PAGES[dialog.id] ?? "fleet");
-}
-
-/// Keep the visual navigation spine in step with the workspace pages. The
-/// overflow menu remains a compatibility path for keyboard users and tests;
-/// the rail is the persistent route through the same handlers.
-function wireRailNavigation() {
-  const items = [...document.querySelectorAll(".rail-item[data-rail-page]")];
-  if (!items.length) return;
-  for (const item of items) {
-    item.addEventListener("click", () => {
-      const page = item.dataset.railPage;
-      syncRailPage(page);
-      const target = item.dataset.railTarget;
-      if (target) $(target)?.click();
-      else {
-        closeWorkspacePages();
-        if (state.preflightMode) setPreflightMode(false);
-      }
-    });
-  }
-  const syncFromDialogs = () => {
-    if (state.preflightMode) {
-      syncRailPage("preflight");
-      return;
-    }
-    const open = [...document.querySelectorAll("dialog.workspace-page[open]")].at(-1);
-    syncRailPage(open ? RAIL_DIALOG_PAGES[open.id] ?? "fleet" : "fleet");
-  };
-  if (typeof MutationObserver === "function") {
-    const observer = new MutationObserver(syncFromDialogs);
-    for (const dialog of document.querySelectorAll("dialog")) {
-      observer.observe(dialog, { attributes: true, attributeFilter: ["open"] });
-    }
-  }
-  syncFromDialogs();
 }
 
 const launcherPanel = createLauncher({
@@ -372,48 +311,6 @@ const {
   refreshQueue,
   addQueuedPrompt,
 } = queuePanel;
-
-/// The fleet's state is not reaching disk.
-///
-/// Deliberately not dismissable, unlike the quarantine banner beside it. A
-/// quarantine is a past event the operator acknowledges once; this is an
-/// ongoing condition that clears itself the moment a write succeeds, so
-/// dismissing it would hide a live problem rather than an old one.
-function renderStoreWriteError() {
-  const banner = $("store-write-banner");
-  const error = state.storeWriteError;
-  banner.classList.toggle("view-hidden", !error);
-  $("store-write-message").textContent = error
-    ? t("store-write-failed-detail", { error })
-    : "";
-}
-
-function renderStoreQuarantine() {
-  const banner = $("store-quarantine-banner");
-  const path = state.storeQuarantine;
-  const visible = Boolean(path) && !state.storeQuarantineDismissed;
-  banner.classList.toggle("view-hidden", !visible);
-  $("store-quarantine-message").textContent = path
-    ? t("store-quarantined-detail", { path })
-    : "";
-}
-
-/// One banner for the whole fleet, not one failure per queued entry.
-///
-/// Driven only by an explicit expiry. A probe that could not run reports
-/// `unknown` and is deliberately absent from this list, because a banner the
-/// operator cannot clear by signing in is worse than no banner.
-function renderAuthBanner() {
-  const banner = $("auth-banner");
-  const expired = Array.isArray(state.admission.expired_auth) ? state.admission.expired_auth : [];
-  banner.classList.toggle("view-hidden", expired.length === 0);
-  if (!expired.length) return;
-  const agents = expired
-    .map((entry) => (entry.agent === "codex" ? "Codex" : "Claude Code"))
-    .join(", ");
-  $("auth-banner-message").textContent = t("auth-expired-detail", { agents });
-}
-
 
 /// The one result the operator can act on stays where the action is.
 ///
