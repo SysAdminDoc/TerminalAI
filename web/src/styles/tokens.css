@@ -54,9 +54,33 @@
   --button-text: #ffffff;
   --shadow-soft: rgba(0, 0, 0, .32);
   --backdrop: rgba(7, 7, 13, .78);
+  /* Shared polish tokens. Components should reach for these semantic names so
+     dark and light surfaces keep the same hierarchy without duplicating
+     literal colours or inventing a new radius for every page. */
+  --surface-page: var(--base);
+  --surface-panel: var(--panel-bg);
+  --surface-elevated: var(--panel-raised);
+  --surface-inset: var(--mantle);
+  --border-subtle: var(--surface0);
+  --border-strong: var(--surface1);
+  --control-background: var(--panel-raised);
+  --control-background-hover: var(--panel-hover);
+  --control-border: var(--surface1);
+  --focus-soft: var(--accent-soft);
+  --focus-ring: 0 0 0 3px var(--focus-soft);
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --shadow-panel: 0 14px 34px var(--shadow-soft);
+  --shadow-menu: 0 18px 42px var(--shadow-soft);
+  --shadow-dialog: 0 24px 72px var(--shadow-soft);
+  --motion-fast: .14s;
+  --motion-base: .2s;
+  --motion-ease: cubic-bezier(.2, .8, .2, 1);
 }
 
 * {
   box-sizing: border-box;
 }
-
