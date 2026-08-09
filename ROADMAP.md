@@ -20,16 +20,6 @@ remains cross-referenced in `Roadmap_Blocked.md` and is not claimed by a local t
   Acceptance: no entry module owns unrelated feature families, tests assert behavior at module boundaries rather than string position, and the existing Rust/frontend/chrome gates remain unchanged and green.
   Complexity: L
 
-- [ ] P2 — Make distribution and cross-target verification repeatable
-  Category: release engineering
-  Where: `scripts/prepare-release-assets.ps1`, `.github/workflows/release.yml`, installer scripts, Winget metadata and cross-target checks.
-  Problem: a successful local build is not yet a frictionless release path for users, and Windows-only verification leaves Unix cfg branches and published installer metadata outside the regular gate.
-  Evidence: `Roadmap_Blocked.md` tracks the outward-facing winget/checksum steps and the need for cross-host closure of non-Windows branches; the local 0.23.0 bundle has passed the generated Winget schema validation and isolated NSIS upgrade gate, the full metadata gate measures 775 default Rust tests, 775 all-features Rust tests, and 409 frontend tests, and the Windows cross-target gate now compiles both `x86_64-unknown-linux-gnu` and `aarch64-pc-windows-msvc` after fixing the daemon's Unix cfg import.
-  Fix: automate release artifact manifests and SHA-256 checks, publish a ready-to-submit Winget manifest, run Linux/macOS compile/test jobs for cfg branches, and keep the unsigned installer policy explicit. The executable pair is byte-reproducible; Tauri's templated NSIS/MSI wrappers remain hash-pinned release artifacts rather than being falsely called byte-reproducible.
-  Touches: `.github/workflows/release.yml`, `scripts/prepare-release-assets.ps1`, `scripts/verify-installer.ps1`, `scripts/verify-reproducible.ps1`, `scripts/check-cross-targets.ps1`, release metadata.
-  Acceptance: one tagged release runs the cross-target jobs, produces reproducible sidecar evidence, verifies the exact unsigned NSIS/MSI install and upgrade path, emits hashes/provenance and submission-ready Winget metadata, and reports unsupported desktop/ARM64 runtime checks honestly.
-  Complexity: M
-
 ## Audit Findings — 2026-08-07
 
 Fourth audit pass, against `cc53821` / v0.15.0 with a green baseline of 585 Rust (0 failed), 305

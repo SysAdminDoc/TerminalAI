@@ -11,8 +11,9 @@ bundle directories.
 The output contains:
 
   * both unsigned installers,
-  * SHA256SUMS for those installers,
-  * release-manifest.json with the commit, hashes, sizes, and MSI identity,
+  * CycloneDX SBOMs when -RequireSbom is supplied,
+  * SHA256SUMS for the installers and any included SBOMs,
+  * release-manifest.json with the commit, hashes, sizes, SBOM inventory, and MSI identity,
   * a machine-readable unsigned-policy note, and
   * a three-file Winget manifest ready for submission after the release exists.
 
@@ -34,13 +35,19 @@ version declared by the workspace.
 Do not invoke the local Winget manifest validator. The generated files are still
 written. This is intended only for non-Windows or minimal build images; the
 release workflow leaves validation enabled.
+
+.PARAMETER RequireSbom
+Require the verified CycloneDX files produced by scripts/supply-chain.ps1 and
+include them in the release assets and SHA256SUMS. The tagged release workflow
+always enables this switch.
 #>
 [CmdletBinding()]
 param(
     [string]$OutputDirectory = $null,
     [string]$Repository = 'SysAdminDoc/TerminalAI',
     [string]$Tag = $null,
-    [switch]$SkipWingetValidation
+    [switch]$SkipWingetValidation,
+    [switch]$RequireSbom
 )
 
 $ErrorActionPreference = 'Stop'
@@ -52,6 +59,11 @@ $outputPath = [System.IO.Path]::GetFullPath($OutputDirectory)
 $rootPrefix = $repoRoot.TrimEnd('\') + '\'
 if ($outputPath -eq $repoRoot -or -not $outputPath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
     throw "OutputDirectory must be inside the repository and must not be the repository root: $outputPath"
+}
+$sbomSourcePath = Join-Path $repoRoot 'dist/sbom'
+$resolvedSbomSourcePath = [System.IO.Path]::GetFullPath($sbomSourcePath).TrimEnd('\')
+if ($RequireSbom -and ($outputPath -eq $resolvedSbomSourcePath -or $outputPath.StartsWith($resolvedSbomSourcePath + '\', [StringComparison]::OrdinalIgnoreCase))) {
+    throw "OutputDirectory cannot overlap the SBOM source directory when -RequireSbom is used: $outputPath"
 }
 
 $cargoPath = Join-Path $repoRoot 'Cargo.toml'
@@ -115,6 +127,34 @@ $nsisName = Split-Path -Leaf $nsisSource
 $msiName = Split-Path -Leaf $msiSource
 Copy-Item -LiteralPath $nsisSource -Destination (Join-Path $outputPath $nsisName)
 Copy-Item -LiteralPath $msiSource -Destination (Join-Path $outputPath $msiName)
+$releaseUrl = "https://github.com/$Repository/releases/download/$Tag"
+
+$sbomRows = @()
+if ($RequireSbom) {
+    if (-not (Test-Path -LiteralPath $sbomSourcePath -PathType Container)) {
+        throw "verified SBOM directory is missing: $sbomSourcePath (run scripts/supply-chain.ps1 first)"
+    }
+    $sbomFiles = @(Get-ChildItem -LiteralPath $sbomSourcePath -Filter '*.cdx.json' -File | Sort-Object Name)
+    if (-not $sbomFiles) {
+        throw "verified SBOM directory contains no CycloneDX files: $sbomSourcePath (run scripts/supply-chain.ps1 first)"
+    }
+    foreach ($sbomFile in $sbomFiles) {
+        $destination = Join-Path $outputPath $sbomFile.Name
+        Copy-Item -LiteralPath $sbomFile.FullName -Destination $destination -Force
+        $sbom = Get-Content -LiteralPath $destination -Raw | ConvertFrom-Json
+        if (@($sbom.components).Count -le 0) {
+            throw "SBOM has no components: $($sbomFile.Name)"
+        }
+        $sbomRows += [ordered]@{
+            name = $sbomFile.Name
+            kind = 'sbom'
+            architecture = 'all'
+            sha256 = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
+            bytes = (Get-Item -LiteralPath $destination).Length
+            url = "$releaseUrl/$($sbomFile.Name)"
+        }
+    }
+}
 
 $msiIdentity = Get-MsiIdentity (Join-Path $outputPath $msiName)
 if ($msiIdentity.productName -ne 'TerminalAI') { throw "MSI ProductName is $($msiIdentity.productName), not TerminalAI" }
@@ -122,7 +162,6 @@ if ($msiIdentity.productVersion -ne $version) {
     throw "MSI ProductVersion is $($msiIdentity.productVersion), not $version"
 }
 
-$releaseUrl = "https://github.com/$Repository/releases/download/$Tag"
 $artifactRows = @(
     [ordered]@{
         name = $nsisName
@@ -143,8 +182,9 @@ $artifactRows = @(
         url = "$releaseUrl/$msiName"
     }
 )
+$releaseArtifacts = @($artifactRows) + @($sbomRows)
 
-$hashLines = foreach ($artifact in $artifactRows | Sort-Object name) {
+$hashLines = foreach ($artifact in $releaseArtifacts | Sort-Object name) {
     "{0} *{1}" -f $artifact.sha256, $artifact.name
 }
 Set-Content -LiteralPath (Join-Path $outputPath 'SHA256SUMS') -Value $hashLines -Encoding utf8NoBOM
@@ -161,7 +201,9 @@ $manifest = [ordered]@{
     commit = $commit
     unsigned = $true
     provenance = 'SLSA Build L1: hosted build from this tagged commit; no signing is performed.'
+    artifacts = @($releaseArtifacts)
     installers = @($artifactRows)
+    sbom = @($sbomRows)
     msi = [ordered]@{
         productCode = $msiIdentity.productCode
         upgradeCode = $msiIdentity.upgradeCode
@@ -174,6 +216,7 @@ $manifest = [ordered]@{
         installerGate = 'scripts/verify-installer.ps1'
         executableReproducibilityGate = 'scripts/verify-reproducible.ps1'
         crossTargetGate = 'scripts/check-cross-targets.ps1'
+        supplyChainGate = 'scripts/supply-chain.ps1'
     }
 }
 $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $outputPath 'release-manifest.json') -Encoding utf8NoBOM
@@ -182,7 +225,8 @@ $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $outpu
 TerminalAI $version is intentionally unsigned.
 
 The release workflow uses Tauri's --no-sign flag. Verify downloaded installers
-against SHA256SUMS; no code-signing certificate or detached signature is implied.
+and SBOM assets against SHA256SUMS; no code-signing certificate or detached
+signature is implied.
 The installer gate ran against the exact artifact before publication.
 "@ | Set-Content -LiteralPath (Join-Path $outputPath 'UNSIGNED.txt') -Encoding utf8NoBOM
 
@@ -264,6 +308,7 @@ if (-not $SkipWingetValidation) {
 
 Write-Host "Prepared release assets for $Tag ($commit)"
 Write-Host "  installers: $nsisName, $msiName"
+if ($sbomRows.Count -gt 0) { Write-Host "  SBOMs:      $(($sbomRows | ForEach-Object { $_.name }) -join ', ')" }
 Write-Host "  hashes:     $(Join-Path $outputPath 'SHA256SUMS')"
 Write-Host "  manifests:  $wingetPath"
 Write-Host '  policy:     unsigned; verify SHA256SUMS; no signing performed'

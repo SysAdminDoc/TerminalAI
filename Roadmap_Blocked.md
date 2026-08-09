@@ -235,11 +235,12 @@ publishing. What remains is only the outward-facing half: opening a PR against t
 `microsoft/winget-pkgs` repository, which is the operator's action to take.
 
 Update 2026-08-08: the local release side is now repeatable. A tagged build runs
-`scripts/prepare-release-assets.ps1`, which copies the exact versioned NSIS/MSI files, emits
+`scripts/supply-chain.ps1` and `scripts/prepare-release-assets.ps1`, verifies embedded dependency
+manifests, copies the exact versioned NSIS/MSI files, emits per-binary CycloneDX SBOMs,
 `SHA256SUMS` and `release-manifest.json`, and generates a schema-validated three-file Winget
 manifest with the MSI ProductCode and UpgradeCode read from the built database. The remaining
 blocker is still the operator-owned PR against `microsoft/winget-pkgs` after a tagged release is
-published.
+published; the hosted tagged workflow itself still needs to be run once by the operator.
 
 ## Publish checksums and a detached signature with each release
 

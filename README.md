@@ -426,9 +426,11 @@ npm --prefix web run test:chrome
 # suites. -SkipTests makes it a fast metadata-only check.
 pwsh -NoProfile -File scripts/verify-release-metadata.ps1
 
-# Collect the exact current-version installers, SHA-256 checksums, MSI identity,
-# release provenance, and a three-file Winget manifest. The tag must be v<version>.
-pwsh -NoProfile -File scripts/prepare-release-assets.ps1 -Tag v0.23.0
+# Verify embedded manifests and generate CycloneDX SBOMs, then collect the exact
+# current-version installers, checksums, MSI identity, release provenance, and
+# a three-file Winget manifest. The tag must be v<version>.
+pwsh -NoProfile -File scripts/supply-chain.ps1 -SkipBuild
+pwsh -NoProfile -File scripts/prepare-release-assets.ps1 -RequireSbom -Tag v0.23.0
 
 # Re-derive the MSRV floor after any dependency bump. The workspace rust-version
 # must be at least what this prints, or the badge promises a toolchain that cannot
@@ -460,10 +462,11 @@ only if the installer came from your verified build or release source. The WebVi
 the Evergreen `downloadBootstrapper` mode instead of bundling a fixed runtime.
 
 Tagged releases run the same gates in `.github/workflows/release.yml`. The final release assets carry
-`SHA256SUMS`, `release-manifest.json`, `UNSIGNED.txt`, and the generated three-file manifest under
-`winget/`. The manifest reads the MSI ProductCode and UpgradeCode from the built MSI database, so it
-is ready to submit to `microsoft/winget-pkgs` once the tagged GitHub release exists. The workflow
-publishes no code signature: verify the installer bytes against `SHA256SUMS`.
+`SHA256SUMS`, `release-manifest.json`, `UNSIGNED.txt`, one CycloneDX SBOM per shipped executable, and
+the generated three-file manifest under `winget/`. The manifest reads the MSI ProductCode and
+UpgradeCode from the built MSI database, so it is ready to submit to `microsoft/winget-pkgs` once the
+tagged GitHub release exists. The workflow publishes no code signature: verify installers and SBOMs
+against `SHA256SUMS`.
 
 The Codex app-server stdio transport is deliberately opt-in:
 

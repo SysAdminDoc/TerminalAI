@@ -80,6 +80,13 @@ jobs:
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install supply-chain tooling
+        shell: pwsh
+        run: |
+          cargo install cargo-auditable --locked
+          cargo install cargo-audit --locked
+          cargo install cargo-cyclonedx --locked
+
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
@@ -115,9 +122,13 @@ jobs:
           $installer = Join-Path $PWD "target/release/bundle/nsis/TerminalAI_${version}_x64-setup.exe"
           pwsh -NoProfile -File scripts/verify-installer.ps1 -Installer $installer -LaunchTimeoutSeconds 90
 
-      - name: Generate hashes, provenance, and Winget manifests
+      - name: Verify embedded manifests and generate CycloneDX SBOMs
         shell: pwsh
-        run: pwsh -NoProfile -File scripts/prepare-release-assets.ps1 -Tag "${{ github.ref_name }}"
+        run: pwsh -NoProfile -File scripts/supply-chain.ps1 -SkipBuild
+
+      - name: Generate hashes, provenance, SBOM inventory, and Winget manifests
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/prepare-release-assets.ps1 -Tag "${{ github.ref_name }}" -RequireSbom
 
       - name: Upload release evidence
         uses: actions/upload-artifact@v4
