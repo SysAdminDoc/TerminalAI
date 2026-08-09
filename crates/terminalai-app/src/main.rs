@@ -22,7 +22,7 @@ mod workspace_commands;
 use terminalai_core::schedule::{FiringResult, ScheduleFiring, WorkSchedule};
 use terminalai_core::work_queue::{EntryState, WorkQueue};
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, SystemTime};
 
@@ -36,12 +36,11 @@ use terminalai_core::{
 use terminalai_daemon::{DaemonClient, HookEndpoint, Request, Response, PROTOCOL_VERSION};
 use daemon::{client as daemon_client, response as daemon_response, run_blocking};
 use app_lifecycle::{
-    cleanup_http_hooks, cleanup_http_hooks_at, connect_for_app, connect_or_start_daemon,
-    install_daemon_client,
+    cleanup_http_hooks, connect_for_app, connect_or_start_daemon, install_daemon_client,
 };
 use hook_cli::{is_hook_invocation, run_hook_cli};
 use preflight::{open_external_url, preflight_fix, preflight_report};
-use output::{replay_overlap, OutputChannels};
+use output::OutputChannels;
 use session_commands::{
     agent_capabilities, archive_session, attach_session_output, broadcast_prompt, edit_queued_prompt,
     enqueue_prompt, focus_session, grid_snapshot, kill_session, land_session, launch_session,
@@ -254,12 +253,12 @@ mod tests {
     fn attaching_mid_stream_replays_each_pty_byte_once_in_order() {
         let replay = b"prompt\r\noutput> ".to_vec();
         let pending = b"output> next\r\n".to_vec();
-        let overlap = replay_overlap(&replay, &pending);
+        let overlap = output::replay_overlap(&replay, &pending);
         let mut rendered = replay;
         rendered.extend_from_slice(&pending[overlap..]);
 
         assert_eq!(rendered, b"prompt\r\noutput> next\r\n");
-        assert_eq!(replay_overlap(b"abc", b"xyz"), 0);
+        assert_eq!(output::replay_overlap(b"abc", b"xyz"), 0);
     }
 
     #[test]
@@ -325,7 +324,8 @@ mod tests {
         terminalai_core::install_hooks_at_with_transport(Agent::Claude, &path, &transport)
             .expect("install HTTP hook");
 
-        cleanup_http_hooks_at(&home, Path::new("terminalai.exe")).expect("shutdown cleanup");
+        app_lifecycle::cleanup_http_hooks_at(&home, std::path::Path::new("terminalai.exe"))
+            .expect("shutdown cleanup");
 
         let cleaned = std::fs::read_to_string(&path).expect("read cleaned settings");
         assert!(!cleaned.contains("127.0.0.1"));
@@ -356,7 +356,7 @@ mod tests {
             "a pending run was overwritten by a firing"
         );
         queue
-            .set_state(Path::new("/repos/shop"), EntryState::Skipped)
+            .set_state(std::path::Path::new("/repos/shop"), EntryState::Skipped)
             .expect("state");
         assert!(queue.is_finished());
         assert_eq!(
@@ -371,7 +371,7 @@ mod tests {
         // The taskbar is fed from the rows themselves, so a fleet where no
         // agent emits the sequence has to produce no bar rather than a bar at
         // zero -- which would read as "started and got nowhere".
-        let spec = terminalai_core::launch::spec_for(Agent::Claude, Path::new("."));
+        let spec = terminalai_core::launch::spec_for(Agent::Claude, std::path::Path::new("."));
         let quiet = Session::new(SessionId::new(1), &spec);
         let mut reporting = Session::new(SessionId::new(2), &spec);
         reporting.task_progress = Some(TaskProgress::Value { percent: 55 });
