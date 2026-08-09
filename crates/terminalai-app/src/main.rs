@@ -7,6 +7,7 @@ mod preset;
 mod projects;
 mod preflight;
 mod restart;
+mod state;
 mod toast;
 mod work;
 mod workflows;
@@ -24,15 +25,13 @@ use std::time::{Duration, Instant, SystemTime};
 use std::{io, io::Read};
 
 use preset::{Preset, PresetStore};
-use serde::Serialize;
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{Emitter, Manager, State};
 use terminalai_core::agent::Agent;
 use terminalai_core::launch::LaunchSpec;
 use terminalai_core::{
-    fleet_progress, parse_hook_in, AdmissionSnapshot, AgentCapabilities, FleetProgress,
-    HookTransport, LogEntry, ProgressStatus, RegistryEvent, ReviewItem, Session, SessionId,
-    SessionStatus, TaskProgress, MAX_LOG_ENTRIES,
+    fleet_progress, parse_hook_in, AgentCapabilities, FleetProgress, HookTransport, LogEntry,
+    ProgressStatus, RegistryEvent, Session, SessionId, SessionStatus, TaskProgress, MAX_LOG_ENTRIES,
 };
 use terminalai_daemon::{
     DaemonClient, HookEndpoint, IpcError, Request, Response, PROTOCOL_VERSION,
@@ -47,55 +46,10 @@ use workflows::{
     fire_due_schedule, set_work_run_paused, set_work_schedule, set_work_schedule_paused,
     skip_work_project, start_work_run, work_run, work_schedule,
 };
-
-struct AppState {
-    client: Mutex<Option<DaemonClient>>,
-    presets: PresetStore,
-    project_roots: projects::ProjectRoots,
-    prompts: work::PromptLibrary,
-    work_run_store: work::WorkRunStore,
-    work_schedule_store: work::WorkScheduleStore,
-    working_sets: workingset::WorkingSetStore,
-    output_channels: OutputChannels,
-}
-
-#[derive(Debug, Serialize)]
-struct FleetSnapshot {
-    sessions: Vec<Session>,
-    focused: Option<SessionId>,
-    admission: AdmissionSnapshot,
-    store_quarantine: Option<String>,
-    store_write_error: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct ReviewSnapshot {
-    entries: Vec<ReviewItem>,
-}
-
-#[derive(Debug, Serialize)]
-struct LaunchReceipt {
-    id: SessionId,
-    queued: bool,
-}
-
-#[derive(Debug, Serialize, Clone)]
-struct PreflightCheck {
-    id: String,
-    label: String,
-    state: String,
-    detected: String,
-    detail: Option<String>,
-    can_fix: bool,
-}
-
-#[derive(Debug, Serialize, Clone)]
-struct PreflightReport {
-    checks: Vec<PreflightCheck>,
-}
-
-const APP_USER_MODEL_ID: &str = "com.sysadmindoc.terminalai";
-const PREFLIGHT_DAEMON_TIMEOUT: Duration = Duration::from_millis(500);
+use state::{
+    AppState, FleetSnapshot, LaunchReceipt, LandResult, PreflightCheck, PreflightReport,
+    ReviewSnapshot, APP_USER_MODEL_ID, PREFLIGHT_DAEMON_TIMEOUT,
+};
 
 async fn run_blocking<T, F>(label: &'static str, task: F) -> Result<T, String>
 where
@@ -445,14 +399,6 @@ fn mark_reviewed(id: SessionId, state: State<'_, AppState>) -> Result<(), String
 /// The daemon serialises these, so this command blocks while another landing is
 /// in flight — that wait is the feature, not an oversight.
 /// The landing and what became of the session, in one answer.
-#[derive(serde::Serialize)]
-struct LandResult {
-    #[serde(flatten)]
-    outcome: terminalai_core::land::LandOutcome,
-    /// Present only when the request asked to archive.
-    archive: Option<terminalai_daemon::ArchiveAfterLanding>,
-}
-
 #[tauri::command]
 async fn land_session(
     request: terminalai_core::land::LandRequest,
