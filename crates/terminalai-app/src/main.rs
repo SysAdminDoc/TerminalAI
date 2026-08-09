@@ -4,6 +4,7 @@ mod dpi;
 mod app_lifecycle;
 mod daemon;
 mod events;
+mod hook_cli;
 mod output;
 mod preset;
 mod projects;
@@ -24,13 +25,12 @@ use terminalai_core::work_queue::{EntryState, WorkQueue};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime};
-use std::{io, io::Read};
 
 use tauri::{Emitter, Manager, State};
 use terminalai_core::agent::Agent;
 use terminalai_core::launch::LaunchSpec;
 use terminalai_core::{
-    fleet_progress, parse_hook_in, FleetProgress, HookTransport, LogEntry,
+    fleet_progress, FleetProgress, HookTransport, LogEntry,
     ProgressStatus, RegistryEvent, Session, SessionId, SessionStatus, TaskProgress, MAX_LOG_ENTRIES,
 };
 use terminalai_daemon::{DaemonClient, HookEndpoint, Request, Response, PROTOCOL_VERSION};
@@ -39,6 +39,7 @@ use app_lifecycle::{
     cleanup_http_hooks, cleanup_http_hooks_at, connect_for_app, connect_or_start_daemon,
     install_daemon_client,
 };
+use hook_cli::{is_hook_invocation, run_hook_cli};
 use preflight::{open_external_url, preflight_fix, preflight_report};
 use output::{replay_overlap, OutputChannels};
 use session_commands::{
@@ -168,61 +169,6 @@ fn run_app() -> Result<(), String> {
         (Ok(()), Ok(())) => Ok(()),
         (Ok(()), Err(error)) => Err(error),
     }
-}
-
-fn is_hook_invocation(args: &[String]) -> bool {
-    args.first().is_some_and(|arg| arg == "hook")
-}
-
-/// Deliver an agent hook without initializing Tauri/WebView2.
-///
-/// Hook commands are deliberately fail-open: an unavailable desktop daemon
-/// must never stall or fail the user's agent command. Claude's async hook
-/// support normally keeps this off the agent's critical path; the short
-/// timeout also bounds Codex's synchronous command hook.
-fn run_hook_cli(args: &[String]) -> i32 {
-    let Some(agent_arg) = args.first() else {
-        eprintln!("usage: terminalai hook <claude|codex>");
-        return 0;
-    };
-    let agent = match agent_arg.as_str() {
-        "claude" => Agent::Claude,
-        "codex" => Agent::Codex,
-        other => {
-            eprintln!("ignoring hook for unknown agent: {other}");
-            return 0;
-        }
-    };
-    let mut input = String::new();
-    if let Err(error) = io::stdin().read_to_string(&mut input) {
-        eprintln!("ignoring hook input read failure: {error}");
-        return 0;
-    }
-    let event = match parse_hook_in(agent, &input, std::env::current_dir().ok()) {
-        Ok(event) => event,
-        Err(error) => {
-            eprintln!("ignoring malformed hook input: {error}");
-            return 0;
-        }
-    };
-    let timeout = Duration::from_millis(750);
-    let client = match DaemonClient::connect_with_timeout(timeout) {
-        Ok(client) => client,
-        Err(error) => {
-            eprintln!("ignoring hook because TerminalAI is unavailable: {error}");
-            return 0;
-        }
-    };
-    let hook_token = std::env::var("TERMINALAI_HOOK_TOKEN").ok();
-    match client.call_with_timeout(
-        Request::Hook { event, hook_token },
-        timeout,
-    ) {
-        Ok(Response::Hook { .. }) | Ok(Response::Ok) => {}
-        Ok(other) => eprintln!("ignoring unexpected hook response: {other:?}"),
-        Err(error) => eprintln!("ignoring hook delivery failure: {error}"),
-    }
-    0
 }
 
 fn main() {
