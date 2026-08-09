@@ -8,6 +8,7 @@ mod preset;
 mod projects;
 mod preflight;
 mod restart;
+mod session_commands;
 mod state;
 mod toast;
 mod work;
@@ -26,20 +27,24 @@ use std::time::{Duration, Instant, SystemTime};
 use std::{io, io::Read};
 
 use preset::{Preset, PresetStore};
-use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{Emitter, Manager, State};
 use terminalai_core::agent::Agent;
 use terminalai_core::launch::LaunchSpec;
 use terminalai_core::{
-    fleet_progress, parse_hook_in, AgentCapabilities, FleetProgress, HookTransport, LogEntry,
+    fleet_progress, parse_hook_in, FleetProgress, HookTransport, LogEntry,
     ProgressStatus, RegistryEvent, Session, SessionId, SessionStatus, TaskProgress, MAX_LOG_ENTRIES,
 };
 use terminalai_daemon::{DaemonClient, HookEndpoint, IpcError, Request, Response, PROTOCOL_VERSION};
-use daemon::{client as daemon_client, expect_ok, require_ok, response as daemon_response, run_blocking};
+use daemon::{client as daemon_client, response as daemon_response, run_blocking};
 use events::bridge_daemon_events;
 use preflight::{open_external_url, preflight_fix, preflight_report};
-use output::{
-    register_output_channel, remove_output_route, replay_overlap, send_raw, OutputChannels,
+use output::{replay_overlap, OutputChannels};
+use session_commands::{
+    agent_capabilities, archive_session, attach_session_output, broadcast_prompt, edit_queued_prompt,
+    enqueue_prompt, focus_session, grid_snapshot, kill_session, land_session, launch_session,
+    mark_read, mark_reviewed, pause_queue, preview_launch, queued_prompts, remove_queued_prompt,
+    reorder_queued_prompt, resize_session, revive_session, resume_queue, stream_scrollback,
+    stream_scrollback_history, subscribe_output, toggle_pin, write_session,
 };
 use workflows::{
     approve_flagged_project, clear_work_run, clear_work_schedule, finish_work_run_session,
@@ -47,8 +52,8 @@ use workflows::{
     skip_work_project, start_work_run, work_run, work_schedule,
 };
 use state::{
-    AppState, FleetSnapshot, LaunchReceipt, LandResult, PreflightCheck, PreflightReport,
-    ReviewSnapshot, APP_USER_MODEL_ID, PREFLIGHT_DAEMON_TIMEOUT,
+    AppState, FleetSnapshot, PreflightCheck, PreflightReport, ReviewSnapshot, APP_USER_MODEL_ID,
+    PREFLIGHT_DAEMON_TIMEOUT,
 };
 
 #[tauri::command]
@@ -353,348 +358,6 @@ fn set_admission(
         Response::Admission { admission } => Ok(admission),
         Response::Error { message } => Err(message),
         other => Err(format!("unexpected admission response: {other:?}")),
-    }
-}
-
-#[tauri::command]
-fn mark_reviewed(id: SessionId, state: State<'_, AppState>) -> Result<(), String> {
-    let client = daemon_client(&state)?;
-    require_ok(daemon_response(&client, Request::MarkReviewed { id })?)
-}
-
-/// Land a session's uncommitted work into a target repository, or report the
-/// specific reason it was refused.
-///
-/// The daemon serialises these, so this command blocks while another landing is
-/// in flight — that wait is the feature, not an oversight.
-/// The landing and what became of the session, in one answer.
-#[tauri::command]
-async fn land_session(
-    request: terminalai_core::land::LandRequest,
-    state: State<'_, AppState>,
-) -> Result<LandResult, String> {
-    let client = daemon_client(&state)?;
-    run_blocking("land_session", move || {
-        match daemon_response(
-            &client,
-            Request::Land {
-                request: Box::new(request),
-            },
-        )? {
-            Response::Land { outcome, archive } => Ok(LandResult { outcome, archive }),
-            Response::Error { message } => Err(message),
-            other => Err(format!("unexpected land response: {other:?}")),
-        }
-    })
-    .await
-}
-
-/// The parsed terminal state for a pinned pane.
-///
-/// A pinned session keeps a live grid in Rust but no browser renderer — that is
-/// what lets the fleet hold ~29 rows. The split view reads this instead of
-/// instantiating a second xterm.
-#[tauri::command]
-fn grid_snapshot(
-    id: SessionId,
-    state: State<'_, AppState>,
-) -> Result<terminalai_core::TerminalGridSnapshot, String> {
-    let client = daemon_client(&state)?;
-    match daemon_response(&client, Request::GridSnapshot { id })? {
-        Response::GridSnapshot { grid } => Ok(grid),
-        Response::Error { message } => Err(message),
-        other => Err(format!("unexpected grid response: {other:?}")),
-    }
-}
-
-#[tauri::command]
-fn preview_launch(
-    spec: LaunchSpec,
-    configured_path: Option<PathBuf>,
-    state: State<'_, AppState>,
-) -> Result<String, String> {
-    let client = daemon_client(&state)?;
-    match daemon_response(
-        &client,
-        Request::Preview {
-            spec: Box::new(spec),
-            configured_path,
-        },
-    )? {
-        Response::Preview { command } => Ok(command),
-        Response::Error { message } => Err(message),
-        other => Err(format!("unexpected preview response: {other:?}")),
-    }
-}
-
-#[tauri::command]
-fn agent_capabilities(
-    agent: Agent,
-    configured_path: Option<PathBuf>,
-    state: State<'_, AppState>,
-) -> Result<AgentCapabilities, String> {
-    let client = daemon_client(&state)?;
-    match daemon_response(
-        &client,
-        Request::Capabilities {
-            agent,
-            configured_path,
-        },
-    )? {
-        Response::Capabilities { capabilities } => Ok(capabilities),
-        Response::Error { message } => Err(message),
-        other => Err(format!("unexpected capabilities response: {other:?}")),
-    }
-}
-
-#[tauri::command]
-fn launch_session(
-    spec: LaunchSpec,
-    configured_path: Option<PathBuf>,
-    state: State<'_, AppState>,
-) -> Result<LaunchReceipt, String> {
-    let client = daemon_client(&state)?;
-    match daemon_response(
-        &client,
-        Request::Launch {
-            spec: Box::new(spec),
-            configured_path,
-        },
-    )? {
-        Response::Launched { id, queued } => Ok(LaunchReceipt { id, queued }),
-        Response::Error { message } => Err(message),
-        other => Err(format!("unexpected launch response: {other:?}")),
-    }
-}
-
-#[tauri::command]
-fn write_session(id: SessionId, data: String, state: State<'_, AppState>) -> Result<(), String> {
-    let client = daemon_client(&state)?;
-    // Keep the raw terminal stream intact: the daemon uses its line-ending
-    // boundary to distinguish composition from an explicit send.
-    require_ok(daemon_response(&client, Request::Write { id, data })?)
-}
-
-#[tauri::command]
-fn resize_session(
-    id: SessionId,
-    rows: u16,
-    cols: u16,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let client = daemon_client(&state)?;
-    require_ok(daemon_response(
-        &client,
-        Request::Resize {
-            id,
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        },
-    )?)
-}
-
-#[tauri::command]
-fn kill_session(id: SessionId, state: State<'_, AppState>) -> Result<(), String> {
-    let client = daemon_client(&state)?;
-    require_ok(daemon_response(&client, Request::Kill { id })?)
-}
-
-#[tauri::command]
-fn focus_session(id: Option<SessionId>, state: State<'_, AppState>) -> Result<(), String> {
-    let client = daemon_client(&state)?;
-    require_ok(daemon_response(&client, Request::Focus { id })?)
-}
-
-#[tauri::command]
-fn mark_read(id: SessionId, state: State<'_, AppState>) -> Result<(), String> {
-    let client = daemon_client(&state)?;
-    require_ok(daemon_response(&client, Request::MarkRead { id })?)
-}
-
-#[tauri::command]
-fn toggle_pin(id: SessionId, state: State<'_, AppState>) -> Result<bool, String> {
-    let client = daemon_client(&state)?;
-    match daemon_response(&client, Request::TogglePin { id })? {
-        Response::PinChanged { pinned } => Ok(pinned),
-        Response::Error { message } => Err(message),
-        other => Err(format!("unexpected pin response: {other:?}")),
-    }
-}
-
-#[tauri::command]
-fn subscribe_output(
-    id: SessionId,
-    channel: Channel<InvokeResponseBody>,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    register_output_channel(id, channel, &state.output_channels, false).map(|_| ())
-}
-
-#[tauri::command]
-fn stream_scrollback(
-    id: SessionId,
-    channel: Channel<InvokeResponseBody>,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let client = daemon_client(&state)?;
-    match daemon_response(&client, Request::Scrollback { id })? {
-        Response::Scrollback { data } => send_raw(&channel, data),
-        Response::Error { message } => Err(message),
-        other => Err(format!("unexpected scrollback response: {other:?}")),
-    }
-}
-
-/// Prompts waiting their turn on one session.
-#[tauri::command]
-fn queued_prompts(
-    id: SessionId,
-    state: State<'_, AppState>,
-) -> Result<Vec<terminalai_core::queue::QueuedPrompt>, String> {
-    let client = daemon_client(&state)?;
-    match daemon_response(&client, Request::QueuedPrompts { id })? {
-        Response::QueuedPrompts { prompts } => Ok(prompts),
-        Response::Error { message } => Err(message),
-        other => Err(format!("unexpected queue response: {other:?}")),
-    }
-}
-
-#[tauri::command]
-fn enqueue_prompt(id: SessionId, text: String, state: State<'_, AppState>) -> Result<u64, String> {
-    let client = daemon_client(&state)?;
-    match daemon_response(&client, Request::EnqueuePrompt { id, text })? {
-        Response::Enqueued { prompt } => Ok(prompt),
-        Response::Error { message } => Err(message),
-        other => Err(format!("unexpected queue response: {other:?}")),
-    }
-}
-
-#[tauri::command]
-fn edit_queued_prompt(
-    id: SessionId,
-    prompt: u64,
-    text: String,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    expect_ok(&state, Request::EditQueuedPrompt { id, prompt, text })
-}
-
-#[tauri::command]
-fn remove_queued_prompt(
-    id: SessionId,
-    prompt: u64,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    expect_ok(&state, Request::RemoveQueuedPrompt { id, prompt })
-}
-
-#[tauri::command]
-fn reorder_queued_prompt(
-    id: SessionId,
-    prompt: u64,
-    to: usize,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    expect_ok(&state, Request::ReorderQueuedPrompt { id, prompt, to })
-}
-
-#[tauri::command]
-fn pause_queue(id: SessionId, state: State<'_, AppState>) -> Result<(), String> {
-    expect_ok(&state, Request::PauseQueue { id })
-}
-
-#[tauri::command]
-fn resume_queue(id: SessionId, state: State<'_, AppState>) -> Result<(), String> {
-    expect_ok(&state, Request::ResumeQueue { id })
-}
-
-/// Send one prompt to several sessions, returning what happened to each.
-///
-/// The per-session result is returned to the caller rather than collapsed into
-/// a status, so the UI can say "sent to 5 of 9" instead of "sent" — a broadcast
-/// that reports only success is one the operator has to verify by hand.
-#[tauri::command]
-fn broadcast_prompt(
-    ids: Vec<SessionId>,
-    text: String,
-    state: State<'_, AppState>,
-) -> Result<Vec<terminalai_core::BroadcastResult>, String> {
-    let client = daemon_client(&state)?;
-    // The same bracketed-paste framing a single reply uses. Without it a
-    // multi-line prompt is submitted a line at a time, so the agent acts on the
-    // first fragment.
-    let data = format!("\u{1b}[200~{text}\u{1b}[201~\r");
-    match daemon_response(&client, Request::Broadcast { ids, data })? {
-        Response::Broadcast { results } => Ok(results),
-        Response::Error { message } => Err(message),
-        other => Err(format!("unexpected broadcast response: {other:?}")),
-    }
-}
-
-/// Output the in-memory ring has already dropped, read from the disk tier.
-///
-/// Streamed on a channel like the ring is, because it is the same kind of
-/// payload and a Tauri command's return value is JSON — a serialized byte array
-/// costs several times its own length.
-#[tauri::command]
-fn stream_scrollback_history(
-    id: SessionId,
-    max_bytes: u64,
-    channel: Channel<InvokeResponseBody>,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let client = daemon_client(&state)?;
-    match daemon_response(&client, Request::ScrollbackHistory { id, max_bytes })? {
-        Response::ScrollbackHistory { data } => send_raw(&channel, data),
-        Response::Error { message } => Err(message),
-        other => Err(format!("unexpected history response: {other:?}")),
-    }
-}
-
-#[tauri::command]
-fn attach_session_output(
-    id: SessionId,
-    channel: Channel<InvokeResponseBody>,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    let route = register_output_channel(id.clone(), channel, &state.output_channels, true)?;
-    let client = match daemon_client(&state) {
-        Ok(client) => client,
-        Err(error) => {
-            remove_output_route(&id, &route, &state.output_channels);
-            return Err(error);
-        }
-    };
-    let result = match daemon_response(&client, Request::Reattach { id: id.clone() }) {
-        Ok(Response::Reattached { data }) => route.complete_replay(data),
-        Ok(Response::Error { message }) => Err(message),
-        Ok(other) => Err(format!("unexpected reattach response: {other:?}")),
-        Err(error) => Err(error),
-    };
-    if result.is_err() {
-        remove_output_route(&id, &route, &state.output_channels);
-    }
-    result
-}
-
-#[tauri::command]
-fn revive_session(id: SessionId, state: State<'_, AppState>) -> Result<SessionId, String> {
-    let client = daemon_client(&state)?;
-    match daemon_response(&client, Request::Revive { id })? {
-        Response::Revived { id } => Ok(id),
-        Response::Error { message } => Err(message),
-        other => Err(format!("unexpected revive response: {other:?}")),
-    }
-}
-
-#[tauri::command]
-fn archive_session(id: SessionId, state: State<'_, AppState>) -> Result<SessionId, String> {
-    let client = daemon_client(&state)?;
-    match daemon_response(&client, Request::Archive { id })? {
-        Response::Archived { id } => Ok(id),
-        Response::Error { message } => Err(message),
-        other => Err(format!("unexpected archive response: {other:?}")),
     }
 }
 

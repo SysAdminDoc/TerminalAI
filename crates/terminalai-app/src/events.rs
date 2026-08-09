@@ -3,6 +3,7 @@
 //! This module owns the long-lived bridge between registry events and the
 //! Tauri window, taskbar, toast, and buffered output surfaces.
 use super::*;
+use super::output::remove_output_route;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::mpsc::RecvTimeoutError;
 use std::thread;
