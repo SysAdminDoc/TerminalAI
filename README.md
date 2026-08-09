@@ -1,6 +1,6 @@
 # TerminalAI
 
-[![version](https://img.shields.io/badge/version-0.23.0-blue.svg)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.24.0-blue.svg)](CHANGELOG.md)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-Windows%20x86__64-lightgrey.svg)](#requirements)
 [![rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
@@ -51,7 +51,7 @@ when waiting on the handle.
 
 ## Status
 
-**v0.23.0 — core and desktop shell built, installed, and verified end to end.**
+**v0.24.0 — core and desktop shell built, installed, and verified end to end.**
 
 Working today (`terminalai-probe`, headless):
 
@@ -430,7 +430,7 @@ pwsh -NoProfile -File scripts/verify-release-metadata.ps1
 # current-version installers, checksums, MSI identity, release provenance, and
 # a three-file Winget manifest. The tag must be v<version>.
 pwsh -NoProfile -File scripts/supply-chain.ps1 -SkipBuild
-pwsh -NoProfile -File scripts/prepare-release-assets.ps1 -RequireSbom -Tag v0.23.0
+pwsh -NoProfile -File scripts/prepare-release-assets.ps1 -RequireSbom -Tag v0.24.0
 
 # Re-derive the MSRV floor after any dependency bump. The workspace rust-version
 # must be at least what this prints, or the badge promises a toolchain that cannot
