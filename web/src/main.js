@@ -72,6 +72,7 @@ import {
 import { createSessionPresentation } from "./sessionPresentation.js";
 import { createFleetNotices } from "./fleetNotices.js";
 import { createShellNavigation } from "./shellNavigation.js";
+import { createReviewVisibility } from "./reviewVisibility.js";
 
 const WDIO_BUILD = import.meta.env.VITE_TERMINALAI_WDIO === "1";
 
@@ -234,6 +235,7 @@ const fleetNotices = createFleetNotices({ $, state, t });
 const { renderAuthBanner, renderStoreQuarantine, renderStoreWriteError } = fleetNotices;
 const firstRunGuide = createFirstRunGuide({ $, state, t });
 const { markFirstRunStep, renderFirstRunGuide } = firstRunGuide;
+const { syncReviewVisibility } = createReviewVisibility({ $, state, t });
 
 const launcherPanel = createLauncher({
   $,
@@ -313,18 +315,6 @@ function checkForUpdates() {
     showUpdateResult,
     fallbackVersion: FALLBACK_APP_VERSION,
   });
-}
-
-// Diagnostics, daemon logs, and preflight checks live in `operationalPanels.js`.
-function syncReviewVisibility() {
-  const hidden = state.reviewMode || state.preflightMode;
-  ["fleet-state-strip", "column-labels", "fleet-list", "empty-state"].forEach((id) => {
-    $(id).classList.toggle("view-hidden", hidden);
-  });
-  $("review-view").classList.toggle("view-hidden", !state.reviewMode || state.preflightMode);
-  $("review-toggle").setAttribute("aria-pressed", String(hidden));
-  $("review-toggle").classList.toggle("wide-toggle-active", state.reviewMode && !state.preflightMode);
-  $("review-toggle").textContent = state.reviewMode && !state.preflightMode ? t("button-fleet") : t("button-review");
 }
 
 const reviewPage = createReviewPage({
