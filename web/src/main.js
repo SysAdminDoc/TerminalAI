@@ -74,6 +74,7 @@ import { createFleetNotices } from "./fleetNotices.js";
 import { createShellNavigation } from "./shellNavigation.js";
 import { createReviewVisibility } from "./reviewVisibility.js";
 import { createUpdatePanel } from "./updatePanel.js";
+import { createShellModes } from "./shellModes.js";
 
 const WDIO_BUILD = import.meta.env.VITE_TERMINALAI_WDIO === "1";
 
@@ -499,20 +500,6 @@ const {
   renderSnapshotLoading,
 } = fleetList;
 
-function resetTerminal(status = t("empty-waiting-for-session")) {
-  if (state.terminal) state.terminal.reset();
-  $("terminal-status").textContent = status;
-  updateTerminalHeader();
-}
-
-function setReviewMode(active) {
-  if (active && state.preflightMode) setPreflightMode(false);
-  state.reviewMode = active;
-  syncReviewVisibility();
-  if (active) void loadReview();
-  else renderRows();
-}
-
 /**
  * Which projects still have roadmap work.
  *
@@ -544,6 +531,18 @@ const terminalHeader = createTerminalHeader({
   t,
 });
 const { renderTerminalPlaceholder, updateTerminalHeader } = terminalHeader;
+
+const shellModes = createShellModes({
+  $,
+  loadReview,
+  renderRows,
+  setPreflightMode: (...args) => setPreflightMode(...args),
+  state,
+  syncReviewVisibility,
+  t,
+  updateTerminalHeader,
+});
+const { resetTerminal, setReviewMode } = shellModes;
 
 const sessionDemo = createSessionDemo({
   createFirstRunDemoSessions,
