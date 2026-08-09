@@ -61,8 +61,8 @@ import {
   demoStatusCount,
   isFirstRunDemoSession,
   readFirstRunProgress,
-  saveFirstRunProgress,
 } from "./firstRun.js";
+import { createFirstRunGuide } from "./firstRunGuide.js";
 import {
   createRendererUtils,
   createTerminalOutput,
@@ -232,33 +232,8 @@ const shellNavigation = createShellNavigation({
 const { closeWorkspacePages, openWorkspacePage, syncRailPage, wireRailNavigation } = shellNavigation;
 const fleetNotices = createFleetNotices({ $, state, t });
 const { renderAuthBanner, renderStoreQuarantine, renderStoreWriteError } = fleetNotices;
-
-function renderFirstRunGuide() {
-  const checklist = $("first-run-checklist");
-  if (!checklist) return;
-  const entries = Array.from(checklist.querySelectorAll("[data-first-run-step]"));
-  const done = entries.filter((entry) => state.firstRunProgress[entry.dataset.firstRunStep]).length;
-  $("first-run-progress").textContent = t("first-run-progress", {
-    done,
-    total: entries.length,
-  });
-  for (const entry of entries) {
-    const complete = state.firstRunProgress[entry.dataset.firstRunStep] === true;
-    entry.dataset.complete = String(complete);
-    entry.querySelector(".first-run-step-state").textContent = t(
-      complete ? "first-run-step-done" : "first-run-step-next",
-    );
-  }
-}
-
-function markFirstRunStep(step) {
-  if (state.firstRunProgress[step] === true) return;
-  state.firstRunProgress = saveFirstRunProgress({
-    ...state.firstRunProgress,
-    [step]: true,
-  });
-  renderFirstRunGuide();
-}
+const firstRunGuide = createFirstRunGuide({ $, state, t });
+const { markFirstRunStep, renderFirstRunGuide } = firstRunGuide;
 
 const launcherPanel = createLauncher({
   $,
