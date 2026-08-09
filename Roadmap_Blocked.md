@@ -141,20 +141,6 @@ transparent hibernation. The implementation requires a real Claude session and o
 judgment about whether the resumed context is equivalent; no safe local inference can settle that
 question.
 
-## R-56 · P2 — A UI test and screenshot path that actually works
-
-Blocked 2026-08-03 by the required Windows visual-isolation display, not by the application test
-code. The signed virtual display driver was healthy but Windows attached no isolated screen: the
-approved `visual-isolation.ps1 ensure` failed closed before and after `remove` plus a verified
-driver reinstall. The embedded WebDriver provider then timed out at the first `element` command,
-and a direct native EdgeDriver probe independently failed with `DevToolsActivePort file doesn't
-exist` after launching the app on the verified private desktop. Resume only after `ensure` returns
-the exact fourth virtual display; do not use a physical monitor or an interactive desktop.
-
-Update 2026-08-03 (later session): `ensure` succeeds again — `\\.\DISPLAY5` 1920x1080 at (5360,0)
-attached, and `launch` placed the release app on it with placement proof. The display blocker is
-gone; the WebDriver/EdgeDriver failures above are unretested since and are now the open question.
-
 ## P3 unaudited-surface pass residuals — 2026-08-03
 
 The catch-all testing row was audited on Windows 11 26100 and removed from `ROADMAP.md`.
@@ -177,10 +163,12 @@ The catch-all testing row was audited on Windows 11 26100 and removed from `ROAD
   branches.
 - **NSIS/MSI payloads:** a fresh `cargo tauri build --ci --no-sign --bundles nsis,msi` succeeded.
   The generated WiX source contains the main executable and both declared sidecars, and the MSI
-  contains their component names. The compressed NSIS payload was not extracted because no local
-  archive extractor is installed. The install-and-launch gate remains under R-56: running the
-  existing verifier as-is would start its installer on the interactive desktop before its later
-  isolated application launch.
+  contains their component names. Update 2026-08-08: 7-Zip 26.02 listed and extracted the NSIS
+  payload successfully; it contains `terminalai.exe`, `terminalai-daemon.exe` and
+  `terminalai-probe.exe` plus the expected installer support files. The install-and-launch gate
+  remains a separate operator-facing residual: running the existing verifier as-is starts its
+  installer from the interactive desktop before its later isolated application launch, which is
+  outside the standing invisible-test policy.
 - **Real load and memory claims:** the frontend contract suite still covers the declared 28px row,
   measured-window documentation, and 29-row target, but no fresh browser measurement or live-agent
   RSS/load run was performed in this pass. The 2026-08-02/2026-08-03 measurements remain historical

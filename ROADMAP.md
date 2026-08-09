@@ -10,6 +10,21 @@ the packaged Windows application, real agent versions, and an unfamiliar operato
 Items stay here while their implementation is actionable. Operator-owned or vendor-owned evidence
 remains cross-referenced in `Roadmap_Blocked.md` and is not claimed by a local test.
 
+## Verification Closure — 2026-08-08
+
+- **R-56 — isolated UI test and screenshot path:** closed. `npm --prefix web run test:e2e` passed
+  from a release build with the WebDriver/custom-protocol features enabled. A live
+  `visual-isolation.ps1 ensure` returned the non-primary fourth display `\\.\DISPLAY8` at
+  `(5360,0)`; `visual-isolation verify` proved the packaged shell on the private desktop, and the
+  runner wrote exit code `0` plus screenshots for fleet, launcher, review, diagnostics, work
+  schedule, daemon-unreachable and daemon-recovered states. The generated artifacts remain in the
+  ignored `web/artifacts/wdio` directory for local visual inspection.
+- **NSIS payload inspection:** closed for archive contents. 7-Zip 26.02 listed and extracted the
+  current `target/release/bundle/nsis/TerminalAI_0.23.0_x64-setup.exe`; the payload contains the
+  GUI executable and both declared sidecars. The installed-prefix launch/upgrade assertion remains
+  in `Roadmap_Blocked.md` because its existing verifier starts the installer from the interactive
+  desktop before its later isolated application launch.
+
 ## Audit Findings — 2026-08-07
 
 Fourth audit pass, against `cc53821` / v0.15.0 with a green baseline of 585 Rust (0 failed), 305
