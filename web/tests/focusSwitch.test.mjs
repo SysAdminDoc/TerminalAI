@@ -1,18 +1,14 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 
-const main = appSource();
-const focus = readFileSync(
-  new URL("../src/sessionFocus.js", import.meta.url),
-  "utf8",
-).replace(/\r\n/g, "\n");
+const shell = moduleSource("main.js");
+const focus = moduleSource("sessionFocus.js");
 
 test("focus switches serialize channel registration and restore the prior route", () => {
-  assert.match(main, /focusQueue: Promise\.resolve\(\),/);
-  assert.match(main, /const switchPromise = state\.focusQueue\.then\(\(\) => focusSessionNow\(id\)\);/);
-  assert.match(main, /state\.focusQueue = switchPromise\.catch\(\(\) => \{\}\);/);
+  assert.match(shell, /focusQueue: Promise\.resolve\(\),/);
+  assert.match(focus, /const switchPromise = state\.focusQueue\.then\(\(\) => focusSessionNow\(id\)\);/);
+  assert.match(focus, /state\.focusQueue = switchPromise\.catch\(\(\) => \{\}\);/);
 
   const start = focus.indexOf("async function focusSessionNow");
   const end = focus.indexOf("\n  return", start);

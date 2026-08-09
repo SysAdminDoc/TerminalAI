@@ -1,16 +1,15 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 
-const main = appSource();
-const fleetSummary = readFileSync(
-  new URL("../src/fleetSummary.js", import.meta.url),
-  "utf8",
-).replace(/\r\n/g, "\n");
+const fleetSummary = moduleSource("fleetSummary.js");
+const operationalPanels = moduleSource("operationalPanels.js");
 
 const summary = fleetSummary.slice(fleetSummary.indexOf("function renderSummary"));
-const diagnostics = main.slice(main.indexOf("function renderDiagnostics"), main.indexOf("\nfunction formatReason"));
+const diagnostics = operationalPanels.slice(
+  operationalPanels.indexOf("function renderDiagnostics"),
+  operationalPanels.indexOf("\nfunction formatReason"),
+);
 
 test("fleet summary and state counts skip unchanged DOM writes", () => {
   assert.match(summary, /const summaryMarkup =/);

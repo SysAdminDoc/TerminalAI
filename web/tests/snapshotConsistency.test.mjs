@@ -1,20 +1,21 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 
-const main = appSource();
+const shell = moduleSource("main.js");
+const sessionState = moduleSource("sessionState.js");
 const coordinator = readFileSync(
   new URL("../src/snapshotCoordinator.js", import.meta.url),
   "utf8",
 ).replace(/\r\n/g, "\n");
 
 test("snapshot refreshes replay events that arrived during the fetch", () => {
-  assert.match(main, /snapshotQueue: Promise\.resolve\(\),/);
-  assert.match(main, /snapshotEvents: \[\],/);
+  assert.match(shell, /snapshotQueue: Promise\.resolve\(\),/);
+  assert.match(shell, /snapshotEvents: \[\],/);
   assert.match(coordinator, /const snapshotPromise = state\.snapshotQueue\.then\(\(\) => loadSnapshotNow\(\)\);/);
-  assert.match(main, /if \(state\.snapshotLoading\) state\.snapshotEvents\.push\(\{ kind: "session-updated", session \}\);/);
-  assert.match(main, /if \(state\.snapshotLoading\) state\.snapshotEvents\.push\(\{ kind: "session-removed", id \}\);/);
+  assert.match(sessionState, /if \(state\.snapshotLoading\) state\.snapshotEvents\.push\(\{ kind: "session-updated", session \}\);/);
+  assert.match(sessionState, /if \(state\.snapshotLoading\) state\.snapshotEvents\.push\(\{ kind: "session-removed", id \}\);/);
 
   const start = coordinator.indexOf("async function loadSnapshotNow");
   assert.ok(start >= 0, "snapshot implementation is present");

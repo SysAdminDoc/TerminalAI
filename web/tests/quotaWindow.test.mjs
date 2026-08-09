@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { renderWindowShares, unattributed, windowShares } from "../src/quotaWindow.js";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
-const main = appSource();
+const main = moduleSource("rollupPage.js");
 
 const OPTIONS = {
   escape: (value) =>

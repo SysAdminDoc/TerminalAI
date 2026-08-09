@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 
-const main = appSource();
+const main = moduleSource("launcher.js");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 

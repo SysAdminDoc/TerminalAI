@@ -10,9 +10,10 @@ import {
   stalenessLabel,
   summarize,
 } from "../src/projects.js";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 
-const main = appSource();
+const main = moduleSource("workspacePages.js");
+const eventBindings = moduleSource("eventBindings.js");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 
@@ -114,8 +115,8 @@ test("the summary always states how many projects could not be counted", () => {
 test("the dialog is reachable and its controls are wired", () => {
   assert.match(html, /id="projects-dialog"/);
   assert.match(html, /id="projects-toggle"/);
-  assert.match(main, /\$\("projects-toggle"\)\.addEventListener\("click", \(\) => void openProjects\(\)\)/);
-  assert.match(main, /\$\("projects-open-only"\)\.addEventListener\("change", \(\) => renderProjects\(\)\)/);
+  assert.match(eventBindings, /\$\("projects-toggle"\)\.addEventListener\("click", \(\) => void openProjects\(\)\)/);
+  assert.match(eventBindings, /\$\("projects-open-only"\)\.addEventListener\("change", \(\) => renderProjects\(\)\)/);
 });
 
 test("the dialog opens before the scan rather than after it", () => {

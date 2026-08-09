@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { appSource } from "./appSource.mjs";
+import { appSource, moduleSource } from "./appSource.mjs";
 
-const main = appSource();
+const main = moduleSource("main.js");
+const fleetList = moduleSource("fleetList.js");
+const eventBindings = moduleSource("eventBindings.js");
+const sessionStatus = moduleSource("sessionStatus.js");
+const renderer = appSource();
 const grouping = readFileSync(
   new URL("../src/fleetGrouping.js", import.meta.url),
   "utf8",
@@ -17,7 +21,7 @@ test("structured filters exist alongside the free-text box", () => {
   assert.match(html, /id="agent-filter"/);
   assert.match(html, /id="status-filter"/);
   assert.match(grouping, /function passesFilters\(session\) \{/);
-  assert.match(main, /if \(!passesFilters\(session\)\) return false;/);
+  assert.match(fleetList, /if \(!passesFilters\(session\)\) return false;/);
 });
 
 test("grouping never inserts a non-option child into the listbox", () => {
@@ -25,8 +29,8 @@ test("grouping never inserts a non-option child into the listbox", () => {
   // would break both its ARIA semantics and its keyboard model, so grouping
   // reorders and labels rows instead.
   assert.match(html, /id="fleet-list"[^>]*role="listbox"/);
-  assert.doesNotMatch(main, /role="group"/);
-  assert.doesNotMatch(main, /createGroupHeader|group-header/);
+  assert.doesNotMatch(renderer, /role="group"/);
+  assert.doesNotMatch(renderer, /createGroupHeader|group-header/);
   assert.match(grouping, /function groupChip\(session\) \{/);
 });
 
@@ -44,7 +48,7 @@ test("a group's position follows its most urgent member", () => {
 test("grouping is off by default and cycles through every mode", () => {
   assert.match(main, /groupBy: "none",/);
   assert.match(grouping, /export const GROUP_MODES = \["none", "folder", "agent", "status"\];/);
-  assert.match(main, /GROUP_MODES\.indexOf\(state\.groupBy\) \+ 1\) % GROUP_MODES\.length/);
+  assert.match(eventBindings, /GROUP_MODES\.indexOf\(state\.groupBy\) \+ 1\) % GROUP_MODES\.length/);
 });
 
 test("the group button states the mode it is currently in", () => {
@@ -60,7 +64,7 @@ test("every status filter maps to a real status value", () => {
   // nothing, which reads as an empty fleet.
   const block = grouping.slice(grouping.indexOf("const STATUS_FILTERS"));
   const body = block.slice(0, block.indexOf("\n  };") + 5);
-  const meta = main.slice(main.indexOf("const STATUS_META"), main.indexOf("const STATUS_KEYS"));
+  const meta = sessionStatus.slice(sessionStatus.indexOf("const STATUS_META"), sessionStatus.indexOf("const STATUS_KEYS"));
   for (const status of ["working", "thinking", "idle", "rate-limited", "exited"]) {
     assert.ok(body.includes(`"${status}"`), `${status} not used by any filter`);
     assert.ok(meta.includes(`"${status}"`) || meta.includes(`${status}:`), `${status} unknown`);

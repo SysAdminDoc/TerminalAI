@@ -4,21 +4,20 @@ import test from "node:test";
 import { renderFixtureRow } from "./rowFixture.mjs";
 
 import { JSDOM } from "jsdom";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 import { rateLimitedLabel } from "../src/rateLimit.js";
 import { createSessionStatus, STATUS_META } from "../src/sessionStatus.js";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-// The fleet row markup lives in `rowMarkup.js` since it was extracted out of
-// this file. These assertions are about what the app renders, not about which
-// module holds the template, so they read both.
-const main =
-  appSource() +
-  readFileSync(new URL("../src/rowMarkup.js", import.meta.url), "utf8");
-const fleetRows = readFileSync(
-  new URL("../src/fleetRowState.js", import.meta.url),
-  "utf8",
-).replace(/\r\n/g, "\n");
+const rowMarkup = moduleSource("rowMarkup.js");
+const fleetRows = moduleSource("fleetRowState.js");
+const shell = moduleSource("main.js");
+const fleetList = moduleSource("fleetList.js");
+const eventBindings = moduleSource("eventBindings.js");
+const sessionState = moduleSource("sessionState.js");
+const operationalPanels = moduleSource("operationalPanels.js");
+const reviewVisibility = moduleSource("reviewVisibility.js");
+const sessionPresentation = moduleSource("sessionPresentation.js");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 const sessionStatus = createSessionStatus({ t: (key) => key, rateLimitedLabel });
 
@@ -38,8 +37,8 @@ test("fleet container and rows use single-select listbox semantics", () => {
 });
 
 test("fleet row actions remain explicit buttons and attention glyphs stay distinct", () => {
-  assert.match(main, /<button type="button" data-action="pin"/);
-  assert.match(main, /<button type="button" data-action="focus"/);
+  assert.match(rowMarkup, /<button type="button" data-action="pin"/);
+  assert.match(rowMarkup, /<button type="button" data-action="focus"/);
   assert.notEqual(STATUS_META["needs-approval"].glyph, STATUS_META["needs-you"].glyph);
 });
 
@@ -48,38 +47,39 @@ test("fleet updates announce actionable transitions and defer priority reorderin
   assert.doesNotMatch(summary, /aria-live/);
   assert.match(html, /id="fleet-order-notice"[^>]*view-hidden/);
   assert.match(html, /id="apply-fleet-order"/);
-  assert.match(main, /state\.announcementTimer = setTimeout\(flushAnnouncements, 2000\)/);
-  assert.match(main, /announcementQueue/);
-  assert.match(main, /pendingPriorityChanges/);
-  assert.match(main, /applyFleetOrder/);
-  assert.match(main, /addEventListener\("mouseenter", beginFleetOrderFreeze\)/);
-  assert.match(main, /addEventListener\("focusin", beginFleetOrderFreeze\)/);
+  assert.match(sessionState, /state\.announcementTimer = setTimeout\(flushAnnouncements, 2000\)/);
+  assert.match(sessionState, /announcementQueue/);
+  assert.match(fleetList, /pendingPriorityChanges/);
+  assert.match(fleetList, /applyFleetOrder/);
+  assert.match(eventBindings, /addEventListener\("mouseenter", beginFleetOrderFreeze\)/);
+  assert.match(eventBindings, /addEventListener\("focusin", beginFleetOrderFreeze\)/);
 });
 
 test("preflight remains reachable when daemon state is unavailable", () => {
   assert.match(html, /id="preflight-view"/);
   assert.match(html, /id="preflight-list"/);
   assert.match(html, /id="preflight-toggle"/);
-  assert.match(main, /data-preflight-action/);
-  assert.match(main, /invoke\("preflight_report"\)/);
-  assert.match(main, /invoke\("preflight_fix"/);
-  assert.match(main, /state\.preflightMode = true/);
-  assert.match(main, /data-diagnostics-action="preflight"/);
+  assert.match(operationalPanels, /data-preflight-action/);
+  assert.match(operationalPanels, /invoke\("preflight_report"\)/);
+  assert.match(operationalPanels, /invoke\("preflight_fix"/);
+  assert.match(operationalPanels, /state\.preflightMode = true/);
+  assert.match(operationalPanels, /data-diagnostics-action="preflight"/);
 });
 
 test("managed hook policy has a distinct blocked and non-fixable state", () => {
-  assert.match(main, /blocked: \{ glyph: "⊘", label: "preflight-blocked", tone: "red" \}/);
-  assert.match(main, /check\.can_fix \? "" : " disabled"/);
+  assert.match(shell, /blocked: \{ glyph: "⊘", label: "preflight-blocked", tone: "red" \}/);
+  assert.match(operationalPanels, /check\.can_fix \? "" : " disabled"/);
 });
 
 test("visibility synchronizers reference elements that exist in the shell", () => {
   const dom = new JSDOM(html);
   for (const functionName of ["syncPreflightVisibility", "syncReviewVisibility"]) {
-    const start = main.indexOf(`function ${functionName}()`);
+    const visibilitySource = operationalPanels + "\n" + reviewVisibility;
+    const start = visibilitySource.indexOf(`function ${functionName}()`);
     assert.notEqual(start, -1, `${functionName} is present`);
-    const end = main.indexOf("\n}", start);
+    const end = visibilitySource.indexOf("\n}", start);
     assert.notEqual(end, -1, `${functionName} has a body`);
-    const body = main.slice(start, end);
+    const body = visibilitySource.slice(start, end);
     const literal = body.match(/\[([^\]]+)\]\.forEach/);
     assert.ok(literal, `${functionName} has a visibility id list`);
     const ids = [...literal[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]);
@@ -120,7 +120,7 @@ test("a session the supervisor gave up on does not read like one that finished",
   assert.match(ftl, /^status-failed-detail-code = .*\{ \$code \}/m);
 
   // The reason reaches the row, not only the diagnostics drawer.
-  assert.match(main, /class="row-status-label" title="\$\{escapeHtml\(detail \|\| label\)\}"/);
+  assert.match(rowMarkup, /class="row-status-label" title="\$\{escapeHtml\(detail \|\| label\)\}"/);
 });
 
 test("a stalled session is marked, explained, and sorted above healthy working rows", () => {
@@ -139,9 +139,9 @@ test("a session's memory is shown, and an unsampled one is not shown as zero", (
   // A session using nothing and a session we could not measure are different
   // facts; rendering the second as 0 MB would report a healthy number from the
   // absence of a signal.
-  assert.match(main, /function memory\(bytes\)/);
+  assert.match(sessionPresentation, /function memory\(bytes\)/);
   assert.match(fleetRows, /memoryCell\.textContent = memory\(session\.memory_bytes\);/);
-  assert.match(main, /data-row-memory/);
+  assert.match(rowMarkup, /data-row-memory/);
   assert.match(fleetRows, /memoryCell\.classList\.toggle\("row-memory-limited"/);
   for (const key of ["memory-explained", "memory-limited-explained"]) {
     assert.ok(new RegExp(`^${key} = `, "m").test(ftl), `${key} has no string`);

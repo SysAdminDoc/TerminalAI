@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 import { appRustSource } from "./appRustSource.mjs";
 
-const main = appSource();
+const main = moduleSource("workRunPanel.js");
+const eventBindings = moduleSource("eventBindings.js");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 const app = appRustSource();
@@ -20,7 +21,7 @@ const render = (() => {
 })();
 const start = (() => {
   const at = main.indexOf("async function startWorkRun()");
-  return main.slice(at, main.indexOf("\nasync function openProjects", at));
+  return main.slice(at);
 })();
 
 test("a prompt is delivered as a pty write, never as a command-line argument", () => {
@@ -135,9 +136,9 @@ test("with no stored prompts the control is unavailable rather than erroring", (
 
 test("the run's controls are wired and its state is refreshed after every action", () => {
   assert.match(html, /id="work-start-button"/);
-  assert.match(main, /\$\("work-start-button"\)\.addEventListener\("click", \(\) => void startWorkRun\(\)\)/);
+  assert.match(eventBindings, /\$\("work-start-button"\)\.addEventListener\("click", \(\) => void startWorkRun\(\)\)/);
   assert.match(main, /invoke\("set_work_run_paused", \{ paused \}\)/);
-  assert.match(main, /invoke\("clear_work_run"\)/);
+  assert.match(eventBindings, /invoke\("clear_work_run"\)/);
   const action = main.slice(main.indexOf("async function workEntryAction"));
   assert.match(action.slice(0, 400), /await refreshWorkRun\(\);/);
 });

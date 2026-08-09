@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 import { cssSource } from "./cssSource.mjs";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-const main = appSource();
+const main = moduleSource("fleetSummary.js");
 const fleetList = readFileSync(
   new URL("../src/fleetList.js", import.meta.url),
   "utf8",

@@ -3,34 +3,23 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { JSDOM } from "jsdom";
 import { createRendererUtils } from "../src/rendererUtils.js";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 import { cssSource } from "./cssSource.mjs";
 
-const main = appSource();
-const reviewPage = readFileSync(
-  new URL("../src/reviewPage.js", import.meta.url),
-  "utf8",
-).replace(/\r\n/g, "\n");
-const broadcastPanel = readFileSync(
-  new URL("../src/broadcastPanel.js", import.meta.url),
-  "utf8",
-).replace(/\r\n/g, "\n");
-const rollupPage = readFileSync(
-  new URL("../src/rollupPage.js", import.meta.url),
-  "utf8",
-).replace(/\r\n/g, "\n");
-const explainerPage = readFileSync(
-  new URL("../src/explainerPage.js", import.meta.url),
-  "utf8",
-).replace(/\r\n/g, "\n");
+const workspacePages = moduleSource("workspacePages.js");
+const queuePanel = moduleSource("queuePanel.js");
+const reviewPage = moduleSource("reviewPage.js");
+const broadcastPanel = moduleSource("broadcastPanel.js");
+const rollupPage = moduleSource("rollupPage.js");
+const explainerPage = moduleSource("explainerPage.js");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 const styles = cssSource();
 
-const sliceBetween = (start, end) => main.slice(main.indexOf(start), main.indexOf(end));
+const sliceBetween = (source, start, end) => source.slice(source.indexOf(start), source.indexOf(end));
 
 test("project discovery failures remain distinct from an empty project list", () => {
-  const open = sliceBetween("async function openProjects", "/** The queue button's glyph");
-  const render = sliceBetween("function renderProjects", "async function openProjects");
+  const open = sliceBetween(workspacePages, "async function openProjects", "/** The queue button's glyph");
+  const render = sliceBetween(workspacePages, "function renderProjects", "async function openProjects");
 
   assert.match(open, /state\.projectsError = null;/);
   assert.match(open, /state\.projectsError = String\(error\);/);
@@ -43,8 +32,8 @@ test("project discovery failures remain distinct from an empty project list", ()
 });
 
 test("queue lookup failures do not render an empty queue", () => {
-  const refresh = sliceBetween("async function refreshQueue", "function renderQueue");
-  const render = sliceBetween("function renderQueue", "async function queueRowAction");
+  const refresh = sliceBetween(queuePanel, "async function refreshQueue", "function renderQueue");
+  const render = sliceBetween(queuePanel, "function renderQueue", "async function queueRowAction");
 
   assert.match(refresh, /state\.queueError = null;/);
   assert.match(refresh, /state\.queueError = String\(error\);/);
@@ -139,7 +128,7 @@ test("every state-less dialog renders its own failure rather than nothing", () =
           ? rollupPage
           : opener === "openExplainer"
             ? explainerPage
-          : main;
+            : workspacePages;
     const from = source.indexOf(`function ${opener}() {`);
     assert.notEqual(from, -1, `${opener} is gone; this test is reading nothing`);
     const open = source.slice(from, source.indexOf("\n}\n", from));
@@ -160,7 +149,11 @@ test("a fleet search that fails offers to run again", () => {
   // The one of the five with a real backend behind it, so a failure is often
   // transient and re-running is exactly what the operator would do -- and had
   // to do by retyping.
-  const search = sliceBetween("async function runFleetSearch", "async function openSessionHistory");
+  const search = sliceBetween(
+    workspacePages,
+    "async function runFleetSearch",
+    "async function openSessionHistory",
+  );
   assert.match(search, /renderDataError\(\s*body,/);
   assert.match(search, /"runFleetSearch",\s*runFleetSearch,/);
   assert.ok(/^fleet-search-error = /m.test(ftl));

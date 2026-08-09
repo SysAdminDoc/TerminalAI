@@ -3,12 +3,15 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { JSDOM } from "jsdom";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 import { cssSource } from "./cssSource.mjs";
 
 const css = cssSource();
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-const main = appSource();
+const shell = moduleSource("main.js");
+const statusSource = moduleSource("sessionStatus.js");
+const operationalPanels = moduleSource("operationalPanels.js");
+const terminalPane = moduleSource("terminalPane.js");
 const catalog = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 
 test("small UI text does not use decorative contrast tokens", () => {
@@ -37,8 +40,9 @@ test("reduced motion disables the remaining spinner and glow effects", () => {
 });
 
 test("status metadata has matching tone and pulse classes", () => {
-  const statusMeta = main.slice(main.indexOf("const STATUS_META"), main.indexOf("const STATUS_KEYS"));
-  const preflightMeta = main.slice(main.indexOf("const PREFLIGHT_META"), main.indexOf("const RELEASES_ENDPOINT"));
+  const statusMeta = statusSource.slice(statusSource.indexOf("export const STATUS_META"), statusSource.indexOf("export const STATUS_KEYS"));
+  const preflightStart = shell.indexOf("const PREFLIGHT_META");
+  const preflightMeta = shell.slice(preflightStart, shell.indexOf("\n};", preflightStart));
   const statusTones = [...statusMeta.matchAll(/tone: "([^"]+)"/g)].map(([, tone]) => tone);
   const preflightTones = [...preflightMeta.matchAll(/tone: "([^"]+)"/g)].map(([, tone]) => tone);
 
@@ -149,9 +153,9 @@ test("screen reader mode is explicit and opt-in", () => {
   assert.match(html, /id="screen-reader-toggle"[^>]*aria-pressed="false"/);
   assert.match(html, /id="screen-reader-toggle"[^>]*aria-label="Toggle screen reader mode"/);
   assert.match(catalog, /screen-reader-enable = Enable screen reader mode \(disables right-click copy and paste\)/);
-  assert.match(main, /screenReaderMode: false,/);
-  assert.match(main, /state\.terminal\.options\.screenReaderMode = state\.screenReaderMode/);
-  assert.match(main, /screen-reader-toggle.*setScreenReaderMode\(!state\.screenReaderMode\)/);
+  assert.match(shell, /screenReaderMode: false,/);
+  assert.match(operationalPanels, /state\.terminal\.options\.screenReaderMode = state\.screenReaderMode/);
+  assert.match(operationalPanels, /screen-reader-toggle.*setScreenReaderMode\(!state\.screenReaderMode\)/);
 });
 
 test("the terminal follows the theme instead of carrying its own palette", () => {
@@ -160,9 +164,9 @@ test("the terminal follows the theme instead of carrying its own palette", () =>
   // Catppuccin theme regardless of `prefers-color-scheme`: in light mode a light
   // panel framed a hard dark rectangle, and focusing a session flipped the
   // pane's apparent theme.
-  assert.match(main, /theme: terminalTheme\(\)/);
+  assert.match(terminalPane, /theme: terminalTheme\(\)/);
   assert.doesNotMatch(
-    main,
+    terminalPane,
     /background:\s*"#[0-9a-f]{6}"/i,
     "the renderer must not reintroduce a hardcoded terminal background",
   );
@@ -170,7 +174,7 @@ test("the terminal follows the theme instead of carrying its own palette", () =>
   assert.match(css, /\.terminal-panel \{[^}]*background: var\(--term-bg\);/);
   // A window whose OS theme changes must repaint; the canvas is painted from
   // values read once, unlike the CSS around it.
-  assert.match(main, /prefers-color-scheme: dark[\s\S]*?options\.theme = terminalTheme\(\)/);
+  assert.match(terminalPane, /prefers-color-scheme: dark[\s\S]*?options\.theme = terminalTheme\(\)/);
 
   const palette = (block) =>
     Object.fromEntries(

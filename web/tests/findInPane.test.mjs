@@ -5,7 +5,7 @@ import test from "node:test";
 import { JSDOM } from "jsdom";
 
 import { renderSearchResults, searchSummary } from "../src/fleetSearch.js";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 import { cssSource } from "./cssSource.mjs";
 
 /// The same escaper `main.js` binds.
@@ -16,7 +16,9 @@ const escapeHtml = (value) =>
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 
-const main = appSource();
+const terminalPane = moduleSource("terminalPane.js");
+const terminalHistory = moduleSource("terminalHistory.js");
+const workspacePages = moduleSource("workspacePages.js");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const css = cssSource();
 const catalog = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
@@ -26,22 +28,22 @@ test("the search addon is a pinned dependency and is actually loaded", () => {
   // The pane had no way to find anything in it. `addon-search` 0.16.0 carries
   // the SearchLineCache that makes a long buffer searchable at all.
   assert.equal(pkg.dependencies["@xterm/addon-search"], "0.16.0");
-  assert.match(main, /import \{ SearchAddon \} from "@xterm\/addon-search";/);
-  assert.match(main, /state\.searchAddon = new SearchAddon\(\)/);
-  assert.match(main, /state\.terminal\.loadAddon\(state\.searchAddon\)/);
+  assert.match(terminalPane, /SearchAddon/);
+  assert.match(terminalPane, /state\.searchAddon = new SearchAddon\(\)/);
+  assert.match(terminalPane, /state\.terminal\.loadAddon\(state\.searchAddon\)/);
 });
 
 test("the match count comes from the addon rather than being counted twice", () => {
   // The addon knows what it found. Recounting in the renderer would be a
   // second implementation of the search that can disagree with the highlights.
-  assert.match(main, /state\.searchAddon\.onDidChangeResults\(\(results\) => renderFindCount\(results\)\)/);
+  assert.match(terminalPane, /state\.searchAddon\.onDidChangeResults\(\(results\) => renderFindCount\(results\)\)/);
 });
 
 test("a scan in progress is not reported as zero matches", () => {
   // `resultCount` is -1 while the addon is still walking a long buffer. Showing
   // "no matches" then is a wrong answer that arrives before the right one and
   // looks identical to it.
-  const fn = main.slice(main.indexOf("function renderFindCount"));
+  const fn = terminalHistory.slice(terminalHistory.indexOf("function renderFindCount"));
   const body = fn.slice(0, fn.indexOf("\n/// Prepend output"));
   assert.match(body, /results\.resultCount < 0/);
   assert.match(body, /t\("find-searching"\)/);
@@ -57,12 +59,12 @@ test("closing the find bar clears the decorations it left behind", () => {
   // xterm keeps highlight decorations until told otherwise, so a hidden bar
   // with a live search leaves the pane marked up for a query the operator can
   // no longer see or change.
-  const fn = main.slice(main.indexOf("function toggleFind"));
+  const fn = terminalHistory.slice(terminalHistory.indexOf("function toggleFind"));
   const body = fn.slice(0, fn.indexOf("\n/// Run the current query"));
   assert.match(body, /state\.searchAddon\?\.clearDecorations\(\)/);
   assert.match(body, /\$\("terminal-find-count"\)\.textContent = ""/);
   // An emptied field is the same situation: nothing is being searched.
-  const run = main.slice(main.indexOf("function runFind"));
+  const run = terminalHistory.slice(terminalHistory.indexOf("function runFind"));
   assert.match(run.slice(0, run.indexOf("\n/// Report the addon")), /if \(!needle\) \{/);
 });
 
@@ -70,7 +72,7 @@ test("the highlight colours are theme tokens, not a second palette", () => {
   // Decorations are painted into the same canvas no DOM contrast gate can see.
   // Literals here would be the hardcoded-terminal-theme defect again, in the
   // one place the guard against it was not looking.
-  const run = main.slice(main.indexOf("function runFind"));
+  const run = terminalHistory.slice(terminalHistory.indexOf("function runFind"));
   const body = run.slice(0, run.indexOf("\n/// Report the addon"));
   assert.doesNotMatch(body, /#[0-9a-f]{6}/i, "no literal colours in the decorations");
   assert.match(body, /matchOverviewRuler: token\("--yellow"\)/);
@@ -140,7 +142,7 @@ test("a needle too short to be worth a fleet read is refused before the call", (
   // A one-character search matches most of every transcript and costs a read
   // of the whole fleet's disk tier to establish that. The core refuses it too;
   // this stops the round trip happening at all.
-  const fn = main.slice(main.indexOf("async function runFleetSearch"));
+  const fn = workspacePages.slice(workspacePages.indexOf("async function runFleetSearch"));
   const body = fn.slice(0, fn.indexOf("\n/// One session's matches"));
   const guard = body.indexOf("needle.length < 2");
   const call = body.indexOf('invoke("search_fleet"');

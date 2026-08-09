@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { registrySource } from "./registrySource.mjs";
 import test from "node:test";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 import { cssSource } from "./cssSource.mjs";
 
-const main = appSource();
+const main = moduleSource("terminalPane.js");
 const pinned = readFileSync(
   new URL("../src/pinnedPanes.js", import.meta.url),
   "utf8",

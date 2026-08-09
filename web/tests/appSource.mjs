@@ -44,6 +44,19 @@ export function shellSource() {
   return readFileSync(SRC_DIR + "main.js", "utf8").replace(/\r\n/g, "\n");
 }
 
+/// One renderer module, for contracts that belong to an owning boundary.
+///
+/// Prefer this over `appSource()` whenever an assertion is about one feature.
+/// The assembled source remains available only for genuinely cross-cutting
+/// invariants such as the complete renderer's literal-attribute scan.
+export function moduleSource(name) {
+  if (!name || name.includes("\\") || name.includes("/")) {
+    throw new Error(`invalid renderer module name: ${name}`);
+  }
+  const filename = name.endsWith(".js") ? name : `${name}.js`;
+  return readFileSync(SRC_DIR + filename, "utf8").replace(/\r\n/g, "\n");
+}
+
 /// Every renderer module, concatenated, `main.js` first.
 export function appSource() {
   const files = readdirSync(SRC_DIR)

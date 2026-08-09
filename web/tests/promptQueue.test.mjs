@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 
-const main = appSource();
+const main = moduleSource("queuePanel.js");
+const fleetRows = moduleSource("fleetRowState.js");
+const rowMarkup = moduleSource("rowMarkup.js");
+const terminalHistory = moduleSource("terminalHistory.js");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 const queue = readFileSync(
@@ -50,12 +53,12 @@ test("the row shows how many prompts are waiting", () => {
   const glyph = main.slice(main.indexOf("function queueGlyph"), main.indexOf("function queueTitle"));
   assert.match(glyph, /if \(!count\) return "≡";/);
   assert.match(glyph, /count > 9 \? "9\+" : String\(count\)/);
-  assert.match(main, /data-action="queue"/);
+  assert.match(rowMarkup, /data-action="queue"/);
 });
 
 test("only a paused queue is coloured, because only it needs acting on", () => {
-  assert.match(main, /queueButton\.classList\.toggle\("row-action-warn", Boolean\(session\.queue_paused\)\)/);
-  assert.match(main, /queueButton\.classList\.toggle\("row-action-active", session\.queued_prompts > 0\)/);
+  assert.match(fleetRows, /queueButton\.classList\.toggle\("row-action-warn", Boolean\(session\.queue_paused\)\)/);
+  assert.match(fleetRows, /queueButton\.classList\.toggle\("row-action-active", session\.queued_prompts > 0\)/);
 });
 
 test("the dialog always states whether the queue is running or why it is not", () => {
@@ -107,7 +110,7 @@ test("prompt text reaching the DOM is escaped", () => {
 
 test("the dialog is reachable and its controls are wired", () => {
   assert.match(html, /id="queue-dialog"/);
-  assert.match(main, /if \(action === "queue"\) await openQueue\(id\);/);
+  assert.match(terminalHistory, /if \(action === "queue"\) await openQueue\(id\);/);
   assert.match(main, /\$\("queue-add-button"\)\.addEventListener\("click", \(\) => void addQueuedPrompt\(\)\)/);
   assert.match(main, /invoke\("pause_queue", \{ id: state\.queueSession \}\)/);
   assert.match(main, /invoke\("resume_queue", \{ id: state\.queueSession \}\)/);

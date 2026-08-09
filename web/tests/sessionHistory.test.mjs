@@ -4,11 +4,12 @@ import { registrySource } from "./registrySource.mjs";
 import test from "node:test";
 
 import { archivedLabel, folderLabel, renderSessionHistory } from "../src/sessionHistory.js";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 import { appRustSource } from "./appRustSource.mjs";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-const main = appSource();
+const workspacePages = moduleSource("workspacePages.js");
+const eventBindings = moduleSource("eventBindings.js");
 const app = appRustSource();
 const daemon = readFileSync(
   new URL("../../crates/terminalai-daemon/src/lib.rs", import.meta.url),
@@ -71,17 +72,17 @@ test("relaunch restores only what the archive actually holds", () => {
   // mean parsing an argv this record never promised to keep parseable, so the
   // launcher gets the three fields the archive really carries and the note says
   // so.
-  const handler = main.slice(main.indexOf("async function openSessionHistory"));
+  const handler = workspacePages.slice(workspacePages.indexOf("async function openSessionHistory"));
   const body = handler.slice(0, handler.indexOf("\nasync function openProjects"));
   assert.match(body, /\$\("agent-input"\)\.value = archive\.agent;/);
   assert.match(body, /\$\("name-input"\)\.value = archive\.name \?\? "";/);
   assert.match(body, /\$\("cwd-input"\)\.value = archive\.cwd \?\? "";/);
   assert.doesNotMatch(body, /model-input|sandbox-input|permission-input/);
-  assert.match(main, /renderSessionHistory\(archives, \{/);
+  assert.match(workspacePages, /renderSessionHistory\(archives, \{/);
 });
 
 test("a failure to read the history is reported in the dialog, not swallowed", () => {
-  const handler = main.slice(main.indexOf("async function openSessionHistory"));
+  const handler = workspacePages.slice(workspacePages.indexOf("async function openSessionHistory"));
   assert.match(handler.slice(0, 1200), /session-history-error/);
 });
 
@@ -110,5 +111,5 @@ test("the dialog and its toolbar control exist", () => {
   assert.match(html, /id="history-dialog"/);
   assert.match(html, /id="history-toggle"/);
   assert.match(html, /id="history-body"/);
-  assert.match(main, /\$\("history-toggle"\)\.addEventListener\("click", \(\) => void openSessionHistory\(\)\)/);
+  assert.match(eventBindings, /\$\("history-toggle"\)\.addEventListener\("click", \(\) => void openSessionHistory\(\)\)/);
 });

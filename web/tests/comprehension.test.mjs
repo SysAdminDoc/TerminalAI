@@ -2,14 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { renderFixtureRow } from "./rowFixture.mjs";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 
-// The fleet row markup lives in `rowMarkup.js` since it was extracted out of
-// this file. These assertions are about what the app renders, not about which
-// module holds the template, so they read both.
-const main =
-  appSource() +
-  readFileSync(new URL("../src/rowMarkup.js", import.meta.url), "utf8");
+const rowMarkup = moduleSource("rowMarkup.js");
+const eventBindings = moduleSource("eventBindings.js");
+const sessionStatus = moduleSource("sessionStatus.js");
+const sessionPresentation = moduleSource("sessionPresentation.js");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 
@@ -51,7 +49,7 @@ test("the row model is explained in the app, not only in the README", () => {
   // guesses: rows are not terminals, and only the focused session has one.
   assert.match(html, /id="explainer-dialog"/);
   assert.match(html, /id="explainer-toggle"/);
-  assert.match(main, /\$\("explainer-toggle"\)\.addEventListener/);
+  assert.match(eventBindings, /\$\("explainer-toggle"\)\.addEventListener/);
   for (const key of ["explainer-title", "explainer-rows", "explainer-focus", "explainer-attention"]) {
     assert.ok(new RegExp(`^${key} = `, "m").test(ftl), `${key} missing`);
   }
@@ -69,7 +67,10 @@ test("first-run guidance points at the first thing to do", () => {
 test("every status a row can show has a plain-language description", () => {
   // The short label fits the row; the description is what the tooltip and the
   // explainer use, and it is where "thinking" stops being jargon.
-  const meta = main.slice(main.indexOf("const STATUS_META"), main.indexOf("const STATUS_KEYS"));
+  const meta = sessionStatus.slice(
+    sessionStatus.indexOf("export const STATUS_META"),
+    sessionStatus.indexOf("export const STATUS_KEYS"),
+  );
   const shortKeys = [...meta.matchAll(/short: "([a-z0-9-]+)"/g)].map((match) => match[1]);
   assert.ok(shortKeys.length >= 8, `only ${shortKeys.length} statuses found`);
   for (const key of shortKeys) {
@@ -84,7 +85,7 @@ test("every status a row can show has a plain-language description", () => {
 test("the dwell time says what it is measuring", () => {
   // A bare "4m" beside a status is ambiguous — since when?
   assert.ok(/^dwell-explained = /m.test(ftl));
-  assert.match(main, /t\("dwell-explained"/);
+  assert.match(rowMarkup, /t\("dwell-explained"/);
 });
 
 test("no message key is defined twice", () => {
@@ -99,15 +100,15 @@ test("no message key is defined twice", () => {
 test("a question the agent will answer for itself shows how long is left", () => {
   // The grace period used to spend thirty of the operator's sixty seconds, and
   // nothing on the row said the clock was running at all.
-  assert.match(main, /const AGENT_AUTO_RESOLVE_SECONDS = 60;/);
-  assert.match(main, /function answerSecondsRemaining\(/);
-  assert.match(main, /function answerCountdownLabel\(/);
-  assert.match(main, /class="row-answer-deadline"/);
+  assert.match(sessionPresentation, /const AGENT_AUTO_RESOLVE_SECONDS = 60;/);
+  assert.match(sessionPresentation, /function answerSecondsRemaining\(/);
+  assert.match(sessionPresentation, /function answerCountdownLabel\(/);
+  assert.match(rowMarkup, /class="row-answer-deadline"/);
 
   // Only the states the agent resolves on its own count down. A permission
   // request waits indefinitely, so a countdown there would be a fiction.
-  const start = main.indexOf("function expiresWithoutAnAnswer(");
-  const body = main.slice(start, main.indexOf("\n}", start));
+  const start = sessionPresentation.indexOf("function expiresWithoutAnAnswer(");
+  const body = sessionPresentation.slice(start, sessionPresentation.indexOf("\n}", start));
   assert.match(body, /"awaiting-input", "needs-you"/);
   assert.doesNotMatch(body, /needs-approval/);
 

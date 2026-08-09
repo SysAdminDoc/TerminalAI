@@ -5,9 +5,10 @@ import test from "node:test";
 import { JSDOM } from "jsdom";
 
 import { pendingApprovals, renderApprovals, requestLine, waitingSince } from "../src/approvals.js";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 
-const main = appSource();
+const main = moduleSource("workspacePages.js");
+const sessionState = moduleSource("sessionState.js");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const catalog = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 
@@ -148,7 +149,7 @@ test("the inbox is a view over the snapshot, not a second source", () => {
   // A separate poll could disagree with the rows behind it.
   assert.match(main, /const waiting = pendingApprovals\(state\.sessions\)/);
   assert.doesNotMatch(main, /invoke\("(list_)?approvals?"/, "no separate fetch");
-  assert.match(main, /renderApprovalInbox\(\);/);
+  assert.match(sessionState, /renderApprovalInbox\(\);/);
 });
 
 test("the approvals dialog exists and announces its count", () => {

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { appSource, shellSource } from "./appSource.mjs";
+import { moduleSource, shellSource } from "./appSource.mjs";
 
-const main = appSource();
+const shell = moduleSource("main.js");
+const status = moduleSource("sessionStatus.js");
+const summarySource = moduleSource("fleetSummary.js");
 const summary = readFileSync(
   new URL("../src/fleetSummary.js", import.meta.url),
   "utf8",
@@ -14,7 +16,7 @@ const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url),
 test("a rate-limited row sorts with the attention states, not the busy ones", () => {
   // A limited session renders identically to a working one at a glance, so
   // sorting it with `working` would bury it in a busy fleet.
-  const order = main.slice(main.indexOf("const STATUS_ORDER"), main.indexOf("const STATUS_META"));
+  const order = status.slice(status.indexOf("const STATUS_ORDER"), status.indexOf("const STATUS_META"));
   const value = (key) => Number(order.match(new RegExp(`"?${key}"?:\\s*([0-9.]+)`))[1]);
   assert.ok(value("rate-limited") > value("working"));
   assert.ok(value("rate-limited") > value("thinking"));
@@ -40,8 +42,8 @@ test("the header reports how many are limited and when the soonest reopens", () 
 test("the limited row and header labels come from one place", () => {
   // They were duplicated in main.js, where neither could be executed by a test —
   // only grepped. Both now resolve through the extracted module.
-  assert.match(main, /import \{ rateLimitedLabel \} from "\.\/rateLimit\.js";/);
-  assert.match(main, /return rateLimitedLabel\(session, t\);/);
+  assert.match(shell, /import \{ rateLimitedLabel \} from "\.\/rateLimit\.js";/);
+  assert.match(status, /return rateLimitedLabel\(session, t\);/);
   // The shell alone, not the whole renderer: `rateLimit.js` is where
   // `resetMillis` is supposed to live, so asserting its absence across every
   // module would assert the module does not exist.
@@ -49,8 +51,8 @@ test("the limited row and header labels come from one place", () => {
 });
 
 test("every rate-limit string used by the renderer exists in the catalog", () => {
-  const used = [...`${main}${helpers}`.matchAll(/t\("(rate-limit-[a-z-]+)"/g)].map((m) => m[1]);
-  const counted = [...main.matchAll(/countMessage\("(count-rate-limited)"/g)].map((m) => m[1]);
+  const used = [...`${status}${summarySource}${helpers}`.matchAll(/t\("(rate-limit-[a-z-]+)"/g)].map((m) => m[1]);
+  const counted = [...summarySource.matchAll(/countMessage\("(count-rate-limited)"/g)].map((m) => m[1]);
   assert.ok(used.length >= 3, `expected the renderer to use several, found ${used}`);
   for (const key of used) {
     assert.ok(

@@ -1,13 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 
-const main = appSource();
-const reviewPage = readFileSync(
-  new URL("../src/reviewPage.js", import.meta.url),
-  "utf8",
-).replace(/\r\n/g, "\n");
+const reviewPage = moduleSource("reviewPage.js");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 const land = readFileSync(
   new URL("../../crates/terminalai-core/src/land.rs", import.meta.url),
@@ -19,7 +15,7 @@ test("landing is offered only for a review that can be trusted", () => {
   // are refused by the gate anyway. Offering the button there would teach the
   // operator that it sometimes does nothing.
   assert.match(
-    main,
+    reviewPage,
     /const canLand = !entry\.error && !entry\.timed_out && !conflicts\.length && files > 0;/,
   );
 });
@@ -27,7 +23,7 @@ test("landing is offered only for a review that can be trusted", () => {
 test("the landing request pins the commit the review was read against", () => {
   // Without this the moved-target refusal has nothing to compare and could
   // never fire — the exact class of check this codebase has had to fix before.
-  assert.match(main, /expected_target_head: entry\.target_head \?\? null/);
+  assert.match(reviewPage, /expected_target_head: entry\.target_head \?\? null/);
   assert.match(
     land,
     /pub target_head: Option<String>|pub expected_target_head: Option<String>/,
@@ -46,14 +42,14 @@ test("every refusal the gate can return has a message here", () => {
   assert.ok(declared.size >= 8, `expected the refusal list, found ${[...declared]}`);
   for (const reason of declared) {
     assert.ok(
-      new RegExp(`case "${reason}":`).test(main),
+      new RegExp(`case "${reason}":`).test(reviewPage),
       `refusal "${reason}" has no branch in refusalText`,
     );
   }
 });
 
 test("an unknown refusal is still shown rather than swallowed", () => {
-  const fn = main.slice(main.indexOf("function refusalText"));
+  const fn = reviewPage.slice(reviewPage.indexOf("function refusalText"));
   const body = fn.slice(0, fn.indexOf("\nasync function"));
   assert.match(body, /default:/);
   assert.match(body, /return String\(outcome\.reason \?\? outcome\);/);
@@ -79,7 +75,7 @@ test("the review renderer keeps landing refusals visible beside the diff", () =>
 });
 
 test("every land string the renderer uses exists in the catalog", () => {
-  const used = [...main.matchAll(/t\("(land-[a-z-]+|review-land[a-z-]*|review-landing)"/g)].map(
+  const used = [...reviewPage.matchAll(/t\("(land-[a-z-]+|review-land[a-z-]*|review-landing)"/g)].map(
     (match) => match[1],
   );
   assert.ok(used.length >= 8, `expected several, found ${used}`);
@@ -91,6 +87,6 @@ test("every land string the renderer uses exists in the catalog", () => {
 test("the renderer never resolves a landing itself", () => {
   // Nothing merges, stages, commits, or picks a side on the operator's behalf,
   // and the renderer must not add a path that does.
-  assert.doesNotMatch(main, /invoke\("(git_|merge|resolve_conflict)/);
+  assert.doesNotMatch(reviewPage, /invoke\("(git_|merge|resolve_conflict)/);
   assert.match(land, /Never auto-resolved/);
 });

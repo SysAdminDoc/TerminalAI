@@ -13,7 +13,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 
 import { renderFixtureRow } from "./rowFixture.mjs";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 
@@ -51,7 +51,7 @@ test("the update path sets every cost and memory attribute the full render sets"
   // patch path writes into a DOM the test would have to build by hand, and the
   // failure being guarded is an attribute that one path sets and the other
   // forgets.
-  const source = appSource();
+  const source = moduleSource("fleetRowState.js");
   const patch = source.slice(
     source.indexOf("wideMeta.querySelector(\"[data-row-model]\")"),
     source.indexOf("const countdown = row.querySelector"),
@@ -92,7 +92,7 @@ test("teammate names reaching the row are escaped", () => {
 test("the update path creates and removes the team cell rather than assuming it", () => {
   // Conditional markup: a row that gains a team mid-session has no cell to
   // write into, and one whose team ends must lose the names it had.
-  const source = appSource();
+  const source = moduleSource("fleetRowState.js");
   const patch = source.slice(
     source.indexOf("const teamNames ="),
     source.indexOf("const memoryCell = wideMeta.querySelector"),

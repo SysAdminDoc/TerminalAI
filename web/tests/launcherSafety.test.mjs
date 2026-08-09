@@ -3,10 +3,13 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { JSDOM } from "jsdom";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-const main = appSource();
+const main = moduleSource("launcher.js");
+const eventBindings = moduleSource("eventBindings.js");
+const shell = moduleSource("main.js");
+const terminalHeader = moduleSource("terminalHeader.js");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 
 function launcherForm() {
@@ -61,7 +64,7 @@ test("closing the launcher is a plain button, not a form submission", () => {
   assert.ok(close, "close control is present");
   assert.equal(close.type, "button");
   assert.equal(close.getAttribute("value"), null, "a value attribute implies dialog submission");
-  assert.match(main, /\$\("close-launcher-button"\)\.addEventListener\("click", \(\) => \$\("launcher-dialog"\)\.close\(\)\)/);
+  assert.match(eventBindings, /\$\("close-launcher-button"\)\.addEventListener\("click", \(\) => \$\("launcher-dialog"\)\.close\(\)\)/);
 });
 
 test("implicit submission cannot launch a session", () => {
@@ -89,7 +92,7 @@ test("launcher catalogs come from runtime capabilities and keep free text", () =
 
 test("stale preview responses are discarded after a newer edit", () => {
   const preview = main.slice(main.indexOf("function schedulePreview"), main.indexOf("async function launchCurrentSpec"));
-  assert.match(main, /previewRequest: 0/);
+  assert.match(shell, /previewRequest: 0/);
   assert.match(preview, /const request = \+\+state\.previewRequest/);
   assert.match(preview, /setTimeout\(\(\) => updatePreview\(request\), 180\)/);
   assert.match(
@@ -108,9 +111,9 @@ test("the focused terminal replaces the placeholder rather than stacking under i
   const placeholder = dom.window.document.getElementById("terminal-placeholder");
   assert.ok(host && placeholder);
   assert.equal(placeholder.parentElement, host);
-  assert.match(main, /function renderTerminalPlaceholder\(\)/);
-  assert.match(main, /\$\("terminal-placeholder"\)\.classList\.toggle\("view-hidden", attached\)/);
-  assert.match(main, /function updateTerminalHeader\(\) \{\s*renderTerminalPlaceholder\(\);/);
+  assert.match(terminalHeader, /function renderTerminalPlaceholder\(\)/);
+  assert.match(terminalHeader, /\$\("terminal-placeholder"\)\.classList\.toggle\("view-hidden", attached\)/);
+  assert.match(terminalHeader, /function updateTerminalHeader\(\) \{\s*renderTerminalPlaceholder\(\);/);
 });
 
 test("a permission mode this build does not model survives a round trip", () => {

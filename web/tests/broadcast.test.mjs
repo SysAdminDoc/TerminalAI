@@ -4,10 +4,10 @@ import { registrySource } from "./registrySource.mjs";
 import test from "node:test";
 
 import { defaultSelection, ineligibleReason, isEligible, summarize, targets } from "../src/broadcast.js";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 import { appRustSource } from "./appRustSource.mjs";
 
-const main = appSource();
+const main = moduleSource("eventBindings.js");
 const panel = readFileSync(
   new URL("../src/broadcastPanel.js", import.meta.url),
   "utf8",

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 
-const main = appSource();
+const main = moduleSource("workRunPanel.js");
+const launcher = moduleSource("launcher.js");
+const eventBindings = moduleSource("eventBindings.js");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const ftl = readFileSync(new URL("../src/i18n/terminalai.ftl", import.meta.url), "utf8");
 
@@ -11,9 +13,9 @@ const library = main.slice(
   main.indexOf("function renderPromptLibrary()"),
   main.indexOf("\n/**\n * Run the chosen prompt", main.indexOf("function renderPromptLibrary()")),
 );
-const roots = main.slice(
-  main.indexOf("function renderProjectRoots()"),
-  main.indexOf("\nasync function loadKnownProjects", main.indexOf("function renderProjectRoots()")),
+const roots = launcher.slice(
+  launcher.indexOf("function renderProjectRoots()"),
+  launcher.indexOf("\nasync function loadKnownProjects", launcher.indexOf("function renderProjectRoots()")),
 );
 
 test("the prompt library exposes stored prompts and editing controls", () => {
@@ -50,7 +52,7 @@ test("stored prompts can be loaded, saved, renamed, selected, and deleted", () =
   assert.match(library, /invoke\("delete_stored_prompt", \{ name \}\)/);
   assert.match(library, /data-prompt-select/);
   assert.match(library, /data-prompt-delete/);
-  assert.match(main, /\$\("stored-prompt-list"\)\.addEventListener\("click"/);
+  assert.match(eventBindings, /\$\("stored-prompt-list"\)\.addEventListener\("click"/);
 });
 
 test("prompt names and labels are escaped before reaching the DOM", () => {
@@ -68,7 +70,7 @@ test("registered roots have a visible remove affordance", () => {
   assert.match(roots, /invoke\("remove_project_root", \{ path \}\)/);
   assert.match(roots, /data-project-root-remove/);
   assert.match(roots, /escapeHtml\(value\)/);
-  assert.match(main, /\$\("project-root-list"\)\.addEventListener\("click"/);
+  assert.match(launcher, /\$\("project-root-list"\)\.addEventListener\("click"/);
   for (const key of [
     "projects-roots-empty",
     "projects-roots-load-error",
@@ -82,8 +84,8 @@ test("registered roots have a visible remove affordance", () => {
 
 test("presets have a delete control wired to the backend", () => {
   assert.match(html, /id="delete-preset-button"/);
-  assert.match(main, /invoke\("delete_preset", \{ name \}\)/);
-  assert.match(main, /\$\("delete-preset-button"\)\.disabled = !\$\("preset-select"\)\.value;/);
+  assert.match(launcher, /invoke\("delete_preset", \{ name \}\)/);
+  assert.match(launcher, /\$\("delete-preset-button"\)\.disabled = !\$\("preset-select"\)\.value;/);
   assert.match(ftl, /^preset-deleted = /m);
   assert.match(ftl, /^preset-not-found = /m);
 });

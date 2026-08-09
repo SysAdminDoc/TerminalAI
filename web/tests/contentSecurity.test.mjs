@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { appSource } from "./appSource.mjs";
+import { appSource, moduleSource } from "./appSource.mjs";
 
 const main = appSource();
+const shell = moduleSource("main.js");
+const terminalPane = moduleSource("terminalPane.js");
 const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const config = JSON.parse(
   readFileSync(new URL("../../crates/terminalai-app/tauri.conf.json", import.meta.url), "utf8"),
@@ -41,8 +43,8 @@ test("allowProposedApi unlocks only the unicode addon", () => {
   // `addon-search` was added 2026-08-07 for find-in-pane. It is not proposed
   // API — it registers no OSC handler and reads the buffer it is attached to,
   // so it cannot be a route from agent output to anything outside the pane.
-  assert.match(main, /allowProposedApi: true,/);
-  const addons = [...main.matchAll(/from "@xterm\/(addon-[a-z0-9]+)"/g)].map((m) => m[1]);
+  assert.match(terminalPane, /allowProposedApi: true,/);
+  const addons = [...shell.matchAll(/from "@xterm\/(addon-[a-z0-9]+)"/g)].map((m) => m[1]);
   assert.deepEqual(addons.sort(), [
     "addon-fit",
     "addon-search",

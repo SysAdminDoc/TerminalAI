@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 import { cssSource } from "./cssSource.mjs";
 
-const main = appSource();
+const fleetSummary = moduleSource("fleetSummary.js");
+const eventBindings = moduleSource("eventBindings.js");
 const rollupPage = readFileSync(
   new URL("../src/rollupPage.js", import.meta.url),
   "utf8",
@@ -21,9 +22,9 @@ const renderRollup = (() => {
 test("the fleet's spend figure is the way into the breakdown", () => {
   // A rollup nobody can find is a rollup nobody uses, and the aggregate is
   // exactly where the question "on what?" occurs to the operator.
-  assert.match(main, /id="fleet-spend"/);
-  assert.match(main, /\$\("fleet-summary"\)\.addEventListener\("click", \(event\) => \{/);
-  assert.doesNotMatch(main, /\$\("fleet-spend"\)\?\.addEventListener/);
+  assert.match(fleetSummary, /id="fleet-spend"/);
+  assert.match(eventBindings, /\$\("fleet-summary"\)\.addEventListener\("click", \(event\) => \{/);
+  assert.doesNotMatch(fleetSummary, /\$\("fleet-spend"\)\?\.addEventListener/);
   assert.match(html, /id="rollup-dialog"/);
 });
 
@@ -31,8 +32,8 @@ test("the entry point is a button, not a span with a handler", () => {
   // It is keyboard reachable and announced as a control only if it is one.
   // The class list gained a conditional modifier when the spend ceiling started
   // marking a blocking cap; the guarantee this asserts is the element type.
-  assert.match(main, /<button type="button" class="summary-item summary-spend/);
-  assert.match(main, /escapeHtml\(t\("button-open-rollup"\)\)/);
+  assert.match(fleetSummary, /<button type="button" class="summary-item summary-spend/);
+  assert.match(fleetSummary, /escapeHtml\(t\("button-open-rollup"\)\)/);
   assert.match(css, /\.summary-spend:focus-visible/);
 });
 

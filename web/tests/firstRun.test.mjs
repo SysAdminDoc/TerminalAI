@@ -11,10 +11,12 @@ import {
   readFirstRunProgress,
   saveFirstRunProgress,
 } from "../src/firstRun.js";
-import { appSource } from "./appSource.mjs";
+import { moduleSource } from "./appSource.mjs";
 
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
-const source = appSource();
+const focusSource = moduleSource("sessionFocus.js");
+const terminalPaneSource = moduleSource("terminalPane.js");
+const launcherSource = moduleSource("launcher.js");
 
 const expectedStatuses = [
   "needs-approval",
@@ -67,8 +69,8 @@ test("the shell exposes the guided path and keeps demo focus offline", () => {
   for (const id of ["empty-demo-button", "first-run-checklist", "demo-mode-banner", "demo-exit-button"]) {
     assert.match(html, new RegExp(`id="${id}"`), `${id} is missing from the shell`);
   }
-  assert.match(source, /if \(state\.demoMode && isFirstRunDemoSession\(id\)\)/);
-  assert.match(source, /if \(!state\.focused \|\| state\.demoMode\) return;/);
-  assert.match(source, /onFirstRunStep\?\.\("project"\)/);
-  assert.match(source, /onFirstRunStep\?\.\("launcher"\)/);
+  assert.match(focusSource, /if \(state\.demoMode && isFirstRunDemoSession\(id\)\)/);
+  assert.match(terminalPaneSource, /if \(!state\.focused \|\| state\.demoMode\) return;/);
+  assert.match(launcherSource, /onFirstRunStep\?\.\("project"\)/);
+  assert.match(launcherSource, /onFirstRunStep\?\.\("launcher"\)/);
 });
